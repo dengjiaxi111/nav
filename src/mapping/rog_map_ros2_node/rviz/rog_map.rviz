@@ -70,14 +70,14 @@ Visualization Manager:
       Max Intensity: 4096
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: Point Cloud
+      Name: Registered Point Cloud
       Position Transformer: XYZ Transformer
       Queue Size: 10
       Selectable: true
       Size (Pixels): 3
       Size (m): 0.01
       Style: Flat Squares
-      Topic: /points_raw
+      Topic: /cloud_registered
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
