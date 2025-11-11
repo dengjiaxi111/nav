@@ -1,0 +1,74 @@
+rog_map:
+  # ESDF configuration
+  esdf:
+    resolution: 0.2
+    enable: false
+    local_update_box: [5.0, 5.0, 2.0]
+
+  # PCD loading
+  load_pcd_en: false
+  pcd_name: "map.pcd"
+
+  # Map sliding
+  map_sliding:
+    enable: true
+    threshold: -1.0
+
+  # Fix map origin
+  fix_map_origin: [0.0, 0.0, 0.0]
+
+  # Frontier extraction
+  frontier_extraction_en: false
+
+  # ROS callback
+  ros_callback:
+    enable: true
+    cloud_topic: "/points_raw"
+    odom_topic: "/odom"
+    odom_timeout: 0.05
+
+  # Visualization
+  visualization:
+    enable: true
+    use_dynamic_reconfigure: false
+    pub_unknown_map_en: true
+    frame_id: "map"
+    time_rate: 10.0
+    frame_rate: 30
+    range: [50.0, 50.0, 5.0]
+
+  # Grid resolution
+  resolution: 0.1
+  inflation_resolution: 0.1
+
+  # Unknown inflation
+  unk_inflation_en: false
+  unk_inflation_step: 1
+
+  # Inflation
+  inflation_step: 1
+  intensity_thresh: -1
+
+  # Map size
+  map_size: [100.0, 100.0, 10.0]
+
+  # Point filtering
+  point_filt_num: 2
+
+  # Raycasting
+  raycasting:
+    enable: true
+    batch_update_size: 1
+    unk_thresh: 0.70
+    p_hit: 0.70
+    p_miss: 0.70
+    p_min: 0.12
+    p_max: 0.97
+    p_occ: 0.80
+    p_free: 0.30
+    ray_range: [0.3, 50.0]
+    local_update_box: [10.0, 10.0, 5.0]
+
+  # Virtual ground and ceiling
+  virtual_ground_height: -100.0
+  virtual_ceil_height: 100.0

@@ -1,0 +1,128 @@
+# ROG-Map Configuration File
+# This configuration file defines the parameters for the ROG-Map library
+
+rog_map:
+  # ==================== Map Size and Resolution ====================
+  # Half size of the local map (the map will be 2*half_map_size + 1)
+  # This defines a cubic map centered at the robot
+  half_map_size_d: 50.0           # meters
+  
+  # Resolution of the occupancy grid
+  resolution: 0.1                  # meters per voxel
+  
+  # ==================== Map Origin ====================
+  # Enable sliding map mode (map slides with the robot)
+  map_sliding_en: true
+  
+  # If map_sliding_en is false, use this fixed origin
+  fix_map_origin: [0.0, 0.0, 0.0]
+  
+  # Threshold for triggering map sliding
+  sliding_thresh: 20.0             # meters
+  
+  # ==================== Inflation Settings ====================
+  # Enable inflation map for safety distance calculations
+  inflation_en: true
+  
+  # Inflation radius for occupied voxels
+  occupied_inflate_radius: 0.5     # meters
+  
+  # Enable inflation for unknown cells
+  unk_inflation_en: true
+  
+  # Inflation radius for unknown voxels
+  unknown_inflate_radius: 0.5      # meters
+  
+  # ==================== ESDF Settings ====================
+  # Enable Euclidean Signed Distance Field computation
+  esdf_en: true
+  
+  # Resolution for ESDF (can be different from main map resolution)
+  esdf_resolution: 0.1             # meters
+  
+  # ==================== Raycasting Settings ====================
+  # Maximum range for raycasting (obstacle detection)
+  raycast_range: 100.0             # meters
+  
+  # Use depth camera mode for raycasting
+  use_depth_camera: false
+  
+  # ==================== Frontier Detection ====================
+  # Enable frontier extraction for exploration
+  frontier_extraction_en: true
+  
+  # ==================== ROS Settings ====================
+  # Enable ROS callbacks for odometry and point cloud subscription
+  ros_callback_en: true
+  
+  # Topic names
+  odom_topic: "/odom"              # Odometry topic
+  cloud_topic: "/points_raw"       # Point cloud topic
+  
+  # Timeout for odometry messages (seconds)
+  odom_timeout: 1.0
+  
+  # ==================== Visualization Settings ====================
+  # Enable visualization of the map
+  visualization_en: true
+  
+  # Range for publishing visualization data around robot
+  visualization_range: [100.0, 100.0, 50.0]  # [x, y, z] meters
+  
+  # Publish occupancy map
+  pub_occ_map_en: true
+  
+  # Publish unknown cells
+  pub_unknown_map_en: true
+  
+  # Publish inflated occupancy map
+  pub_occ_inf_map_en: true
+  
+  # Publish inflated unknown map
+  pub_unknown_inf_map_en: false
+  
+  # Publish frontier cells
+  pub_frontier_map_en: true
+  
+  # Publish ESDF visualization
+  pub_esdf_map_en: true
+  
+  # Update frequency for visualization (Hz)
+  viz_pub_freq: 5.0
+  
+  # ==================== Point Cloud Filtering ====================
+  # Filter points by height (useful for 2.5D mapping)
+  filter_height_en: false
+  
+  # Height range for filtering
+  height_filter_min: -0.5          # meters
+  height_filter_max: 2.0           # meters
+  
+  # Filter points by distance
+  filter_distance_en: false
+  
+  # Distance range for filtering
+  distance_filter_min: 0.1         # meters
+  distance_filter_max: 100.0       # meters
+  
+  # ==================== PCD Loading ====================
+  # Enable loading a pre-built PCD map
+  load_pcd_en: false
+  
+  # Path to PCD file (use ${CMAKE_ROOT_DIR}/ prefix for paths relative to source root)
+  pcd_name: "${CMAKE_ROOT_DIR}/PCD/1/compressed_map.pcd"
+  
+  # ==================== Unknown Cell Handling ====================
+  # Treat unknown cells as obstacles (conservative) or free (aggressive)
+  # 0 = unknown is free, 1 = unknown is obstacle
+  unknown_as_occupied_threshold: 0.5
+  
+  # ==================== Logging ====================
+  # Enable performance logging
+  enable_performance_log: true
+  
+  # Log file directory (relative to executable location)
+  log_dir: "./log"
+  
+  # Log update frequency (Hz)
+  log_freq: 1.0
