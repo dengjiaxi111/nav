@@ -6,6 +6,8 @@
         "initializer_list": "cpp",
         "regex": "cpp",
         "utility": "cpp",
-        "memory_resource": "cpp"
+        "memory_resource": "cpp",
+        "chrono": "cpp",
+        "variant": "cpp"
     }
 }
