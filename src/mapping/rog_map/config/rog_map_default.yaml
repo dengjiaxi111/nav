@@ -18,7 +18,7 @@ rog_map:
   fix_map_origin: [0.0, 0.0, 0.0]
   
   # Threshold for triggering map sliding
-  sliding_thresh: 20.0             # meters
+  sliding_thresh: 10.0             # meters
   
   # ==================== Inflation Settings ====================
   # Enable inflation map for safety distance calculations
