@@ -25,7 +25,7 @@ rog_map:
     enable: true
     cloud_topic: "/cloud_registered"
     odom_topic: "/Odometry"
-    odom_timeout: 0.05
+    odom_timeout: 0.5
 
   # Visualization
   visualization:
@@ -61,7 +61,7 @@ rog_map:
     batch_update_size: 1
     unk_thresh: 0.70
     p_hit: 0.70
-    p_miss: 0.70
+    p_miss: 0.35
     p_min: 0.12
     p_max: 0.97
     p_occ: 0.80

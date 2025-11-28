@@ -7,9 +7,9 @@ Panels:
         - /Global Options1
         - /Status1
         - /MarkerArray1
-        - /MarkerArray1/Status1
         - /MarkerArray1/Topic1
-        - /TF1/Status1
+        - /PointCloud22
+        - /PointCloud22/Topic1
       Splitter Ratio: 0.5
     Tree Height: 1039
   - Class: rviz_common/Selection
@@ -104,13 +104,9 @@ Visualization Manager:
         All Enabled: true
         base_link:
           Value: true
-        drone:
-          Value: true
         livox_frame:
           Value: true
         odom:
-          Value: true
-        world:
           Value: true
       Marker Scale: 1
       Name: TF
@@ -123,6 +119,40 @@ Visualization Manager:
             livox_frame:
               {}
       Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 2.6500000953674316
+        Min Value: -1.149999976158142
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: AxisColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.05000000074505806
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: System Default
+        Reliability Policy: System Default
+        Value: /rog_map/inf_occ
+      Use Fixed Frame: true
+      Use rainbow: true
       Value: true
   Enabled: true
   Global Options:
@@ -170,25 +200,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 16.027875900268555
+      Distance: 26.334226608276367
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 3.9776840209960938
-        Y: -2.08415150642395
-        Z: -5.344350337982178
+        X: 0.7207612991333008
+        Y: 1.5703274011611938
+        Z: -0.5671167969703674
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.4103983938694
+      Pitch: 0.7053980231285095
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.243554592132568
+      Yaw: 4.903549671173096
     Saved: ~
 Window Geometry:
   Displays:
@@ -206,5 +236,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 2931
-  X: 424
-  Y: 455
+  X: 122
+  Y: 303
