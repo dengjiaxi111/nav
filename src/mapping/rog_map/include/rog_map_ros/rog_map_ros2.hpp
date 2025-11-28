@@ -42,6 +42,8 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <rog_map/rog_map.h>
@@ -54,6 +56,14 @@ namespace rog_map {
     class ROGMapROS : public ROGMap {
         rclcpp::Node::SharedPtr nh_;
         std::shared_ptr<tf2_ros::TransformBroadcaster> br_map_ego_;
+        
+        // TF2 for lidar extrinsic lookup
+        std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+        
+        // Cached lidar extrinsic (base_link -> lidar_frame), using double to match Vec3f
+        bool lidar_ext_valid_{false};
+        Eigen::Isometry3d T_base_to_lidar_{Eigen::Isometry3d::Identity()};
 
 
         const double getSystemWalltimeNow() override {
@@ -63,6 +73,36 @@ namespace rog_map {
         void getSystemWalltimeNow(rclcpp::Time& _in) {
             _in = nh_->get_clock()->now();
         };
+
+        /// Try to cache lidar extrinsic from TF (called once in updateCallback)
+        void tryInitLidarExtrinsic() {
+            if (lidar_ext_valid_) return;
+            try {
+                auto tf = tf_buffer_->lookupTransform("base_link", "livox_frame", tf2::TimePointZero);
+                T_base_to_lidar_.translation() << 
+                    tf.transform.translation.x,
+                    tf.transform.translation.y,
+                    tf.transform.translation.z;
+                T_base_to_lidar_.linear() = Eigen::Quaterniond(
+                    tf.transform.rotation.w,
+                    tf.transform.rotation.x,
+                    tf.transform.rotation.y,
+                    tf.transform.rotation.z).toRotationMatrix();
+                lidar_ext_valid_ = true;
+                RCLCPP_INFO(nh_->get_logger(), "[ROG-Map] Lidar extrinsic cached.");
+            } catch (const tf2::TransformException&) {
+                // Will retry next frame
+            }
+        }
+        
+        /// Compute lidar position in world frame from robot pose
+        Vec3f computeLidarPosition(const Pose& robot_pose) const {
+            if (!lidar_ext_valid_) return robot_pose.first;
+            Eigen::Isometry3d T_world_base = Eigen::Isometry3d::Identity();
+            T_world_base.translate(robot_pose.first);
+            T_world_base.rotate(robot_pose.second.toRotationMatrix());
+            return (T_world_base * T_base_to_lidar_).translation();
+        }
 
         struct VisualizeMap {
             rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
@@ -130,6 +170,9 @@ namespace rog_map {
         }
 
         void updateCallback() {
+            // Try to cache lidar extrinsic on first call
+            tryInitLidarExtrinsic();
+            
             if (map_empty_) {
                 static double last_print_t = nh_->get_clock()->now().seconds();
                 double cur_t = nh_->get_clock()->now().seconds();
@@ -158,7 +201,11 @@ namespace rog_map {
             rc_.unfinished_frame_cnt = 0;
             rc_.updete_lock.unlock();
 
-            updateProbMap(temp_pc, temp_pose);
+            // Compute lidar position from robot pose using cached extrinsic
+            Vec3f lidar_pos = computeLidarPosition(temp_pose);
+            
+            // Use new interface: separate robot center and lidar center
+            updateProbMap(temp_pc, temp_pose, lidar_pos);
 
             writeTimeConsumingToLog(time_log_file_);
         }
@@ -320,8 +367,11 @@ namespace rog_map {
                                   .durability_volatile());
 
             cfg_ = rog_map::Config(cfg_path);
-            // 创建 TransformBroadcaster
             br_map_ego_ = std::make_shared<tf2_ros::TransformBroadcaster>(nh_);
+            
+            // TF2 for lidar extrinsic lookup (will be cached on first updateCallback)
+            tf_buffer_ = std::make_shared<tf2_ros::Buffer>(nh_->get_clock());
+            tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
             init();
             /// Initialize visualization module

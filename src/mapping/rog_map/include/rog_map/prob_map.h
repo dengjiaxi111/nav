@@ -97,7 +97,14 @@ namespace rog_map {
 
         void writeMapInfoToLog(std::ofstream &log_file);
 
+        /// Original interface: robot center = lidar center (for backward compatibility)
         void updateProbMap(const PointCloud &cloud, const Pose &pose);
+        
+        /// New interface: separate robot center (for map sliding) and lidar center (for raycasting)
+        /// @param cloud Point cloud in world frame
+        /// @param robot_pose Robot pose (used for map sliding and local box update)
+        /// @param lidar_position LiDAR center position in world frame (used as raycasting origin)
+        void updateProbMap(const PointCloud &cloud, const Pose &robot_pose, const Vec3f &lidar_position);
 
     protected:
         rog_map::Config cfg_;

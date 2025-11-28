@@ -1,9 +1,9 @@
 rog_map:
   # ESDF configuration
   esdf:
-    resolution: 0.2
+    resolution: 0.1
     enable: false
-    local_update_box: [5.0, 5.0, 2.0]
+    local_update_box: [10.0, 10.0, 4.0]
 
   # PCD loading
   load_pcd_en: false
@@ -35,11 +35,11 @@ rog_map:
     frame_id: "odom"
     time_rate: 10.0
     frame_rate: 30
-    range: [50.0, 50.0, 5.0]
+    range: [10.0, 10.0, 5.0]
 
   # Grid resolution
-  resolution: 0.1
-  inflation_resolution: 0.1
+  resolution: 0.04
+  inflation_resolution: 0.04
 
   # Unknown inflation
   unk_inflation_en: false
@@ -50,25 +50,28 @@ rog_map:
   intensity_thresh: -1
 
   # Map size
-  map_size: [100.0, 100.0, 10.0]
+  map_size: [12.0, 12.0, 2.0]
 
   # Point filtering
-  point_filt_num: 2
+  point_filt_num: 1
 
   # Raycasting
   raycasting:
     enable: true
     batch_update_size: 1
-    unk_thresh: 0.70
-    p_hit: 0.70
+    unk_thresh: 0.60          # 降低：更容易从 unknown 变为 known
+    p_hit: 0.75
     p_miss: 0.35
     p_min: 0.12
     p_max: 0.97
     p_occ: 0.80
-    p_free: 0.30
-    ray_range: [0.3, 50.0]
-    local_update_box: [10.0, 10.0, 5.0]
+    p_free: 0.35              # 提高一点：更容易判定为 free
+    ray_range: [0.2, 30.0]
+    local_update_box: [5.0, 5.0, 2.0]
 
   # Virtual ground and ceiling
-  virtual_ground_height: -100.0
-  virtual_ceil_height: 100.0
+  virtual_ground_height: -1.0
+  virtual_ceil_height: 5.0
+
+  # Performance logging
+  enable_performance_log: true

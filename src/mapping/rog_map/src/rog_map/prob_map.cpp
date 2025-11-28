@@ -374,6 +374,87 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     }
 }
 
+void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& robot_pose, const Vec3f& lidar_position) {
+    // New interface: separate robot center (for map sliding) and lidar center (for raycasting)
+    // robot_pos: used for map sliding判断, local box update, ESDF update
+    // lidar_pos: used as raycasting origin
+    
+    TimeConsuming tc("updateMap", false);
+    const Vec3f& robot_pos = robot_pose.first;
+    time_consuming_[4] = cloud.size();
+    
+    // Map sliding check uses robot position (map center follows robot, not lidar)
+    if (cfg_.map_sliding_en && !insideLocalMap(robot_pos) && raycast_data_.batch_update_counter == 0) {
+        std::cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << std::endl;
+        std::cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << robot_pos.transpose() << RESET << std::endl;
+        slideAllMap(robot_pos);
+        return;
+    }
+
+    // Virtual bounds check uses robot position
+    if (robot_pos.z() > cfg_.virtual_ceil_height) {
+        std::cout << YELLOW << " -- [ROGMapCore] Odom above virtual ceil, please check map parameter -- ." << RESET
+            << std::endl;
+        return;
+    }
+    else if (robot_pos.z() < cfg_.virtual_ground_height) {
+        std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
+            << std::endl;
+        return;
+    }
+
+    // Map sliding uses robot position
+    if (raycast_data_.batch_update_counter == 0 &&
+        cfg_.map_sliding_en  &&
+        (map_empty_ || (robot_pos - local_map_origin_d_).norm() > cfg_.map_sliding_thresh)
+        ) {
+        slideAllMap(robot_pos);
+    }
+
+    // Local update box follows robot position
+    updateLocalBox(robot_pos);
+    
+    // Raycasting uses lidar position as origin
+    TimeConsuming t_raycast("raycast", false);
+    raycastProcess(cloud, lidar_position);
+    time_consuming_[1] = t_raycast.stop();
+    
+    raycast_data_.batch_update_counter++;
+    if (raycast_data_.batch_update_counter >= cfg_.batch_update_size) {
+        raycast_data_.batch_update_counter = 0;
+        time_consuming_[5] = raycast_data_.update_cache_id_g.size();
+        TimeConsuming t_update("update", false);
+        probabilisticMapFromCache();
+        time_consuming_[2] = t_update.stop();
+        map_empty_ = false;
+    }
+    inf_map_->getInflationNumAndTime(time_consuming_[6], time_consuming_[3]);
+    time_consuming_[0] = tc.stop();
+
+    /* Update ESDF map - uses robot position */
+    if (cfg_.esdf_en) {
+        esdf_map_->updateESDF3D(robot_pos);
+    }
+
+    /* For the first frame, clear all unknown around the lidar */
+    static bool first = true;
+    if (first) {
+        first = false;
+        for (double dx = -cfg_.raycast_range_min; dx <= cfg_.raycast_range_min; dx += cfg_.resolution) {
+            for (double dy = -cfg_.raycast_range_min; dy <= cfg_.raycast_range_min; dy += cfg_.resolution) {
+                for (double dz = -cfg_.raycast_range_min; dz <= cfg_.raycast_range_min; dz += cfg_.resolution) {
+                    Vec3f p(dx, dy, dz);
+                    if (p.norm() <= cfg_.raycast_range_min) {
+                        Vec3f pp = lidar_position + p;
+                        int hash_id = getHashIndexFromPos(pp);
+                        missPointUpdate(pp, hash_id, 999);
+                    }
+                }
+            }
+        }
+    }
+}
+
 GridType ProbMap::getGridType(Vec3i& id_g) const {
     if (id_g.z() <= sc_.virtual_ground_height_id_g ||
         id_g.z() >= sc_.virtual_ceil_height_id_g - sc_.safe_margin_i) {

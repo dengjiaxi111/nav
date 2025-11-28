@@ -1,7 +1,9 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.substitutions import LaunchConfiguration
-from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.substitutions import FindPackageShare
 import os
 from ament_index_python.packages import get_package_share_directory
 
@@ -12,14 +14,6 @@ def generate_launch_description():
     rog_map_config_dir = os.path.join(rog_map_package_dir, 'config')
     rog_map_rviz_config = os.path.join(rog_map_package_dir, 'rviz', 'rog_map.rviz')
     
-    # Get paths for small_point_lio configuration (if available)
-    try:
-        small_point_lio_package_dir = get_package_share_directory('small_point_lio')
-        small_point_lio_config_dir = os.path.join(small_point_lio_package_dir, 'config')
-    except:
-        small_point_lio_package_dir = None
-        small_point_lio_config_dir = None
-    
     # Launch argument for rog_map config file
     config_file_arg = DeclareLaunchArgument(
         'rog_map_config_file',
@@ -27,12 +21,15 @@ def generate_launch_description():
         description='Path to ROG-Map config file'
     )
     
-    # small_point_lio ROS2 node
-    small_point_lio_node = Node(
-        package='small_point_lio',
-        executable='small_point_lio_node',
-        name='small_point_lio',
-        output='screen'
+    # Include small_point_lio launch file
+    small_point_lio_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('small_point_lio'),
+                'launch',
+                'small_point_lio.launch.py'
+            ])
+        ])
     )
     
     # ROG-Map ROS2 node (subscribes to /cloud_registered from small_point_lio)
@@ -57,7 +54,7 @@ def generate_launch_description():
     
     return LaunchDescription([
         config_file_arg,
-        small_point_lio_node,
+        small_point_lio_launch,
         rog_map_node,
         rviz_node
     ])

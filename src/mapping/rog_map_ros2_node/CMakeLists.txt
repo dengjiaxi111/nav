@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(rog_map_ros2_node)
 
+# 开启 Release 模式和 O3 优化
+set(CMAKE_BUILD_TYPE "Release")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
