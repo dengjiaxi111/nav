@@ -74,6 +74,10 @@ rog_map:
     max_threads: 4            # Conservative: 2 threads to avoid CPU overload
     grain_size: 512           # Points per task (larger = less overhead, less load balancing)
     min_cloud_size_for_parallel: 500  # Only parallelize if cloud has >= 500 points
+    
+    # Fading mechanism - decay obstacles not observed for a long time
+    fading_enable: true       # Enable obstacle fading
+    fading_frame_thresh: 20  
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0

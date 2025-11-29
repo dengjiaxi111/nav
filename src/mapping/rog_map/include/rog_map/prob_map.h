@@ -114,6 +114,11 @@ namespace rog_map {
         ESDFMap::Ptr esdf_map_;
         /// Spherical neighborhood lookup table
         std::vector<float> occupancy_buffer_;
+        
+        /// Fading mechanism: timestamp buffer to track when each cell was last observed as occupied
+        /// Value 0 means never observed or already faded
+        std::vector<uint32_t> timestamp_buffer_;
+        uint32_t frame_counter_{0};  // Incremented each update cycle
 
         bool map_empty_{true};
         struct RaycastData {
@@ -160,6 +165,9 @@ namespace rog_map {
         void resetCell(const int &hash_id) override;
 
         void probabilisticMapFromCache();
+        
+        /// Fading mechanism: scan all cells and fade old occupied cells to unknown
+        void processFading();
 
         void hitPointUpdate(const Vec3f &pos, const int &hash_id, const int &hit_num);
 

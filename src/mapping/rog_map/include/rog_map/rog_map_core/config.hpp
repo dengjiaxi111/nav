@@ -218,6 +218,15 @@ namespace rog_map {
                           << ", grain_size=" << grain_size << RESET << std::endl;
             }
 
+            // Fading parameters - decay obstacles not seen for a long time
+            loader.LoadParam(name_space + "/raycasting/fading_enable", fading_enable, false);
+            loader.LoadParam(name_space + "/raycasting/fading_frame_thresh", fading_frame_thresh, 500);
+            
+            if (fading_enable) {
+                std::cout << BLUE << "\t[ROG] Fading: enabled, threshold=" << fading_frame_thresh 
+                          << " frames" << RESET << std::endl;
+            }
+
             loader.LoadParam(name_space + "/virtual_ground_height", virtual_ground_height, -0.1);
             loader.LoadParam(name_space + "/virtual_ceil_height", virtual_ceil_height, -0.1);
 
@@ -348,6 +357,10 @@ namespace rog_map {
         int max_threads{4};
         int grain_size{512};
         int min_cloud_size_for_parallel{500};
+
+        /* Fading - decay obstacles not seen for a long time */
+        bool fading_enable{false};
+        int fading_frame_thresh{500};  // Frames before an occupied cell fades to unknown
 
         /* for unknown inflation */
         bool unk_inflation_en{false};

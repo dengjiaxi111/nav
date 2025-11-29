@@ -84,6 +84,12 @@ void ProbMap::initProbMap() {
 
 
     occupancy_buffer_.resize(map_size, 0);
+    
+    // Initialize timestamp buffer for fading mechanism
+    if (cfg_.fading_enable) {
+        timestamp_buffer_.resize(map_size, 0);
+    }
+    
     raycast_data_.raycaster.setResolution(cfg_.resolution);
     raycast_data_.resolution = cfg_.resolution;  // Cache for parallel raycasters
     // Initialize atomic arrays (cannot use resize with default value for atomics)
@@ -356,6 +362,9 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
         probabilisticMapFromCache();
         time_consuming_[2] = t_update.stop();
         map_empty_ = false;
+        
+        // Process fading after probability update
+        processFading();
     }
     inf_map_->getInflationNumAndTime(time_consuming_[6], time_consuming_[3]);
     time_consuming_[0] = tc.stop();
@@ -437,6 +446,9 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& robot_pose, con
         probabilisticMapFromCache();
         time_consuming_[2] = t_update.stop();
         map_empty_ = false;
+        
+        // Process fading after probability update
+        processFading();
     }
     inf_map_->getInflationNumAndTime(time_consuming_[6], time_consuming_[3]);
     time_consuming_[0] = tc.stop();
@@ -636,11 +648,19 @@ void ProbMap::resetCell(const int& hash_id) {
         // nothing need to do
     }
     ret = 0;
+    
+    // Reset timestamp for fading mechanism
+    if (cfg_.fading_enable && !timestamp_buffer_.empty()) {
+        timestamp_buffer_[hash_id] = 0;
+    }
 }
 
 void ProbMap::probabilisticMapFromCache() {
     const size_t cache_size = raycast_data_.update_cache_id_g.size();
     if (cache_size == 0) return;
+    
+    // Increment frame counter for fading mechanism
+    ++frame_counter_;
     
     // Structure to hold grid type transitions for inf_map update
     struct GridTransition {
@@ -653,6 +673,10 @@ void ProbMap::probabilisticMapFromCache() {
     std::mutex transition_mtx;
     std::vector<GridTransition> transitions;
     transitions.reserve(cache_size / 10);  // Estimate: ~10% of cells change type
+    
+    // Cache fading parameters for lambda capture
+    const bool fading_enabled = cfg_.fading_enable && !timestamp_buffer_.empty();
+    const uint32_t current_frame = frame_counter_;
     
     // Parallel probability update
     tbb::parallel_for(
@@ -684,6 +708,11 @@ void ProbMap::probabilisticMapFromCache() {
                 if (hit_count > 0) {
                     ret += cfg_.l_hit * hit_count;
                     if (ret > cfg_.l_max) ret = cfg_.l_max;
+                    
+                    // Update timestamp when cell is hit (observed as occupied)
+                    if (fading_enabled) {
+                        timestamp_buffer_[hash_id] = current_frame;
+                    }
                 } else {
                     ret += cfg_.l_miss * (op_count - hit_count);
                     if (ret < cfg_.l_min) ret = cfg_.l_min;
@@ -740,6 +769,80 @@ void ProbMap::probabilisticMapFromCache() {
     
     // Clear the cache vector
     raycast_data_.update_cache_id_g.clear();
+}
+
+void ProbMap::processFading() {
+    if (!cfg_.fading_enable || timestamp_buffer_.empty()) {
+        return;
+    }
+    
+    const uint32_t current_frame = frame_counter_;
+    const uint32_t fade_thresh = static_cast<uint32_t>(cfg_.fading_frame_thresh);
+    const size_t buffer_size = occupancy_buffer_.size();
+    const float unk_value = (cfg_.l_free + cfg_.l_occ) / 2.0f;
+    
+    // Structure to hold grid type transitions for inf_map update
+    struct GridTransition {
+        Vec3f pos;
+        GridType from_type;
+        GridType to_type;
+    };
+    
+    std::mutex transition_mtx;
+    std::vector<GridTransition> transitions;
+    transitions.reserve(1000);  // Estimate
+    
+    // Parallel scan all cells
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, buffer_size, 4096),
+        [&](const tbb::blocked_range<size_t>& range) {
+            std::vector<GridTransition> local_transitions;
+            
+            for (size_t hash_id = range.begin(); hash_id < range.end(); ++hash_id) {
+                float& ret = occupancy_buffer_[hash_id];
+                
+                // Only check occupied cells
+                if (!isOccupied(ret)) {
+                    continue;
+                }
+                
+                uint32_t last_seen = timestamp_buffer_[hash_id];
+                
+                // Check if timestamp is valid and expired
+                if (last_seen > 0 && (current_frame - last_seen) > fade_thresh) {
+                    // Fade to unknown
+                    ret = unk_value;
+                    timestamp_buffer_[hash_id] = 0;
+                    
+                    // Collect transition for inf_map update
+                    Vec3f pos;
+                    hashIdToPos(hash_id, pos);
+                    local_transitions.push_back({pos, GridType::OCCUPIED, GridType::UNKNOWN});
+                }
+            }
+            
+            if (!local_transitions.empty()) {
+                std::lock_guard<std::mutex> lock(transition_mtx);
+                transitions.insert(transitions.end(),
+                                   local_transitions.begin(),
+                                   local_transitions.end());
+            }
+        }
+    );
+    
+    // Sequential inf_map updates
+    for (const auto& t : transitions) {
+        inf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
+        if (cfg_.esdf_en) {
+            esdf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
+        }
+    }
+    
+    // Print fading info periodically
+    static int fade_log_cnt = 0;
+    if (!transitions.empty() && ++fade_log_cnt % 50 == 0) {
+        std::cout << "[ROG-Map Fading] Faded " << transitions.size() << " cells" << std::endl;
+    }
 }
 
 void ProbMap::hitPointUpdate(const Vec3f& pos, const int& hash_id, const int& hit_num) {
@@ -1068,6 +1171,12 @@ void ProbMap::resetLocalMap() {
     double unk_value = (cfg_.l_free + cfg_.l_occ)/2.0;
     // Clear local map
     std::fill(occupancy_buffer_.begin(), occupancy_buffer_.end(), unk_value);
+    
+    // Clear timestamp buffer for fading mechanism
+    if (cfg_.fading_enable && !timestamp_buffer_.empty()) {
+        std::fill(timestamp_buffer_.begin(), timestamp_buffer_.end(), 0);
+    }
+    
     raycast_data_.update_cache_id_g.clear();
     raycast_data_.batch_update_counter = 0;
     // Clear atomic arrays (cannot use std::fill on atomics)
