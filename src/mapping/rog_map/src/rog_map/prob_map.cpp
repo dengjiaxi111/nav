@@ -88,6 +88,15 @@ void ProbMap::initProbMap() {
     // Initialize timestamp buffer for fading mechanism
     if (cfg_.fading_enable) {
         timestamp_buffer_.resize(map_size, 0);
+        // Reserve space for active occupied cells tracking
+        active_occupied_cells_.reserve(map_size / 10);  // Estimate ~10% occupied
+    }
+    
+    // Initialize TBB thread limiter (persists for lifetime)
+    if (cfg_.parallel_enable && cfg_.max_threads > 0) {
+        tbb_thread_limiter_ = std::make_unique<tbb::global_control>(
+            tbb::global_control::max_allowed_parallelism, 
+            cfg_.max_threads);
     }
     
     raycast_data_.raycaster.setResolution(cfg_.resolution);
@@ -619,7 +628,9 @@ void ProbMap::boundBoxByLocalMap(Vec3f& box_min, Vec3f& box_max) const {
 
 void ProbMap::resetCell(const int& hash_id) {
     float& ret = occupancy_buffer_[hash_id];
-    if (isOccupied(ret)) {
+    bool was_occupied = isOccupied(ret);
+    
+    if (was_occupied) {
         /// if current state is occupied
         Vec3f pos;
         hashIdToPos(hash_id, pos);
@@ -649,9 +660,15 @@ void ProbMap::resetCell(const int& hash_id) {
     }
     ret = 0;
     
-    // Reset timestamp for fading mechanism
-    if (cfg_.fading_enable && !timestamp_buffer_.empty()) {
-        timestamp_buffer_[hash_id] = 0;
+    // Reset timestamp and remove from active tracking for fading mechanism
+    if (cfg_.fading_enable) {
+        if (!timestamp_buffer_.empty()) {
+            timestamp_buffer_[hash_id] = 0;
+        }
+        if (was_occupied) {
+            std::lock_guard<std::mutex> lock(active_cells_mtx_);
+            active_occupied_cells_.erase(hash_id);
+        }
     }
 }
 
@@ -667,6 +684,7 @@ void ProbMap::probabilisticMapFromCache() {
         Vec3f pos;
         GridType from_type;
         GridType to_type;
+        int hash_id;  // For active_occupied_cells tracking
     };
     
     // Thread-local storage for collecting transitions
@@ -732,7 +750,7 @@ void ProbMap::probabilisticMapFromCache() {
                 if (from_type != to_type) {
                     Vec3f pos;
                     globalIndexToPos(id_g, pos);
-                    local_transitions.push_back({pos, from_type, to_type});
+                    local_transitions.push_back({pos, from_type, to_type, hash_id});
                 }
                 
                 // Reset counters
@@ -750,19 +768,33 @@ void ProbMap::probabilisticMapFromCache() {
         }
     );
     
-    // Sequential inf_map updates (not thread-safe)
-    for (const auto& t : transitions) {
-        inf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
-        if (cfg_.esdf_en) {
-            esdf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
-        }
-        if (cfg_.frontier_extraction_en) {
-            Vec3i id_g;
-            posToGlobalIndex(t.pos, id_g);
-            if (t.from_type == KNOWN_FREE) {
-                fcnt_map_->updateFrontierCounter(id_g, false);
-            } else if (t.to_type == KNOWN_FREE) {
-                fcnt_map_->updateFrontierCounter(id_g, true);
+    // Sequential inf_map updates (not thread-safe) and active_occupied_cells tracking
+    {
+        std::lock_guard<std::mutex> lock(active_cells_mtx_);
+        for (const auto& t : transitions) {
+            inf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
+            if (cfg_.esdf_en) {
+                esdf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
+            }
+            if (cfg_.frontier_extraction_en) {
+                Vec3i id_g;
+                posToGlobalIndex(t.pos, id_g);
+                if (t.from_type == KNOWN_FREE) {
+                    fcnt_map_->updateFrontierCounter(id_g, false);
+                } else if (t.to_type == KNOWN_FREE) {
+                    fcnt_map_->updateFrontierCounter(id_g, true);
+                }
+            }
+            
+            // Track active occupied cells for efficient fading
+            if (fading_enabled) {
+                if (t.to_type == GridType::OCCUPIED) {
+                    // Cell became occupied - add to tracking set
+                    active_occupied_cells_.insert(t.hash_id);
+                } else if (t.from_type == GridType::OCCUPIED) {
+                    // Cell was occupied but now is not - remove from tracking
+                    active_occupied_cells_.erase(t.hash_id);
+                }
             }
         }
     }
@@ -778,70 +810,53 @@ void ProbMap::processFading() {
     
     const uint32_t current_frame = frame_counter_;
     const uint32_t fade_thresh = static_cast<uint32_t>(cfg_.fading_frame_thresh);
-    const size_t buffer_size = occupancy_buffer_.size();
     const float unk_value = (cfg_.l_free + cfg_.l_occ) / 2.0f;
     
     // Structure to hold grid type transitions for inf_map update
-    struct GridTransition {
+    struct FadeTransition {
         Vec3f pos;
-        GridType from_type;
-        GridType to_type;
+        int hash_id;
     };
     
-    std::mutex transition_mtx;
-    std::vector<GridTransition> transitions;
-    transitions.reserve(1000);  // Estimate
+    std::vector<FadeTransition> faded_cells;
     
-    // Parallel scan all cells
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, buffer_size, 4096),
-        [&](const tbb::blocked_range<size_t>& range) {
-            std::vector<GridTransition> local_transitions;
+    // Only scan tracked active occupied cells - O(n) where n = active cells, not full map!
+    {
+        std::lock_guard<std::mutex> lock(active_cells_mtx_);
+        faded_cells.reserve(active_occupied_cells_.size() / 10);  // Estimate ~10% fade per check
+        
+        // Collect cells to fade (cannot modify set while iterating)
+        std::vector<int> cells_to_remove;
+        
+        for (int hash_id : active_occupied_cells_) {
+            uint32_t last_seen = timestamp_buffer_[hash_id];
             
-            for (size_t hash_id = range.begin(); hash_id < range.end(); ++hash_id) {
-                float& ret = occupancy_buffer_[hash_id];
+            // Check if timestamp is valid and expired
+            if (last_seen > 0 && (current_frame - last_seen) > fade_thresh) {
+                // Fade to unknown
+                occupancy_buffer_[hash_id] = unk_value;
+                timestamp_buffer_[hash_id] = 0;
                 
-                // Only check occupied cells
-                if (!isOccupied(ret)) {
-                    continue;
-                }
-                
-                uint32_t last_seen = timestamp_buffer_[hash_id];
-                
-                // Check if timestamp is valid and expired
-                if (last_seen > 0 && (current_frame - last_seen) > fade_thresh) {
-                    // Fade to unknown
-                    ret = unk_value;
-                    timestamp_buffer_[hash_id] = 0;
-                    
-                    // Collect transition for inf_map update
-                    Vec3f pos;
-                    hashIdToPos(hash_id, pos);
-                    local_transitions.push_back({pos, GridType::OCCUPIED, GridType::UNKNOWN});
-                }
-            }
-            
-            if (!local_transitions.empty()) {
-                std::lock_guard<std::mutex> lock(transition_mtx);
-                transitions.insert(transitions.end(),
-                                   local_transitions.begin(),
-                                   local_transitions.end());
+                // Collect for inf_map update
+                Vec3f pos;
+                hashIdToPos(hash_id, pos);
+                faded_cells.push_back({pos, hash_id});
+                cells_to_remove.push_back(hash_id);
             }
         }
-    );
-    
-    // Sequential inf_map updates
-    for (const auto& t : transitions) {
-        inf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
-        if (cfg_.esdf_en) {
-            esdf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
+        
+        // Remove faded cells from tracking set
+        for (int hash_id : cells_to_remove) {
+            active_occupied_cells_.erase(hash_id);
         }
     }
     
-    // Print fading info periodically
-    static int fade_log_cnt = 0;
-    if (!transitions.empty() && ++fade_log_cnt % 50 == 0) {
-        std::cout << "[ROG-Map Fading] Faded " << transitions.size() << " cells" << std::endl;
+    // Sequential inf_map updates (outside lock to reduce contention)
+    for (const auto& t : faded_cells) {
+        inf_map_->updateGridCounter(t.pos, GridType::OCCUPIED, GridType::UNKNOWN);
+        if (cfg_.esdf_en) {
+            esdf_map_->updateGridCounter(t.pos, GridType::OCCUPIED, GridType::UNKNOWN);
+        }
     }
 }
 
@@ -1049,53 +1064,74 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
     if (cfg_.raycasting_en) {
         const size_t cloud_size = raycasting_cloud.size();
         
-        auto dda_start = std::chrono::high_resolution_clock::now();
+        // Cache frequently used values
+        const double resolution_inv = sc_.resolution_inv;
+        const Vec3i half_map_size_i = sc_.half_map_size_i;
+        const Vec3i map_size_i = sc_.map_size_i;
+        const Vec3i local_map_bound_min_i = local_map_bound_min_i_;
+        const Vec3i local_map_bound_max_i = local_map_bound_max_i_;
+        const double raycast_range_min = cfg_.raycast_range_min;
+        const double resolution = raycast_data_.resolution;
+        const int map_yz = map_size_i.y() * map_size_i.z();
+        const int map_z = map_size_i.z();
         
-        // Limit TBB thread count based on configuration
-        tbb::global_control gc(tbb::global_control::max_allowed_parallelism, 
-                               cfg_.max_threads > 0 ? cfg_.max_threads : tbb::this_task_arena::max_concurrency());
-        
-        // Thread-local storage for collecting first-touch grid cells
         std::mutex first_touch_mtx;
         std::vector<Vec3i> first_touch_cells;
-        first_touch_cells.reserve(cloud_size * 50);  // Estimate: ~50 cells per ray average
+        first_touch_cells.reserve(cloud_size * 25);
 
-        // Parallel DDA raycasting using TBB
-        const size_t grain = cfg_.grain_size > 0 ? cfg_.grain_size : 4;
+        const size_t grain = cfg_.grain_size > 0 ? cfg_.grain_size : 128;
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, cloud_size, grain),
-            [&](const tbb::blocked_range<size_t>& range) {
-                // Each thread has its own RayCaster instance
-                raycaster::RayCaster local_raycaster;
-                local_raycaster.setResolution(raycast_data_.resolution);
-                
-                // Thread-local buffer for first-touch cells
+            [&, resolution_inv, half_map_size_i, map_size_i, local_map_bound_min_i, 
+             local_map_bound_max_i, raycast_range_min, resolution, map_yz, map_z]
+            (const tbb::blocked_range<size_t>& range) {
                 std::vector<Vec3i> local_first_touch;
-                local_first_touch.reserve((range.end() - range.begin()) * 50);
+                local_first_touch.reserve((range.end() - range.begin()) * 25);
+                
+                raycaster::RayCaster local_raycaster;
+                local_raycaster.setResolution(resolution);
 
                 for (size_t i = range.begin(); i < range.end(); ++i) {
                     const Vec3f& p = raycasting_cloud[i];
-                    Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
+                    const Vec3f dir = (p - cur_odom).normalized();
+                    const Vec3f raycast_start = dir * raycast_range_min + cur_odom;
                     local_raycaster.setInput(raycast_start, p);
                     Vec3f ray_pt;
                     
                     while (local_raycaster.step(ray_pt)) {
-                        Vec3i cur_ray_id_g;
-                        posToGlobalIndex(ray_pt, cur_ray_id_g);
-                        if (!insideLocalMap(cur_ray_id_g)) {
+                        const int gx = static_cast<int>(std::floor(ray_pt.x() * resolution_inv));
+                        const int gy = static_cast<int>(std::floor(ray_pt.y() * resolution_inv));
+                        const int gz = static_cast<int>(std::floor(ray_pt.z() * resolution_inv));
+                        
+                        if (gx < local_map_bound_min_i.x() || gx > local_map_bound_max_i.x() ||
+                            gy < local_map_bound_min_i.y() || gy > local_map_bound_max_i.y() ||
+                            gz < local_map_bound_min_i.z() || gz > local_map_bound_max_i.z()) {
                             break;
                         }
-                        // Thread-safe atomic increment
-                        const auto hash_id = getHashIndexFromGlobalIndex(cur_ray_id_g);
-                        uint16_t prev_cnt = raycast_data_.operation_cnt[hash_id].fetch_add(1, std::memory_order_relaxed);
-                        if (prev_cnt == 0) {
-                            // First touch - collect for later queue insertion
-                            local_first_touch.push_back(cur_ray_id_g);
+                        
+                        int lx = gx % map_size_i.x();
+                        int ly = gy % map_size_i.y();
+                        int lz = gz % map_size_i.z();
+                        
+                        if (lx > half_map_size_i.x()) lx -= map_size_i.x();
+                        else if (lx < -half_map_size_i.x()) lx += map_size_i.x();
+                        if (ly > half_map_size_i.y()) ly -= map_size_i.y();
+                        else if (ly < -half_map_size_i.y()) ly += map_size_i.y();
+                        if (lz > half_map_size_i.z()) lz -= map_size_i.z();
+                        else if (lz < -half_map_size_i.z()) lz += map_size_i.z();
+                        
+                        const int hash_id = (lx + half_map_size_i.x()) * map_yz +
+                                            (ly + half_map_size_i.y()) * map_z +
+                                            (lz + half_map_size_i.z());
+                        
+                        const uint16_t prev = raycast_data_.operation_cnt[hash_id].fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (prev == 0) {
+                            local_first_touch.emplace_back(gx, gy, gz);
                         }
                     }
                 }
                 
-                // Merge local first-touch cells to shared buffer
                 if (!local_first_touch.empty()) {
                     std::lock_guard<std::mutex> lock(first_touch_mtx);
                     first_touch_cells.insert(first_touch_cells.end(), 
@@ -1105,22 +1141,11 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             }
         );
 
-        // Sequential insertion into vector
         raycast_data_.update_cache_id_g.insert(
             raycast_data_.update_cache_id_g.end(),
             first_touch_cells.begin(),
             first_touch_cells.end()
         );
-        
-        auto dda_end = std::chrono::high_resolution_clock::now();
-        double dda_ms = std::chrono::duration<double, std::milli>(dda_end - dda_start).count();
-        
-        // Print timing info periodically (every 50 frames)
-        static int frame_cnt = 0;
-        if (++frame_cnt % 50 == 0) {
-            std::cout << "[ROG-Map TBB] DDA: " << dda_ms << "ms, rays: " << cloud_size 
-                      << ", cells: " << first_touch_cells.size() << std::endl;
-        }
     }
 }
 
@@ -1172,9 +1197,13 @@ void ProbMap::resetLocalMap() {
     // Clear local map
     std::fill(occupancy_buffer_.begin(), occupancy_buffer_.end(), unk_value);
     
-    // Clear timestamp buffer for fading mechanism
-    if (cfg_.fading_enable && !timestamp_buffer_.empty()) {
-        std::fill(timestamp_buffer_.begin(), timestamp_buffer_.end(), 0);
+    // Clear timestamp buffer and active cells tracking for fading mechanism
+    if (cfg_.fading_enable) {
+        if (!timestamp_buffer_.empty()) {
+            std::fill(timestamp_buffer_.begin(), timestamp_buffer_.end(), 0);
+        }
+        std::lock_guard<std::mutex> lock(active_cells_mtx_);
+        active_occupied_cells_.clear();
     }
     
     raycast_data_.update_cache_id_g.clear();

@@ -26,6 +26,8 @@
 
 #include <queue>
 #include <atomic>
+#include <unordered_set>
+#include <tbb/global_control.h>
 #include <rog_map/inf_map.h>
 #include <rog_map/free_cnt_map.h>
 #include <rog_map/esdf_map.h>
@@ -119,6 +121,15 @@ namespace rog_map {
         /// Value 0 means never observed or already faded
         std::vector<uint32_t> timestamp_buffer_;
         uint32_t frame_counter_{0};  // Incremented each update cycle
+        
+        /// Fading optimization: track active occupied cells by hash_id
+        /// Only these cells need to be checked for fading, avoiding full map scan
+        std::unordered_set<int> active_occupied_cells_;
+        std::mutex active_cells_mtx_;  // Protect active_occupied_cells_ modifications
+        
+        /// TBB global thread limiter - lives for the lifetime of the map
+        /// Ensures all parallel_for calls respect max_threads setting
+        std::unique_ptr<tbb::global_control> tbb_thread_limiter_;
 
         bool map_empty_{true};
         struct RaycastData {
