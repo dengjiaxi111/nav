@@ -12,7 +12,7 @@ rog_map:
   # Map sliding
   map_sliding:
     enable: true
-    threshold: 5.0
+    threshold: 1.5
 
   # Fix map origin
   fix_map_origin: [0.0, 0.0, 0.0]
@@ -33,7 +33,7 @@ rog_map:
     use_dynamic_reconfigure: false
     pub_unknown_map_en: true
     frame_id: "odom"
-    time_rate: 10.0
+    time_rate: 20.0
     frame_rate: 30
     range: [10.0, 10.0, 5.0]
 
@@ -67,7 +67,13 @@ rog_map:
     p_occ: 0.80
     p_free: 0.35              # 提高一点：更容易判定为 free
     ray_range: [0.2, 30.0]
-    local_update_box: [5.0, 5.0, 2.0]
+    local_update_box: [10.0, 10.0, 2.0]
+    
+    # TBB Parallelization parameters (requires compilation with USE_TBB_PARALLEL=ON)
+    parallel_enable: true     # Enable/disable parallelization at runtime
+    max_threads: 4            # Conservative: 2 threads to avoid CPU overload
+    grain_size: 512           # Points per task (larger = less overhead, less load balancing)
+    min_cloud_size_for_parallel: 500  # Only parallelize if cloud has >= 500 points
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0

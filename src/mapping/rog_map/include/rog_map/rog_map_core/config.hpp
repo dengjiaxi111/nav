@@ -207,6 +207,16 @@ namespace rog_map {
             }
             local_update_box_d = Vec3f(update_box[0], update_box[1], update_box[2]);
 
+            // TBB Parallelization parameters
+            loader.LoadParam(name_space + "/raycasting/parallel_enable", parallel_enable, true);
+            loader.LoadParam(name_space + "/raycasting/max_threads", max_threads, 4);
+            loader.LoadParam(name_space + "/raycasting/grain_size", grain_size, 512);
+            loader.LoadParam(name_space + "/raycasting/min_cloud_size_for_parallel", min_cloud_size_for_parallel, 500);
+            
+            if (parallel_enable) {
+                std::cout << BLUE << "\t[ROG] TBB Parallel: enabled, max_threads=" << max_threads 
+                          << ", grain_size=" << grain_size << RESET << std::endl;
+            }
 
             loader.LoadParam(name_space + "/virtual_ground_height", virtual_ground_height, -0.1);
             loader.LoadParam(name_space + "/virtual_ceil_height", virtual_ceil_height, -0.1);
@@ -332,6 +342,12 @@ namespace rog_map {
         int point_filt_num{}, batch_update_size{};
         float p_hit{}, p_miss{}, p_min{}, p_max{}, p_occ{}, p_free{};
         float l_hit{}, l_miss{}, l_min{}, l_max{}, l_occ{}, l_free{};
+
+        /* TBB Parallelization */
+        bool parallel_enable{true};
+        int max_threads{4};
+        int grain_size{512};
+        int min_cloud_size_for_parallel{500};
 
         /* for unknown inflation */
         bool unk_inflation_en{false};

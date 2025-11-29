@@ -118,7 +118,7 @@ namespace rog_map {
         bool map_empty_{true};
         struct RaycastData {
             raycaster::RayCaster raycaster;  // Only used in serial mode
-            std::queue<Vec3i> update_cache_id_g;
+            std::vector<Vec3i> update_cache_id_g;  // Changed from queue to vector for parallel processing
             // Use atomic counters for thread-safe parallel updates
             std::vector<std::atomic<uint16_t>> operation_cnt;
             std::vector<std::atomic<uint16_t>> hit_cnt;

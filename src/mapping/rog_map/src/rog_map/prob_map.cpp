@@ -24,6 +24,7 @@
 #include <rog_map/prob_map.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <tbb/global_control.h>
 #include <chrono>
 using namespace rog_map;
 using namespace super_utils;
@@ -638,30 +639,107 @@ void ProbMap::resetCell(const int& hash_id) {
 }
 
 void ProbMap::probabilisticMapFromCache() {
-    //    int addr = getHashIndexFromGlobalIndex(Vec3i(41,
-    //                                                 -216,
-    //                                                 -6));
-    //    float ret = occupancy_buffer_[addr];
-    //    std::cout << "ret: " << ret << std::endl;
-    while (!raycast_data_.update_cache_id_g.empty()) {
+    const size_t cache_size = raycast_data_.update_cache_id_g.size();
+    if (cache_size == 0) return;
+    
+    // Structure to hold grid type transitions for inf_map update
+    struct GridTransition {
         Vec3f pos;
-        Vec3i id_g = raycast_data_.update_cache_id_g.front();
-        raycast_data_.update_cache_id_g.pop();
-        Vec3i id_l;
-        globalIndexToLocalIndex(id_g, id_l);
-        int hash_id = getLocalIndexHash(id_l);
-        globalIndexToPos(id_g, pos);
-        const uint16_t hit_count = raycast_data_.hit_cnt[hash_id].load(std::memory_order_relaxed);
-        const uint16_t op_count = raycast_data_.operation_cnt[hash_id].load(std::memory_order_relaxed);
-        if (hit_count > 0) {
-            hitPointUpdate(pos, hash_id, hit_count);
+        GridType from_type;
+        GridType to_type;
+    };
+    
+    // Thread-local storage for collecting transitions
+    std::mutex transition_mtx;
+    std::vector<GridTransition> transitions;
+    transitions.reserve(cache_size / 10);  // Estimate: ~10% of cells change type
+    
+    // Parallel probability update
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, cache_size, 256),
+        [&](const tbb::blocked_range<size_t>& range) {
+            std::vector<GridTransition> local_transitions;
+            
+            for (size_t i = range.begin(); i < range.end(); ++i) {
+                const Vec3i& id_g = raycast_data_.update_cache_id_g[i];
+                Vec3i id_l;
+                globalIndexToLocalIndex(id_g, id_l);
+                int hash_id = getLocalIndexHash(id_l);
+                
+                const uint16_t hit_count = raycast_data_.hit_cnt[hash_id].load(std::memory_order_relaxed);
+                const uint16_t op_count = raycast_data_.operation_cnt[hash_id].load(std::memory_order_relaxed);
+                
+                // Get current occupancy value and determine from_type
+                float& ret = occupancy_buffer_[hash_id];
+                GridType from_type;
+                if (isOccupied(ret)) {
+                    from_type = GridType::OCCUPIED;
+                } else if (isKnownFree(ret)) {
+                    from_type = GridType::KNOWN_FREE;
+                } else {
+                    from_type = GridType::UNKNOWN;
+                }
+                
+                // Update probability
+                if (hit_count > 0) {
+                    ret += cfg_.l_hit * hit_count;
+                    if (ret > cfg_.l_max) ret = cfg_.l_max;
+                } else {
+                    ret += cfg_.l_miss * (op_count - hit_count);
+                    if (ret < cfg_.l_min) ret = cfg_.l_min;
+                }
+                
+                // Determine to_type
+                GridType to_type;
+                if (isOccupied(ret)) {
+                    to_type = GridType::OCCUPIED;
+                } else if (isKnownFree(ret)) {
+                    to_type = GridType::KNOWN_FREE;
+                } else {
+                    to_type = GridType::UNKNOWN;
+                }
+                
+                // Collect transition if type changed
+                if (from_type != to_type) {
+                    Vec3f pos;
+                    globalIndexToPos(id_g, pos);
+                    local_transitions.push_back({pos, from_type, to_type});
+                }
+                
+                // Reset counters
+                raycast_data_.hit_cnt[hash_id].store(0, std::memory_order_relaxed);
+                raycast_data_.operation_cnt[hash_id].store(0, std::memory_order_relaxed);
+            }
+            
+            // Merge local transitions
+            if (!local_transitions.empty()) {
+                std::lock_guard<std::mutex> lock(transition_mtx);
+                transitions.insert(transitions.end(), 
+                                   local_transitions.begin(), 
+                                   local_transitions.end());
+            }
         }
-        else {
-            missPointUpdate(pos, hash_id, op_count - hit_count);
+    );
+    
+    // Sequential inf_map updates (not thread-safe)
+    for (const auto& t : transitions) {
+        inf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
+        if (cfg_.esdf_en) {
+            esdf_map_->updateGridCounter(t.pos, t.from_type, t.to_type);
         }
-        raycast_data_.hit_cnt[hash_id].store(0, std::memory_order_relaxed);
-        raycast_data_.operation_cnt[hash_id].store(0, std::memory_order_relaxed);
+        if (cfg_.frontier_extraction_en) {
+            Vec3i id_g;
+            posToGlobalIndex(t.pos, id_g);
+            if (t.from_type == KNOWN_FREE) {
+                fcnt_map_->updateFrontierCounter(id_g, false);
+            } else if (t.to_type == KNOWN_FREE) {
+                fcnt_map_->updateFrontierCounter(id_g, true);
+            }
+        }
     }
+    
+    // Clear the cache vector
+    raycast_data_.update_cache_id_g.clear();
 }
 
 void ProbMap::hitPointUpdate(const Vec3f& pos, const int& hash_id, const int& hit_num) {
@@ -870,14 +948,19 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
         
         auto dda_start = std::chrono::high_resolution_clock::now();
         
+        // Limit TBB thread count based on configuration
+        tbb::global_control gc(tbb::global_control::max_allowed_parallelism, 
+                               cfg_.max_threads > 0 ? cfg_.max_threads : tbb::this_task_arena::max_concurrency());
+        
         // Thread-local storage for collecting first-touch grid cells
         std::mutex first_touch_mtx;
         std::vector<Vec3i> first_touch_cells;
         first_touch_cells.reserve(cloud_size * 50);  // Estimate: ~50 cells per ray average
 
         // Parallel DDA raycasting using TBB
+        const size_t grain = cfg_.grain_size > 0 ? cfg_.grain_size : 4;
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, cloud_size, 64),  // grain size 64
+            tbb::blocked_range<size_t>(0, cloud_size, grain),
             [&](const tbb::blocked_range<size_t>& range) {
                 // Each thread has its own RayCaster instance
                 raycaster::RayCaster local_raycaster;
@@ -919,10 +1002,12 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             }
         );
 
-        // Sequential insertion into queue (queue is not thread-safe)
-        for (const auto& id_g : first_touch_cells) {
-            raycast_data_.update_cache_id_g.push(id_g);
-        }
+        // Sequential insertion into vector
+        raycast_data_.update_cache_id_g.insert(
+            raycast_data_.update_cache_id_g.end(),
+            first_touch_cells.begin(),
+            first_touch_cells.end()
+        );
         
         auto dda_end = std::chrono::high_resolution_clock::now();
         double dda_ms = std::chrono::duration<double, std::milli>(dda_end - dda_start).count();
@@ -940,7 +1025,7 @@ void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
     const auto& hash_id = getHashIndexFromGlobalIndex(id_g);
     uint16_t prev_cnt = raycast_data_.operation_cnt[hash_id].fetch_add(1, std::memory_order_relaxed);
     if (prev_cnt == 0) {
-        raycast_data_.update_cache_id_g.push(id_g);
+        raycast_data_.update_cache_id_g.push_back(id_g);
     }
     if (is_hit) {
         raycast_data_.hit_cnt[hash_id].fetch_add(1, std::memory_order_relaxed);
@@ -983,9 +1068,7 @@ void ProbMap::resetLocalMap() {
     double unk_value = (cfg_.l_free + cfg_.l_occ)/2.0;
     // Clear local map
     std::fill(occupancy_buffer_.begin(), occupancy_buffer_.end(), unk_value);
-    while (!raycast_data_.update_cache_id_g.empty()) {
-        raycast_data_.update_cache_id_g.pop();
-    }
+    raycast_data_.update_cache_id_g.clear();
     raycast_data_.batch_update_counter = 0;
     // Clear atomic arrays (cannot use std::fill on atomics)
     for (auto& cnt : raycast_data_.operation_cnt) {
