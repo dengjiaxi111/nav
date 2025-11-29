@@ -25,6 +25,7 @@
 #pragma once
 
 #include <queue>
+#include <atomic>
 #include <rog_map/inf_map.h>
 #include <rog_map/free_cnt_map.h>
 #include <rog_map/esdf_map.h>
@@ -116,13 +117,15 @@ namespace rog_map {
 
         bool map_empty_{true};
         struct RaycastData {
-            raycaster::RayCaster raycaster;
+            raycaster::RayCaster raycaster;  // Only used in serial mode
             std::queue<Vec3i> update_cache_id_g;
-            std::vector<uint16_t> operation_cnt;
-            std::vector<uint16_t> hit_cnt;
+            // Use atomic counters for thread-safe parallel updates
+            std::vector<std::atomic<uint16_t>> operation_cnt;
+            std::vector<std::atomic<uint16_t>> hit_cnt;
             Vec3f cache_box_max, cache_box_min, local_update_box_max, local_update_box_min;
             int batch_update_counter{0};
             std::mutex raycast_range_mtx;
+            double resolution{0.1};  // Cache resolution for parallel raycasters
         } raycast_data_;
 
         vector<double> time_consuming_;

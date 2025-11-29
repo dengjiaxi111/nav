@@ -22,6 +22,9 @@
 */
 
 #include <rog_map/prob_map.h>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#include <chrono>
 using namespace rog_map;
 using namespace super_utils;
 
@@ -81,8 +84,14 @@ void ProbMap::initProbMap() {
 
     occupancy_buffer_.resize(map_size, 0);
     raycast_data_.raycaster.setResolution(cfg_.resolution);
-    raycast_data_.operation_cnt.resize(map_size, 0);
-    raycast_data_.hit_cnt.resize(map_size, 0);
+    raycast_data_.resolution = cfg_.resolution;  // Cache for parallel raycasters
+    // Initialize atomic arrays (cannot use resize with default value for atomics)
+    raycast_data_.operation_cnt = std::vector<std::atomic<uint16_t>>(map_size);
+    raycast_data_.hit_cnt = std::vector<std::atomic<uint16_t>>(map_size);
+    for (int i = 0; i < map_size; ++i) {
+        raycast_data_.operation_cnt[i].store(0, std::memory_order_relaxed);
+        raycast_data_.hit_cnt[i].store(0, std::memory_order_relaxed);
+    }
 
     resetLocalMap();
 
@@ -642,15 +651,16 @@ void ProbMap::probabilisticMapFromCache() {
         globalIndexToLocalIndex(id_g, id_l);
         int hash_id = getLocalIndexHash(id_l);
         globalIndexToPos(id_g, pos);
-        if (raycast_data_.hit_cnt[hash_id] > 0) {
-            hitPointUpdate(pos, hash_id, raycast_data_.hit_cnt[hash_id]);
+        const uint16_t hit_count = raycast_data_.hit_cnt[hash_id].load(std::memory_order_relaxed);
+        const uint16_t op_count = raycast_data_.operation_cnt[hash_id].load(std::memory_order_relaxed);
+        if (hit_count > 0) {
+            hitPointUpdate(pos, hash_id, hit_count);
         }
         else {
-            missPointUpdate(pos, hash_id,
-                            raycast_data_.operation_cnt[hash_id] - raycast_data_.hit_cnt[hash_id]);
+            missPointUpdate(pos, hash_id, op_count - hit_count);
         }
-        raycast_data_.hit_cnt[hash_id] = 0;
-        raycast_data_.operation_cnt[hash_id] = 0;
+        raycast_data_.hit_cnt[hash_id].store(0, std::memory_order_relaxed);
+        raycast_data_.operation_cnt[hash_id].store(0, std::memory_order_relaxed);
     }
 }
 
@@ -856,31 +866,84 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
     }
 
     if (cfg_.raycasting_en) {
-        // 4) process all inf points, updae free probability
-        for (const auto& p : raycasting_cloud) {
-            Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
-            raycast_data_.raycaster.setInput(raycast_start, p);
-            Vec3f ray_pt;
-            while (raycast_data_.raycaster.step(ray_pt)) {
-                Vec3i cur_ray_id_g;
-                posToGlobalIndex(ray_pt, cur_ray_id_g);
-                if (!insideLocalMap(cur_ray_id_g)) {
-                    break;
+        const size_t cloud_size = raycasting_cloud.size();
+        
+        auto dda_start = std::chrono::high_resolution_clock::now();
+        
+        // Thread-local storage for collecting first-touch grid cells
+        std::mutex first_touch_mtx;
+        std::vector<Vec3i> first_touch_cells;
+        first_touch_cells.reserve(cloud_size * 50);  // Estimate: ~50 cells per ray average
+
+        // Parallel DDA raycasting using TBB
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, cloud_size, 64),  // grain size 64
+            [&](const tbb::blocked_range<size_t>& range) {
+                // Each thread has its own RayCaster instance
+                raycaster::RayCaster local_raycaster;
+                local_raycaster.setResolution(raycast_data_.resolution);
+                
+                // Thread-local buffer for first-touch cells
+                std::vector<Vec3i> local_first_touch;
+                local_first_touch.reserve((range.end() - range.begin()) * 50);
+
+                for (size_t i = range.begin(); i < range.end(); ++i) {
+                    const Vec3f& p = raycasting_cloud[i];
+                    Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
+                    local_raycaster.setInput(raycast_start, p);
+                    Vec3f ray_pt;
+                    
+                    while (local_raycaster.step(ray_pt)) {
+                        Vec3i cur_ray_id_g;
+                        posToGlobalIndex(ray_pt, cur_ray_id_g);
+                        if (!insideLocalMap(cur_ray_id_g)) {
+                            break;
+                        }
+                        // Thread-safe atomic increment
+                        const auto hash_id = getHashIndexFromGlobalIndex(cur_ray_id_g);
+                        uint16_t prev_cnt = raycast_data_.operation_cnt[hash_id].fetch_add(1, std::memory_order_relaxed);
+                        if (prev_cnt == 0) {
+                            // First touch - collect for later queue insertion
+                            local_first_touch.push_back(cur_ray_id_g);
+                        }
+                    }
                 }
-                insertUpdateCandidate(cur_ray_id_g, false);
+                
+                // Merge local first-touch cells to shared buffer
+                if (!local_first_touch.empty()) {
+                    std::lock_guard<std::mutex> lock(first_touch_mtx);
+                    first_touch_cells.insert(first_touch_cells.end(), 
+                                            local_first_touch.begin(), 
+                                            local_first_touch.end());
+                }
             }
+        );
+
+        // Sequential insertion into queue (queue is not thread-safe)
+        for (const auto& id_g : first_touch_cells) {
+            raycast_data_.update_cache_id_g.push(id_g);
+        }
+        
+        auto dda_end = std::chrono::high_resolution_clock::now();
+        double dda_ms = std::chrono::duration<double, std::milli>(dda_end - dda_start).count();
+        
+        // Print timing info periodically (every 50 frames)
+        static int frame_cnt = 0;
+        if (++frame_cnt % 50 == 0) {
+            std::cout << "[ROG-Map TBB] DDA: " << dda_ms << "ms, rays: " << cloud_size 
+                      << ", cells: " << first_touch_cells.size() << std::endl;
         }
     }
 }
 
 void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
     const auto& hash_id = getHashIndexFromGlobalIndex(id_g);
-    raycast_data_.operation_cnt[hash_id]++;
-    if (raycast_data_.operation_cnt[hash_id] == 1) {
+    uint16_t prev_cnt = raycast_data_.operation_cnt[hash_id].fetch_add(1, std::memory_order_relaxed);
+    if (prev_cnt == 0) {
         raycast_data_.update_cache_id_g.push(id_g);
     }
     if (is_hit) {
-        raycast_data_.hit_cnt[hash_id]++;
+        raycast_data_.hit_cnt[hash_id].fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -924,6 +987,11 @@ void ProbMap::resetLocalMap() {
         raycast_data_.update_cache_id_g.pop();
     }
     raycast_data_.batch_update_counter = 0;
-    std::fill(raycast_data_.operation_cnt.begin(), raycast_data_.operation_cnt.end(), 0);
-    std::fill(raycast_data_.hit_cnt.begin(), raycast_data_.hit_cnt.end(), 0);
+    // Clear atomic arrays (cannot use std::fill on atomics)
+    for (auto& cnt : raycast_data_.operation_cnt) {
+        cnt.store(0, std::memory_order_relaxed);
+    }
+    for (auto& cnt : raycast_data_.hit_cnt) {
+        cnt.store(0, std::memory_order_relaxed);
+    }
 }

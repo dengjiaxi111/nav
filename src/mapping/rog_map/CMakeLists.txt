@@ -20,6 +20,9 @@ add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 # Define the voxelize and raycasting method
 add_definitions(-DORIGIN_AT_CORNER)
 
+# TBB for parallel raycasting
+find_package(TBB REQUIRED)
+
 string(TOUPPER $ENV{ROS_DISTRO} ROS_VERSION)
 message(STATUS "ROS version: ${ROS_VERSION}")
 
@@ -45,6 +48,7 @@ set(third_party_libs
         #            ${OpenCV_LIBRARIES}
         ${PCL_LIBRARIES}
         yaml-cpp
+        TBB::tbb
 )
 
 set(ros_libs
