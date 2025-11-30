@@ -14,14 +14,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
+find_package(PCL REQUIRED)
 find_package(rog_map REQUIRED)
 
+include_directories(
+  include
+  ${PCL_INCLUDE_DIRS}
+)
+
+# ROG-Map node (standalone executable，保留用于独立运行)
 add_executable(rog_map_node src/rog_map_node.cpp)
 
 # Define necessary macros for rog_map
@@ -42,8 +51,70 @@ ament_target_dependencies(rog_map_node
   rog_map
 )
 
-install(TARGETS rog_map_node
+# ROG-Map Component (可组合节点，支持进程内零拷贝)
+add_library(rog_map_component SHARED
+  src/rog_map_component.cpp
+)
+
+target_compile_definitions(rog_map_component PRIVATE
+  USE_ROS2
+  ORIGIN_AT_CORNER
+  ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
+)
+
+ament_target_dependencies(rog_map_component
+  rclcpp
+  rclcpp_components
+  sensor_msgs
+  nav_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  pcl_conversions
+  rog_map
+)
+
+rclcpp_components_register_node(rog_map_component
+  PLUGIN "rog_map_ros2_node::ROGMapComponent"
+  EXECUTABLE rog_map_component_node
+)
+
+# Obstacle Perception node (组件化)
+add_library(obstacle_perception_component SHARED
+  src/obstacle_perception.cpp
+)
+
+target_compile_definitions(obstacle_perception_component PRIVATE
+  USE_ROS2
+)
+
+target_link_libraries(obstacle_perception_component
+  ${PCL_LIBRARIES}
+)
+
+ament_target_dependencies(obstacle_perception_component
+  rclcpp
+  rclcpp_components
+  sensor_msgs
+  nav_msgs
+  geometry_msgs
+  visualization_msgs
+  pcl_conversions
+)
+
+rclcpp_components_register_node(obstacle_perception_component
+  PLUGIN "obstacle_perception::ObstaclePerceptionNode"
+  EXECUTABLE obstacle_perception_node
+)
+
+install(TARGETS rog_map_node rog_map_component obstacle_perception_component
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY include/
+  DESTINATION include
 )
 
 install(DIRECTORY launch config rviz

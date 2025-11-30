@@ -3,7 +3,7 @@ rog_map:
   esdf:
     resolution: 0.1
     enable: false
-    local_update_box: [10.0, 10.0, 4.0]
+    local_update_box: [10.0, 10.0, 3.0]
 
   # PCD loading
   load_pcd_en: false
@@ -12,7 +12,7 @@ rog_map:
   # Map sliding
   map_sliding:
     enable: true
-    threshold: 1.5
+    threshold: 2.5
 
   # Fix map origin
   fix_map_origin: [0.0, 0.0, 0.0]
@@ -34,15 +34,15 @@ rog_map:
     pub_unknown_map_en: true
     frame_id: "odom"
     time_rate: 20.0
-    frame_rate: 30
+    frame_rate: 20
     range: [10.0, 10.0, 5.0]
 
   # Grid resolution
-  resolution: 0.04
-  inflation_resolution: 0.04
+  resolution: 0.05
+  inflation_resolution: 0.05
 
   # Unknown inflation
-  unk_inflation_en: false
+  unk_inflation_en: true
   unk_inflation_step: 1
 
   # Inflation
@@ -50,7 +50,7 @@ rog_map:
   intensity_thresh: -1
 
   # Map size
-  map_size: [12.0, 12.0, 2.0]
+  map_size: [8.0, 8.0, 2.0]
 
   # Point filtering
   point_filt_num: 1
@@ -58,10 +58,10 @@ rog_map:
   # Raycasting
   raycasting:
     enable: true
-    batch_update_size: 1
-    unk_thresh: 0.60          # 降低：更容易从 unknown 变为 known
-    p_hit: 0.75
-    p_miss: 0.35
+    batch_update_size: 2
+    unk_thresh: 0.65          # 降低：更容易从 unknown 变为 known
+    p_hit: 0.8
+    p_miss: 0.3
     p_min: 0.12
     p_max: 0.97
     p_occ: 0.80
@@ -71,13 +71,13 @@ rog_map:
     
     # TBB Parallelization parameters (requires compilation with USE_TBB_PARALLEL=ON)
     parallel_enable: true     # Enable/disable parallelization at runtime
-    max_threads: 4            # Conservative: 2 threads to avoid CPU overload
+    max_threads: 3            # Conservative: 2 threads to avoid CPU overload
     grain_size: 512           # Points per task (larger = less overhead, less load balancing)
     min_cloud_size_for_parallel: 500  # Only parallelize if cloud has >= 500 points
     
     # Fading mechanism - decay obstacles not observed for a long time
     fading_enable: true       # Enable obstacle fading
-    fading_frame_thresh: 20  
+    fading_frame_thresh: 40  
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0

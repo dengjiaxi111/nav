@@ -252,19 +252,24 @@ namespace rog_map {
             }
 
             vec_E<Vec3f> occ_map, inf_occ_map;
-            sensor_msgs::msg::PointCloud2 cloud_msg;
 
             if (vm_.occ_pub->get_subscription_count() >= 1) {
                 boxSearch(box_min, box_max, OCCUPIED, occ_map);
-                vecEVec3fToPC2(occ_map, cloud_msg);
-                vm_.occ_pub->publish(cloud_msg);
+                // 使用 UniquePtr 发布，支持进程内零拷贝传输
+                auto cloud_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+                vecEVec3fToPC2(occ_map, *cloud_msg);
+                cloud_msg->header.stamp = nh_->get_clock()->now();
+                cloud_msg->header.frame_id = "odom";
+                vm_.occ_pub->publish(std::move(cloud_msg));
             }
 
             if (vm_.occ_inf_pub->get_subscription_count() >= 1) {
                 boxSearchInflate(box_min, box_max, OCCUPIED, inf_occ_map);
-                vecEVec3fToPC2(inf_occ_map, cloud_msg);
-                cloud_msg.header.stamp = nh_->get_clock()->now();
-                vm_.occ_inf_pub->publish(cloud_msg);
+                auto cloud_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+                vecEVec3fToPC2(inf_occ_map, *cloud_msg);
+                cloud_msg->header.stamp = nh_->get_clock()->now();
+                cloud_msg->header.frame_id = "odom";
+                vm_.occ_inf_pub->publish(std::move(cloud_msg));
             }
 
             /* visualize ESDF Map*/
@@ -272,25 +277,30 @@ namespace rog_map {
                 if (vm_.esdf_pub->get_subscription_count() >= 1) {
                     PointCloud pc;
                     esdf_map_->getPositiveESDFPointCloud(box_min, box_max, robot_state_.p.z() - 0.5, pc);
-                    pcl::toROSMsg(pc, cloud_msg);
-                    cloud_msg.header.frame_id = "odom";
-                    cloud_msg.header.stamp = nh_->get_clock()->now();
-                    vm_.esdf_pub->publish(cloud_msg);
+                    auto esdf_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+                    pcl::toROSMsg(pc, *esdf_msg);
+                    esdf_msg->header.frame_id = "odom";
+                    esdf_msg->header.stamp = nh_->get_clock()->now();
+                    vm_.esdf_pub->publish(std::move(esdf_msg));
                 }
 
                 // if (vm_.esdf_neg_pub->get_subscription_count() >= 1) {
                 //     PointCloud pc;
                 //     esdf_map_->getNegativeESDFPointCloud(box_min, box_max, robot_state_.p.z() - 0.5, pc);
-                //     pcl::toROSMsg(pc, cloud_msg);
-                //     cloud_msg.header.frame_id = "world";
-                //     cloud_msg.header.stamp = nh_->get_clock()->now();
-                //     vm_.esdf_neg_pub->publish(cloud_msg);
+                //     auto neg_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+                //     pcl::toROSMsg(pc, *neg_msg);
+                //     neg_msg->header.frame_id = "world";
+                //     neg_msg->header.stamp = nh_->get_clock()->now();
+                //     vm_.esdf_neg_pub->publish(std::move(neg_msg));
                 // }
 
 #ifdef ESDF_MAP_DEBUG
-        esdf_map_->getESDFOccPC2(box_min, box_max,cloud_msg);
-        cloud_msg.header.stamp = nh_->get_clock()->now();
-        vm_.esdf_occ_pub->publish(cloud_msg);
+        {
+            auto debug_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+            esdf_map_->getESDFOccPC2(box_min, box_max, *debug_msg);
+            debug_msg->header.stamp = nh_->get_clock()->now();
+            vm_.esdf_occ_pub->publish(std::move(debug_msg));
+        }
 #endif
             }
 

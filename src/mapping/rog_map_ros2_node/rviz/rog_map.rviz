@@ -8,9 +8,8 @@ Panels:
         - /Status1
         - /MarkerArray1
         - /MarkerArray1/Topic1
+        - /PointCloud22
         - /PointCloud22/Topic1
-        - /PointCloud23
-        - /PointCloud23/Topic1
       Splitter Ratio: 0.5
     Tree Height: 1039
   - Class: rviz_common/Selection
@@ -90,8 +89,6 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        ESDF Map Text: true
-        ESDF Updating Range: true
         Local Map Origin: true
         Local Map Origin_text: true
         Local Map Range: true
@@ -133,7 +130,7 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 1.125
+        Max Value: 1.024999976158142
         Min Value: -0.5249999761581421
         Value: true
       Axis: Z
@@ -142,7 +139,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: AxisColor
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -153,7 +150,7 @@ Visualization Manager:
       Selectable: true
       Size (Pixels): 3
       Size (m): 0.03999999910593033
-      Style: Spheres
+      Style: Flat Squares
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -161,40 +158,6 @@ Visualization Manager:
         History Policy: System Default
         Reliability Policy: System Default
         Value: /rog_map/inf_occ
-      Use Fixed Frame: true
-      Use rainbow: true
-      Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: Intensity
-      Decay Time: 0
-      Enabled: true
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 11.760682106018066
-      Min Color: 0; 0; 0
-      Min Intensity: 10
-      Name: PointCloud2
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 3
-      Size (m): 0.05000000074505806
-      Style: Boxes
-      Topic:
-        Depth: 5
-        Durability Policy: System Default
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /rog_map/esdf
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -244,25 +207,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 19.836008071899414
+      Distance: 10.468093872070312
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.3021056056022644
-        Y: -0.7040209174156189
-        Z: -3.2425854206085205
+        X: 0.13011397421360016
+        Y: 0.8123050332069397
+        Z: -3.071220636367798
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.3503979444503784
+      Pitch: 1.4953978061676025
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.648553848266602
+      Yaw: 4.643553733825684
     Saved: ~
 Window Geometry:
   Displays:
@@ -280,5 +243,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 2931
-  X: 1173
-  Y: 670
+  X: 0
+  Y: 559

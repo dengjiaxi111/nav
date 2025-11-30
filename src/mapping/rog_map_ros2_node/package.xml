@@ -3,15 +3,17 @@
 <package format="3">
   <name>rog_map_ros2_node</name>
   <version>0.0.1</version>
-  <description>ROS2 wrapper node for ROG-Map library</description>
+  <description>ROS2 wrapper node for ROG-Map library with obstacle perception</description>
   <maintainer email="user@example.com">User</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
