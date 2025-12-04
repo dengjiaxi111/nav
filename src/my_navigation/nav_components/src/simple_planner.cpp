@@ -1,7 +1,8 @@
 // nav_components/src/simple_planner.cpp
-// A*路径规划实现
+// A*路径规划实现 - 仅支持 OccupancyGrid
 
 #include "nav_components/simple_planner.hpp"
+#include "nav_components/grid_map_adapter.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -12,13 +13,34 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     obstacle_threshold_ = node_->declare_parameter("planner.obstacle_threshold", 50);
 }
 
-void SimplePlanner::setMap(nav_msgs::msg::OccupancyGrid::SharedPtr map) {
-    map_ = map;
-    width_ = map->info.width;
-    height_ = map->info.height;
-    resolution_ = map->info.resolution;
-    origin_x_ = map->info.origin.position.x;
-    origin_y_ = map->info.origin.position.y;
+void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
+    map_ = map;  // 保存基类指针
+    
+    if (!map) {
+        grid_map_ = nullptr;
+        return;
+    }
+    
+    // 检查地图类型
+    if (!map->isOccupancyGrid()) {
+        RCLCPP_ERROR(node_->get_logger(), 
+            "SimplePlanner 仅支持 OccupancyGrid 地图，当前地图类型不兼容");
+        grid_map_ = nullptr;
+        return;
+    }
+    
+    // 转换为 GridMapAdapter 获取原始地图
+    auto adapter = std::dynamic_pointer_cast<GridMapAdapter>(map);
+    if (adapter) {
+        grid_map_ = adapter->getOccupancyGrid();
+        if (grid_map_) {
+            width_ = grid_map_->info.width;
+            height_ = grid_map_->info.height;
+            resolution_ = grid_map_->info.resolution;
+            origin_x_ = grid_map_->info.origin.position.x;
+            origin_y_ = grid_map_->info.origin.position.y;
+        }
+    }
 }
 
 bool SimplePlanner::worldToMap(double wx, double wy, int& mx, int& my) {
@@ -34,7 +56,8 @@ void SimplePlanner::mapToWorld(int mx, int my, double& wx, double& wy) {
 
 bool SimplePlanner::isValid(int x, int y) {
     if (x < 0 || x >= width_ || y < 0 || y >= height_) return false;
-    return map_->data[y * width_ + x] < obstacle_threshold_;
+    int8_t val = grid_map_->data[y * width_ + x];
+    return val >= 0 && val < obstacle_threshold_;
 }
 
 double SimplePlanner::heuristic(int x1, int y1, int x2, int y2) {
@@ -46,8 +69,8 @@ bool SimplePlanner::plan(
     const geometry_msgs::msg::PoseStamped& goal,
     nav_msgs::msg::Path& path)
 {
-    if (!map_) {
-        RCLCPP_ERROR(node_->get_logger(), "地图未设置");
+    if (!grid_map_) {
+        RCLCPP_ERROR(node_->get_logger(), "地图未设置或类型不兼容");
         return false;
     }
     

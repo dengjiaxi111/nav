@@ -20,6 +20,11 @@ public:
         }
     }
     
+    // 获取原始 OccupancyGrid（供需要直接访问的规划器使用）
+    nav_msgs::msg::OccupancyGrid::SharedPtr getOccupancyGrid() const { return map_; }
+    
+    nav_core::MapType type() const override { return nav_core::MapType::OCCUPANCY_GRID; }
+    
     nav_core::MapQuery query(double x, double y) const override {
         nav_core::MapQuery result;
         if (!map_) return result;
@@ -49,6 +54,7 @@ public:
     }
     
     void setObstacleThreshold(int8_t thresh) { obstacle_threshold_ = thresh; }
+    int8_t obstacleThreshold() const { return obstacle_threshold_; }
 
 private:
     nav_msgs::msg::OccupancyGrid::SharedPtr map_;

@@ -10,6 +10,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 
 #include <nav_core/nav_fsm.hpp>
+#include <nav_core/map_interface.hpp>
 #include "nav_interfaces/action/navigate.hpp"
 #include "nav_components/simple_planner.hpp"
 #include "nav_components/pure_pursuit.hpp"
@@ -17,6 +18,8 @@
 #include "nav_components/spin_recovery.hpp"
 #include "nav_components/recovery_manager.hpp"
 #include "nav_components/static_map_loader.hpp"
+#include "nav_components/grid_map_adapter.hpp"
+#include "nav_components/esdf_map.hpp"
 
 using Navigate = nav_interfaces::action::Navigate;
 using GoalHandle = rclcpp_action::ServerGoalHandle<Navigate>;
@@ -31,6 +34,9 @@ public:
         map_file_ = declare_parameter("map_file", "");
         map_frame_ = declare_parameter("map_frame", "map");
         base_frame_ = declare_parameter("base_frame", "base_link");
+        map_update_rate_ = declare_parameter("map_update_rate", 0.0);  // 0 = 不更新
+        enable_esdf_ = declare_parameter("enable_esdf", false);
+        esdf_vis_max_dist_ = declare_parameter("esdf_vis_max_dist", 2.0);
         
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -39,18 +45,38 @@ public:
         path_pub_ = create_publisher<nav_msgs::msg::Path>("plan", 10);
         map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("map", rclcpp::QoS(1).transient_local().reliable());
         
+        // ESDF 可视化 topic
+        if (enable_esdf_) {
+            esdf_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("esdf_map", rclcpp::QoS(1).transient_local().reliable());
+        }
+        
+        // 创建地图适配器
+        map_adapter_ = std::make_shared<nav_components::GridMapAdapter>();
+        
         // 加载静态地图或订阅地图topic
         if (!map_file_.empty()) {
-            map_ = nav_components::StaticMapLoader::load(map_file_, get_logger());
-            if (map_) {
-                planner_.setMap(map_);
+            auto grid_map = nav_components::StaticMapLoader::load(map_file_, get_logger());
+            if (grid_map) {
+                map_adapter_->setMap(grid_map);
+                planner_.setMap(map_adapter_);
+                occupancy_grid_ = grid_map;  // 保存用于发布
+                
+                // 构建 ESDF
+                if (enable_esdf_) {
+                    buildEsdf(grid_map);
+                }
+                
                 // 定时发布地图，兼容不同QoS的订阅者
-                map_timer_ = create_wall_timer(
+                map_pub_timer_ = create_wall_timer(
                     std::chrono::milliseconds(50),
                     [this]() {
-                        if (map_) {
-                            map_->header.stamp = now();
-                            map_pub_->publish(*map_);
+                        if (occupancy_grid_) {
+                            occupancy_grid_->header.stamp = now();
+                            map_pub_->publish(*occupancy_grid_);
+                        }
+                        if (esdf_vis_grid_) {
+                            esdf_vis_grid_->header.stamp = now();
+                            esdf_pub_->publish(*esdf_vis_grid_);
                         }
                     });
                 RCLCPP_INFO(get_logger(), "静态地图已加载");
@@ -59,10 +85,19 @@ public:
             map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
                 "map", rclcpp::QoS(1).transient_local(),
                 [this](nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-                    map_ = msg;
-                    planner_.setMap(map_);
+                    map_adapter_->setMap(msg);
+                    planner_.setMap(map_adapter_);
+                    if (enable_esdf_) buildEsdf(msg);
                     RCLCPP_INFO(get_logger(), "地图更新: %dx%d", msg->info.width, msg->info.height);
                 });
+        }
+        
+        // 地图更新定时器（独立于控制循环）
+        if (map_update_rate_ > 0.0) {
+            map_update_timer_ = create_wall_timer(
+                std::chrono::duration<double>(1.0 / map_update_rate_),
+                std::bind(&NavServer::mapUpdateLoop, this));
+            RCLCPP_INFO(get_logger(), "地图更新已启用: %.1f Hz", map_update_rate_);
         }
         
         initComponents();
@@ -73,7 +108,7 @@ public:
             std::bind(&NavServer::handleCancel, this, std::placeholders::_1),
             std::bind(&NavServer::handleAccepted, this, std::placeholders::_1));
         
-        timer_ = create_wall_timer(
+        control_timer_ = create_wall_timer(
             std::chrono::duration<double>(1.0 / control_rate_),
             std::bind(&NavServer::controlLoop, this));
         
@@ -81,6 +116,24 @@ public:
     }
 
 private:
+    // 从 OccupancyGrid 构建 ESDF
+    void buildEsdf(const nav_msgs::msg::OccupancyGrid::SharedPtr& grid) {
+        auto start = now();
+        esdf_map_ = std::make_shared<nav_components::EsdfMap>();
+        esdf_map_->buildFromOccupancy(grid);
+        esdf_vis_grid_ = esdf_map_->toOccupancyGrid(esdf_vis_max_dist_);
+        auto duration = (now() - start).seconds() * 1000.0;
+        RCLCPP_INFO(get_logger(), "ESDF 构建完成: %dx%d, 耗时 %.1f ms",
+                    esdf_map_->width(), esdf_map_->height(), duration);
+    }
+    
+    // 地图更新循环（独立于控制循环）
+    void mapUpdateLoop() {
+        if (map_adapter_) {
+            map_adapter_->update();
+        }
+    }
+    
     void initComponents() {
         planner_.initialize(this);
         controller_.initialize(this);
@@ -103,14 +156,8 @@ private:
         const rclcpp_action::GoalUUID&,
         std::shared_ptr<const Navigate::Goal> goal) {
         
-        if (fsm_.state() != nav_core::NavState::IDLE &&
-            fsm_.state() != nav_core::NavState::SUCCEEDED &&
-            fsm_.state() != nav_core::NavState::FAILED) {
-            RCLCPP_WARN(get_logger(), "导航中，拒绝新目标");
-            return rclcpp_action::GoalResponse::REJECT;
-        }
-        
-        RCLCPP_INFO(get_logger(), "目标: (%.2f, %.2f)",
+        // 如果正在导航中，将取消当前任务并执行新目标
+        RCLCPP_INFO(get_logger(), "收到目标: (%.2f, %.2f)",
             goal->goal_pose.pose.position.x, goal->goal_pose.pose.position.y);
         return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
     }
@@ -121,8 +168,19 @@ private:
     }
     
     void handleAccepted(const std::shared_ptr<GoalHandle> goal_handle) {
+        // 如果有旧任务，先中止
+        if (goal_handle_) {
+            auto result = std::make_shared<Navigate::Result>();
+            result->success = false;
+            result->message = "被新目标抢占";
+            goal_handle_->abort(result);
+            RCLCPP_INFO(get_logger(), "旧目标已中止");
+        }
+        
         goal_handle_ = goal_handle;
         goal_ = goal_handle->get_goal()->goal_pose;
+        stopRobot();
+        recovery_mgr_.reset();
         fsm_.reset();
         fsm_.transitionTo(nav_core::NavState::PLANNING);
         start_time_ = now();
@@ -184,7 +242,7 @@ private:
     }
     
     void doPlanning() {
-        if (!map_) {
+        if (!map_adapter_) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "等待地图...");
             return;
         }
@@ -288,19 +346,31 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr esdf_pub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
-    rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::TimerBase::SharedPtr map_timer_;
     
-    nav_msgs::msg::OccupancyGrid::SharedPtr map_;
+    // 定时器
+    rclcpp::TimerBase::SharedPtr control_timer_;      // 控制循环
+    rclcpp::TimerBase::SharedPtr map_update_timer_;   // 地图更新（独立）
+    rclcpp::TimerBase::SharedPtr map_pub_timer_;      // 地图发布（可视化）
+    
+    // 地图：通过 MapInterface 抽象，支持不同地图类型
+    std::shared_ptr<nav_components::GridMapAdapter> map_adapter_;
+    std::shared_ptr<nav_components::EsdfMap> esdf_map_;
+    nav_msgs::msg::OccupancyGrid::SharedPtr occupancy_grid_;   // OccupancyGrid 可视化
+    nav_msgs::msg::OccupancyGrid::SharedPtr esdf_vis_grid_;    // ESDF 可视化
+    
     geometry_msgs::msg::PoseStamped current_pose_;
     geometry_msgs::msg::PoseStamped goal_;
     nav_msgs::msg::Path current_path_;
     
     std::string map_file_, map_frame_, base_frame_;
     double control_rate_, goal_timeout_, goal_tolerance_, yaw_tolerance_;
+    double map_update_rate_, esdf_vis_max_dist_;
+    bool enable_esdf_;
     rclcpp::Time start_time_;
 };
+
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<NavServer>());

@@ -15,7 +15,7 @@ def generate_launch_description():
     map_file = LaunchConfiguration('map_file')
     
     # 默认地图路径
-    default_map = os.path.join(pkg_dir, 'maps', 'test_map.yaml')
+    default_map = os.path.join(pkg_dir, 'maps', 'RMUC_final.yaml')
     
     # 临时静态TF: map -> odom -> base_link (测试用)
     # RMUC地图原点 [-13.4, -23.8], 地图约 46x39m, 设置机器人在地图中部

@@ -4,9 +4,14 @@ nav_server:
   ros__parameters:
     # map_file 由 launch 文件设置
     control_rate: 20.0
+    map_update_rate: 10.0  # 地图更新频率(Hz)
     goal_timeout: 60.0
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
+    
+    # ESDF 地图
+    enable_esdf: true
+    esdf_vis_max_dist: 2.0  # 可视化最大距离(m)
     
     # 规划器
     planner:
