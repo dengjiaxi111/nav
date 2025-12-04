@@ -18,6 +18,9 @@ build/
 install/
 log/
 
+#reference
+[ref]/
+
 
 
 # Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`

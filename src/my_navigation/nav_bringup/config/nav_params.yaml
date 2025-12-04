@@ -1,0 +1,27 @@
+# 导航参数配置
+
+nav_server:
+  ros__parameters:
+    # map_file 由 launch 文件设置
+    control_rate: 20.0
+    goal_timeout: 60.0
+    goal_tolerance: 0.1
+    yaw_tolerance: 0.1
+    
+    # 规划器
+    planner:
+      obstacle_threshold: 50
+    
+    # 控制器(Pure Pursuit)
+    controller:
+      lookahead_dist: 0.5
+      max_linear_vel: 0.5
+      max_angular_vel: 1.0
+    
+    
+    # 恢复行为
+    recovery:
+      backup_dist: 0.3
+      backup_vel: -0.2
+      spin_angle: 3.14
+      spin_vel: 0.5

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>nav_core</name>
+  <version>0.1.0</version>
+  <description>导航核心：状态机、接口定义</description>
+  <maintainer email="lehan@todo.todo">lehan</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>eigen</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
