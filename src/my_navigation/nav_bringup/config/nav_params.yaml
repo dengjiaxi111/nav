@@ -13,9 +13,36 @@ nav_server:
     enable_esdf: true
     esdf_vis_max_dist: 2.0  # 可视化最大距离(m)
     
+    # Costmap 膨胀
+    inflation:
+      radius: 0.8              # 膨胀半径(m)
+      inscribed_radius: 0.15    # 内切圆半径(m)，致命代价区
+      cost_scaling: 1.8        # 指数衰减因子
+      decay_type: exponential  # linear 或 exponential
+    
     # 规划器
     planner:
-      obstacle_threshold: 50
+      obstacle_threshold: 100   # 障碍物阈值
+      cost_weight: 1.5         # 代价权重 (越大越远离障碍物)
+      enable_smooth: true      # 启用 B样条平滑
+      resample_interval: 0.4   # 重采样间隔 (m)，控制曲线光滑度，越小越光滑
+      smooth_resolution: 0.05  # 平滑后路径分辨率 (m)
+      
+      # B样条优化（基于 Fast-Planner）
+      enable_optimization: true    # 启用轨迹优化
+      opt_lambda_smooth: 5.0      # 平滑项权重（弹性带）
+      opt_lambda_collision: 10.0    # 障碍物项权重（ESDF 排斥）- 增大以远离墙壁
+      opt_safe_dist: 0.8           # 安全距离阈值 (m)
+      opt_max_iter: 50             # 最大迭代次数
+      opt_curvature_adaptive: true # 曲率自适应（转角处更远离障碍物）
+      opt_curvature_weight: 4.0    # 曲率加权系数 - 增大以在弯道处更远离墙壁
+      
+      # 窄通道中心线吸引（进出窄通道时走中间）
+      narrow_passage_align: true   # 启用窄通道中心吸引
+      narrow_passage_thresh: 0.7   # 窄通道判定阈值 (m)，ESDF距离小于此值的区域
+      opt_lambda_align: 10.0       # 中心吸引权重 (降低，防止穿墙)
+      align_entry_points: 3        # 入口/出口各优化几个点 (1-3)
+      narrow_min_consecutive: 3    # 最少连续几个点才算窄通道（防止单点误判）
     
     # 控制器(Pure Pursuit)
     controller:

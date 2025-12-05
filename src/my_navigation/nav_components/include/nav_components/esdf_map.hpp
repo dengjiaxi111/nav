@@ -70,6 +70,34 @@ public:
         return distance_[iy * width_ + ix];
     }
     
+    // 双线性插值获取距离（平滑版本）
+    double getDistanceInterp(double x, double y) const {
+        double fx = (x - origin_x_) / resolution_;
+        double fy = (y - origin_y_) / resolution_;
+        
+        int ix = static_cast<int>(fx);
+        int iy = static_cast<int>(fy);
+        
+        if (ix < 0 || ix >= width_ - 1 || iy < 0 || iy >= height_ - 1) {
+            // 边界返回最近格子的值
+            ix = std::clamp(ix, 0, width_ - 1);
+            iy = std::clamp(iy, 0, height_ - 1);
+            return static_cast<double>(distance_[iy * width_ + ix]);
+        }
+        
+        // 双线性插值
+        double tx = fx - ix;
+        double ty = fy - iy;
+        
+        double d00 = distance_[iy * width_ + ix];
+        double d10 = distance_[iy * width_ + (ix + 1)];
+        double d01 = distance_[(iy + 1) * width_ + ix];
+        double d11 = distance_[(iy + 1) * width_ + (ix + 1)];
+        
+        return (1 - tx) * (1 - ty) * d00 + tx * (1 - ty) * d10 
+             + (1 - tx) * ty * d01 + tx * ty * d11;
+    }
+    
     // 二次插值获取平滑距离和梯度（解决峡谷中心梯度无效化问题）
     // 参考: 2×3 方格三点拟合二次函数
     // 返回: distance, grad_x, grad_y
