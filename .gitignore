@@ -13,6 +13,9 @@ bin-release/
 *.ipa
 *.apk
 
+# py environments
+venv_acados/
+
 #ROS 
 build/
 install/

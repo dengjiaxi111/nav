@@ -1,0 +1,9 @@
+# Exact versions to avoid conflicts
+numpy==1.24.3
+scipy==1.10.1
+casadi==3.6.5
+matplotlib==3.7.1
+pyyaml>=6.0  # 用于运行时配置加载
+
+# Note: acados_template must be installed manually:
+# pip install -e ~/dependency/acados/interfaces/acados_template

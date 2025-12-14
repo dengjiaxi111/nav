@@ -14,6 +14,10 @@
 #include "nav_interfaces/action/navigate.hpp"
 #include "nav_components/simple_planner.hpp"
 #include "nav_components/pure_pursuit.hpp"
+
+#include "nav_components/nmpc.hpp"
+
+
 #include "nav_components/backup_recovery.hpp"
 #include "nav_components/spin_recovery.hpp"
 #include "nav_components/recovery_manager.hpp"
@@ -283,8 +287,18 @@ private:
     }
     
     void doControlling() {
+        static int control_count = 0;
+        if (++control_count == 1) {
+            RCLCPP_INFO(get_logger(), "🎮 Controller: 开始控制循环");
+        }
+        
         geometry_msgs::msg::Twist cmd;
         auto result = controller_.computeVelocity(current_pose_, cmd);
+        
+        if (control_count % 20 == 0) {
+            RCLCPP_INFO(get_logger(), "🎮 Controller: result=%d, v=%.2f, ω=%.2f",
+                static_cast<int>(result), cmd.linear.x, cmd.angular.z);
+        }
         
         switch (result) {
             case nav_core::ControlResult::RUNNING:
@@ -292,9 +306,11 @@ private:
                 break;
             case nav_core::ControlResult::SUCCEEDED:
                 stopRobot();
+                RCLCPP_INFO(get_logger(), "✅ Controller: 到达目标!");
                 fsm_.transitionTo(nav_core::NavState::SUCCEEDED);
                 break;
             case nav_core::ControlResult::FAILED:
+                RCLCPP_WARN(get_logger(), "❌ Controller: 控制失败");
                 fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
                 break;
         }
@@ -371,7 +387,14 @@ private:
     
     nav_core::NavFSM fsm_;
     nav_components::SimplePlanner planner_;
-    nav_components::PurePursuit controller_;
+    
+    // 控制器 (条件编译选择 NMPC 或 PurePursuit)
+
+    nav_components::NMPC controller_;
+
+    // nav_components::PurePursuit controller_;
+
+    
     nav_components::RecoveryManager recovery_mgr_;
     
     rclcpp_action::Server<Navigate>::SharedPtr action_server_;

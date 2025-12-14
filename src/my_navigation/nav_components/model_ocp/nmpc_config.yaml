@@ -1,0 +1,33 @@
+# NMPC 运行时配置文件
+# 修改此文件后无需重新生成 solver，ROS2 节点会自动加载
+
+# 约束参数 (运行时可调)
+constraints:
+  max_linear_velocity: 2.0      # m/s
+  max_angular_velocity: 2.0     # rad/s
+  max_linear_acceleration: 2.0  # m/s²
+  max_angular_acceleration: 3.0 # rad/s²
+
+# 代价函数权重 (运行时可调)
+cost_weights:
+  # 状态权重 [x, y, theta, v, omega]
+  Q_position: 10.0      # x, y 位置跟踪权重
+  Q_orientation: 5.0    # theta 航向角权重
+  Q_velocity: 1.0       # v, omega 速度权重
+  
+  # 控制权重 [a_lin, alpha_ang]
+  R_linear: 0.1         # 线加速度平滑性
+  R_angular: 0.1        # 角加速度平滑性
+  
+  # 终端权重倍数
+  terminal_weight_multiplier: 2.0
+
+# OCP 时域参数 (需要重新生成 solver 才能修改)
+horizon:
+  prediction_time: 2.0  # 预测时域 (秒)
+  num_steps: 20         # 离散化步数
+
+# 求解器选项
+solver:
+  max_iterations: 1     # SQP_RTI 固定为 1
+  qp_max_iterations: 50
