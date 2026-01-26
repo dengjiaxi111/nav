@@ -38,8 +38,8 @@ rog_map:
     range: [10.0, 10.0, 5.0]
 
   # Grid resolution
-  resolution: 0.05
-  inflation_resolution: 0.05
+  resolution: 0.025
+  inflation_resolution: 0.025
 
   # Unknown inflation
   unk_inflation_en: true
@@ -59,13 +59,13 @@ rog_map:
   raycasting:
     enable: true
     batch_update_size: 2
-    unk_thresh: 0.65          # 降低：更容易从 unknown 变为 known
-    p_hit: 0.8
-    p_miss: 0.3
-    p_min: 0.12
-    p_max: 0.97
-    p_occ: 0.80
-    p_free: 0.35              # 提高一点：更容易判定为 free
+    unk_thresh: 0.5          # Unknown判定阈值（概率值在此附近为unknown）
+    p_hit: 0.70              # Hit观测时增加的占据概率
+    p_miss: 0.30             # Miss观测时减少的占据概率（应 < 0.5）
+    p_min: 0.12              # 最小概率限制
+    p_max: 0.97              # 最大概率限制
+    p_occ: 0.70              # 判定为occupied的概率阈值（应 > 0.5）
+    p_free: 0.30             # 判定为free的概率阈值（应 < 0.5，且 < p_miss）
     ray_range: [0.2, 30.0]
     local_update_box: [10.0, 10.0, 2.0]
     
@@ -85,3 +85,30 @@ rog_map:
 
   # Performance logging
   enable_performance_log: true
+
+# 2D地图投影配置（基于中科大爷的高程分析方案）
+projector:
+  # 机器人参数
+  robot_height: 0.55          # 机器人高度(m)
+  ground_clearance: 0.03      # 地面间隙(m)
+  
+  # 高程分析阈值（基于H + 占据率分类）
+  slope_height_max: 0.10      # 坡道/平面最大高度差(m)，H < 0.1m → 可通行
+  step_height_min: 0.10       # 台阶最小高度差(m)，0.1m < H < 0.2m
+  step_height_max: 0.20       # 台阶最大高度差(m)
+  obstacle_height_min: 0.30   # 障碍物最小高度差(m)，H > 0.3m → 机器人/人/墙
+  high_occupancy_thresh: 0.5  # 高占据率阈值，判断密集垂直结构
+  
+  # 地图范围参数
+  map_range_x: 10.0           # X方向范围(m)
+  map_range_y: 10.0           # Y方向范围(m)
+  resolution: 0.025           # 栅格分辨率(m)
+  
+  # 高度范围（相对于机器人当前z坐标）
+  z_min_relative: -0.5        # 相对最低高度(m)
+  z_max_relative: 2.0         # 相对最高高度(m)
+  
+  # 发布参数
+  publish_rate: 20.0          # 发布频率(Hz)
+  frame_id: "map"            # 坐标系
+  topic_name: "/rog_map/map_2d"  # 发布话题名

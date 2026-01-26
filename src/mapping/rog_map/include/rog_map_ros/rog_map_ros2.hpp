@@ -204,8 +204,30 @@ namespace rog_map {
             // Compute lidar position from robot pose using cached extrinsic
             Vec3f lidar_pos = computeLidarPosition(temp_pose);
             
+            // Performance monitoring: measure pure map update time
+            auto t_update_start = std::chrono::high_resolution_clock::now();
+            
             // Use new interface: separate robot center and lidar center
             updateProbMap(temp_pc, temp_pose, lidar_pos);
+
+            auto t_update_end = std::chrono::high_resolution_clock::now();
+            double update_ms = std::chrono::duration<double, std::milli>(t_update_end - t_update_start).count();
+            
+            // Log statistics every 50 frames
+            static int update_count = 0;
+            static double update_sum = 0.0, update_max = 0.0, update_min = 1e6;
+            update_sum += update_ms;
+            update_max = std::max(update_max, update_ms);
+            update_min = std::min(update_min, update_ms);
+            update_count++;
+            
+            if (update_count % 50 == 0) {
+                double update_avg = update_sum / update_count;
+                std::cout << YELLOW << "[ROG-Map Update Perf] frames=" << update_count 
+                          << " avg=" << update_avg << "ms"
+                          << " min=" << update_min << "ms"
+                          << " max=" << update_max << "ms" << RESET << std::endl;
+            }
 
             writeTimeConsumingToLog(time_log_file_);
         }
@@ -217,6 +239,23 @@ namespace rog_map {
             if (map_empty_) {
                 return;
             }
+            
+            // Performance monitoring: measure visualization callback time
+            auto t_viz_start = std::chrono::high_resolution_clock::now();
+            
+            // Track actual callback interval
+            static auto last_viz_time = t_viz_start;
+            double interval_ms = std::chrono::duration<double, std::milli>(t_viz_start - last_viz_time).count();
+            last_viz_time = t_viz_start;
+            
+            static double interval_sum = 0.0, interval_max = 0.0, interval_min = 1e6;
+            static int interval_count = 0;
+            if (interval_count > 0) {  // Skip first measurement
+                interval_sum += interval_ms;
+                interval_max = std::max(interval_max, interval_ms);
+                interval_min = std::min(interval_min, interval_ms);
+            }
+            interval_count++;
 
             Vec3f box_max = robot_state_.p + cfg_.visualization_range / 2;
             Vec3f box_min = robot_state_.p - cfg_.visualization_range / 2;
@@ -271,6 +310,32 @@ namespace rog_map {
                 cloud_msg->header.frame_id = "odom";
                 vm_.occ_inf_pub->publish(std::move(cloud_msg));
             }
+            
+            // Performance monitoring: measure total visualization time
+            auto t_viz_end = std::chrono::high_resolution_clock::now();
+            double viz_ms = std::chrono::duration<double, std::milli>(t_viz_end - t_viz_start).count();
+            
+            // Log statistics every 100 viz callbacks
+            static int viz_count = 0;
+            static double viz_sum = 0.0, viz_max = 0.0, viz_min = 1e6;
+            viz_sum += viz_ms;
+            viz_max = std::max(viz_max, viz_ms);
+            viz_min = std::min(viz_min, viz_ms);
+            viz_count++;
+            
+            // if (viz_count % 100 == 0) {
+            //     double viz_avg = viz_sum / viz_count;
+            //     double expected_period = 1000.0 / cfg_.viz_time_rate;
+            //     double interval_avg = interval_sum / (interval_count - 1);
+            //     std::cout << GREEN << "[ROG-Map Viz Perf] callbacks=" << viz_count << std::endl
+            //               << "  Execution time: avg=" << viz_avg << "ms"
+            //               << " min=" << viz_min << "ms"
+            //               << " max=" << viz_max << "ms" << std::endl
+            //               << "  Callback interval: avg=" << interval_avg << "ms"
+            //               << " min=" << interval_min << "ms"
+            //               << " max=" << interval_max << "ms"
+            //               << " (expected=" << expected_period << "ms)" << RESET << std::endl;
+            // }
 
             /* visualize ESDF Map*/
             if (cfg_.esdf_en) {

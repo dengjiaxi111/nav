@@ -128,9 +128,6 @@ nav_core::ControlResult NMPC::computeVelocity(
     geometry_msgs::msg::Twist& cmd_vel) 
 {
     static int call_count = 0;
-    if (++call_count == 1) {
-        RCLCPP_INFO(node_->get_logger(), "🚀 NMPC::computeVelocity() 首次调用");
-    }
     
     if (!initialized_ || global_path_.poses.empty()) {
         if (call_count % 50 == 1) {
@@ -358,12 +355,14 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
 
 int NMPC::findNearestPathPoint(const geometry_msgs::msg::Pose& pose) {
     double min_dist = std::numeric_limits<double>::max();
-    int nearest = nearest_idx_;  // 从上次位置开始
+    int nearest = nearest_idx_;
     
-    // 只搜索附近的点 (优化性能)
-    int search_start = std::max(0, nearest_idx_ - 5);
+    // 阶段1: 局部窗口搜索 (快速路径)
+    int local_backward = 10;  // 向后搜索10个点
+    int local_forward = 30;   // 向前搜索30个点
+    int search_start = std::max(0, nearest_idx_ - local_backward);
     int search_end = std::min(static_cast<int>(global_path_.poses.size()), 
-                              nearest_idx_ + 20);
+                              nearest_idx_ + local_forward);
     
     for (int i = search_start; i < search_end; ++i) {
         double dx = global_path_.poses[i].pose.position.x - pose.position.x;
@@ -374,6 +373,32 @@ int NMPC::findNearestPathPoint(const geometry_msgs::msg::Pose& pose) {
             min_dist = dist;
             nearest = i;
         }
+    }
+    
+    // 阶段2: 回退机制 - 如果偏离过远,执行全局搜索
+    const double deviation_threshold = 2.0;  // 2米阈值
+    if (min_dist > deviation_threshold) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+            "NMPC: 机器人偏离路径过远 (%.2f m > %.2f m)", 
+            min_dist, deviation_threshold);
+        
+        min_dist = std::numeric_limits<double>::max();
+        nearest = 0;
+        
+        // 全局搜索最近点
+        for (size_t i = 0; i < global_path_.poses.size(); ++i) {
+            double dx = global_path_.poses[i].pose.position.x - pose.position.x;
+            double dy = global_path_.poses[i].pose.position.y - pose.position.y;
+            double dist = std::hypot(dx, dy);
+            
+            if (dist < min_dist) {
+                min_dist = dist;
+                nearest = static_cast<int>(i);
+            }
+        }
+        
+        RCLCPP_INFO(node_->get_logger(), 
+            "NMPC: 最近点索引=%d, 距离=%.2f m", nearest, min_dist);
     }
     
     return nearest;

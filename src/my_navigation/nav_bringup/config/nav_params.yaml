@@ -9,6 +9,14 @@ nav_server:
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
     
+    # 控制器超时保护
+    controller_timeout: 10.0  # 控制器无进展超时(秒)
+    controller_progress_threshold: 0.15  # 进展检测距离阈值(米)
+    
+    # 周期性路径检查 (动态障碍物应对，默认启用)
+    path_check_period: 2.0  # 路径检查周期(秒)
+    path_start_distance_threshold: 0.5  # 距离路径起点阈值(米)，超过则重规划
+    
     # ESDF 地图
     enable_esdf: true
     esdf_vis_max_dist: 2.0  # 可视化最大距离(m)
@@ -27,6 +35,13 @@ nav_server:
       enable_smooth: true      # 启用 B样条平滑
       resample_interval: 0.4   # 重采样间隔 (m)，控制曲线光滑度，越小越光滑
       smooth_resolution: 0.05  # 平滑后路径分辨率 (m)
+      
+      # 路径复用和剪枝 (新增)
+      enable_path_cache: true         # 启用路径缓存和复用
+      enable_auto_prune: true         # 启用自动剪枝已驶过部分
+      goal_tolerance: 0.2             # 目标变化阈值(米), 小于此值则认为目标未变化
+      obstacle_check_threshold: 95    # 障碍物检查阈值, 路径上代价值 >= 此值视为重合
+      prune_distance: 0.5             # 剪枝保留距离(米), 保留当前位置前方此距离内的点
       
       # B样条优化（基于 Fast-Planner）
       enable_optimization: true    # 启用轨迹优化

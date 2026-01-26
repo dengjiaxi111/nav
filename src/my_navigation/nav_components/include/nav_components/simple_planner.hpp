@@ -25,6 +25,9 @@ public:
         const geometry_msgs::msg::PoseStamped& start,
         const geometry_msgs::msg::PoseStamped& goal,
         nav_msgs::msg::Path& path) override;
+    
+    // 公开接口：路径验证（供 nav_server 周期性检查使用）
+    bool validatePath(const nav_msgs::msg::Path& path);
 
 private:
     // A*节点
@@ -42,6 +45,11 @@ private:
     double getCost(int x, int y);
     double heuristic(int x1, int y1, int x2, int y2);
     
+    // 内部功能：路径检查和缓存
+    bool goalChanged(const geometry_msgs::msg::PoseStamped& new_goal);  // 检查目标是否变化
+    nav_msgs::msg::Path prunePath(const nav_msgs::msg::Path& path, 
+                                   const geometry_msgs::msg::PoseStamped& current_pose);  // 剪枝已驶过部分
+    
     rclcpp::Node* node_ = nullptr;
     
     // 地图
@@ -58,6 +66,15 @@ private:
     // 路径平滑
     PathSmoother smoother_;
     bool enable_smooth_ = true;
+    
+    // 新增：路径缓存和复用
+    nav_msgs::msg::Path cached_path_;  // 缓存的路径
+    geometry_msgs::msg::PoseStamped cached_goal_;  // 缓存的目标
+    double goal_tolerance_ = 0.2;  // 目标变化阈值(米)
+    double obstacle_check_threshold_ = 95;  // 障碍物检查阈值
+    bool enable_path_cache_ = true;  // 启用路径缓存
+    bool enable_auto_prune_ = true;  // 启用自动剪枝
+    double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
     
     // 调试可视化
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr ctrl_pts_pub_;

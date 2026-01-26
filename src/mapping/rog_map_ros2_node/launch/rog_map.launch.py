@@ -4,6 +4,7 @@ from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
 import os
 from ament_index_python.packages import get_package_share_directory
+import yaml
 
 
 def generate_launch_description():
@@ -16,6 +17,15 @@ def generate_launch_description():
         description='Path to ROG-Map config file'
     )
     
+    config_file_path = os.path.join(config_dir, 'rog_map_config.yaml')
+    
+    # 读取YAML配置文件
+    with open(config_file_path, 'r') as f:
+        config_yaml = yaml.safe_load(f)
+    
+    # 提取projector配置
+    projector_params = config_yaml.get('projector', {})
+    
     rviz_config = os.path.join(package_dir, 'rviz', 'rog_map.rviz')
     
     rog_map_node = Node(
@@ -23,7 +33,8 @@ def generate_launch_description():
         executable='rog_map_node',
         name='rog_map',
         parameters=[
-            {'config_file': LaunchConfiguration('config_file')}
+            {'config_file': LaunchConfiguration('config_file')},
+            projector_params  # 传递projector参数
         ],
         output='screen'
     )

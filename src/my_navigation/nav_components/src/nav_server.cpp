@@ -33,6 +33,13 @@ public:
         goal_timeout_ = declare_parameter("goal_timeout", 60.0);
         goal_tolerance_ = declare_parameter("goal_tolerance", 0.1);
         yaw_tolerance_ = declare_parameter("yaw_tolerance", 0.1);
+        controller_timeout_ = declare_parameter("controller_timeout", 10.0);  // 控制超时 10秒
+        controller_progress_threshold_ = declare_parameter("controller_progress_threshold", 0.15);  // 进展阈值 0.15米
+        
+        // 周期性路径检查参数
+        path_check_period_ = declare_parameter("path_check_period", 2.0);  // 路径检查周期(秒)
+        path_start_distance_threshold_ = declare_parameter("path_start_distance_threshold", 1.5);  // 距离路径起点阈值(米)
+        
         map_file_ = declare_parameter("map_file", "");
         map_frame_ = declare_parameter("map_frame", "map");
         base_frame_ = declare_parameter("base_frame", "base_link");
@@ -290,14 +297,74 @@ private:
         static int control_count = 0;
         if (++control_count == 1) {
             RCLCPP_INFO(get_logger(), "🎮 Controller: 开始控制循环");
+            last_progress_time_ = now();  // 初始化进展时间
+            last_progress_pose_ = current_pose_;
+            last_path_check_time_ = now();  // 初始化路径检查时间
+        }
+        
+        // 周期性路径检查：检测动态障碍物导致路径不合法
+        auto current_time = now();
+        double time_since_check = (current_time - last_path_check_time_).seconds();
+        if (time_since_check > path_check_period_) {
+            last_path_check_time_ = current_time;
+            
+            // 检查1: 路径是否与障碍物重合
+            if (!current_path_.poses.empty() && !planner_.validatePath(current_path_)) {
+                RCLCPP_WARN(get_logger(), 
+                    "⚠️  路径验证失败: 检测到动态障碍物，触发重新规划");
+                stopRobot();
+                fsm_.transitionTo(nav_core::NavState::PLANNING);
+                return;
+            }
+            
+            // 检查2: 当前位置是否偏离路径起点过远
+            if (!current_path_.poses.empty()) {
+                const auto& path_start = current_path_.poses.front().pose.position;
+                double dx = current_pose_.pose.position.x - path_start.x;
+                double dy = current_pose_.pose.position.y - path_start.y;
+                double dist_to_start = std::hypot(dx, dy);
+                
+                if (dist_to_start > path_start_distance_threshold_) {
+                    RCLCPP_WARN(get_logger(), 
+                        "⚠️  偏离路径起点过远 (%.2f m > %.2f m), 触发重新规划", 
+                        dist_to_start, path_start_distance_threshold_);
+                    stopRobot();
+                    fsm_.transitionTo(nav_core::NavState::PLANNING);
+                    return;
+                }
+            }
+
+        }
+        
+        // 超时检测：如果长时间无进展，触发恢复
+        double time_since_progress = (current_time - last_progress_time_).seconds();
+        
+        if (time_since_progress > controller_timeout_) {
+            RCLCPP_ERROR(get_logger(), 
+                "❌ Controller: 控制超时 (%.1f秒无进展 > %.1f秒阈值)", 
+                time_since_progress, controller_timeout_);
+            stopRobot();
+            fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
+            return;
+        }
+        
+        // 进展检测：计算距离上次进展位置的距离
+        double dx = current_pose_.pose.position.x - last_progress_pose_.pose.position.x;
+        double dy = current_pose_.pose.position.y - last_progress_pose_.pose.position.y;
+        double dist_moved = std::hypot(dx, dy);
+        
+        if (dist_moved > controller_progress_threshold_) {
+            // 有明显进展，更新时间戳和位置
+            last_progress_time_ = current_time;
+            last_progress_pose_ = current_pose_;
         }
         
         geometry_msgs::msg::Twist cmd;
         auto result = controller_.computeVelocity(current_pose_, cmd);
         
         if (control_count % 20 == 0) {
-            RCLCPP_INFO(get_logger(), "🎮 Controller: result=%d, v=%.2f, ω=%.2f",
-                static_cast<int>(result), cmd.linear.x, cmd.angular.z);
+            RCLCPP_INFO(get_logger(), "🎮 Controller: result=%d, v=%.2f, ω=%.2f, no_progress=%.1fs",
+                static_cast<int>(result), cmd.linear.x, cmd.angular.z, time_since_progress);
         }
         
         switch (result) {
@@ -424,10 +491,20 @@ private:
     
     std::string map_file_, map_frame_, base_frame_;
     double control_rate_, goal_timeout_, goal_tolerance_, yaw_tolerance_;
+    double controller_timeout_;  // 控制器无进展超时阈值(秒)
+    double controller_progress_threshold_;  // 进展检测距离阈值(米)
     double map_update_rate_, esdf_vis_max_dist_;
     bool enable_esdf_;
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
+    
+    // 路径检查相关
+    double path_check_period_ = 2.0;  // 路径检查周期(秒)
+    double path_start_distance_threshold_ = 1.5;  // 距离路径起点阈值(米)
+    rclcpp::Time last_path_check_time_;  // 上次路径检查时间
+    
     rclcpp::Time start_time_;
+    rclcpp::Time last_progress_time_;  // 上次有进展的时间
+    geometry_msgs::msg::PoseStamped last_progress_pose_;  // 上次有进展的位置
 };
 
 int main(int argc, char** argv) {

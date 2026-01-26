@@ -14,6 +14,13 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     cost_weight_ = node_->declare_parameter("planner.cost_weight", 0.5);
     enable_smooth_ = node_->declare_parameter("planner.enable_smooth", true);
     
+    // 新增：路径复用和剪枝参数
+    enable_path_cache_ = node_->declare_parameter("planner.enable_path_cache", true);
+    enable_auto_prune_ = node_->declare_parameter("planner.enable_auto_prune", true);
+    goal_tolerance_ = node_->declare_parameter("planner.goal_tolerance", 0.2);
+    obstacle_check_threshold_ = node_->declare_parameter("planner.obstacle_check_threshold", 95);
+    prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
+    
     // 平滑参数
     SmoothParams smooth_params;
     smooth_params.resample_interval = node_->declare_parameter("planner.resample_interval", 0.3);
@@ -127,6 +134,31 @@ bool SimplePlanner::plan(
     if (!grid_map_) {
         RCLCPP_ERROR(node_->get_logger(), "地图未设置或类型不兼容");
         return false;
+    }
+    
+    // 功能2: 检查目标是否变化，如果缓存路径有效则复用
+    if (enable_path_cache_ && !cached_path_.poses.empty()) {
+        if (!goalChanged(goal)) {
+            // 目标未变化，检查缓存路径是否依然有效
+            if (validatePath(cached_path_)) {
+                RCLCPP_INFO(node_->get_logger(), 
+                    "规划器: 目标未变化且缓存路径有效，复用缓存 (%zu 点)", 
+                    cached_path_.poses.size());
+                
+                // 功能3: 自动剪枝已驶过部分
+                if (enable_auto_prune_) {
+                    path = prunePath(cached_path_, start);
+                    RCLCPP_INFO(node_->get_logger(), 
+                        "规划器: 剪枝后路径 %zu → %zu 点", 
+                        cached_path_.poses.size(), path.poses.size());
+                } else {
+                    path = cached_path_;
+                }
+                return true;
+            } else {
+                RCLCPP_WARN(node_->get_logger(), "规划器: 缓存路径与障碍物重合，重新规划");
+            }
+        }
     }
     
     int sx, sy, gx, gy;
@@ -247,6 +279,18 @@ bool SimplePlanner::plan(
         RCLCPP_INFO(node_->get_logger(), "规划成功: %zu点", waypoints.size());
     }
     
+    // 功能1: 检查路径是否与障碍物重合
+    if (!validatePath(path)) {
+        RCLCPP_ERROR(node_->get_logger(), "规划失败: 路径与障碍物重合");
+        return false;
+    }
+    
+    // 缓存路径和目标
+    if (enable_path_cache_) {
+        cached_path_ = path;
+        cached_goal_ = goal;
+    }
+    
     return true;
 }
 
@@ -326,6 +370,99 @@ void SimplePlanner::publishControlPoints(const std::vector<Eigen::Vector2d>& ctr
     }
     
     ctrl_pts_pub_->publish(markers);
+}
+
+// 检查路径是否与障碍物重合
+bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
+    if (!grid_map_ || path.poses.empty()) {
+        return false;
+    }
+    
+    for (const auto& pose : path.poses) {
+        int mx, my;
+        if (!worldToMap(pose.pose.position.x, pose.pose.position.y, mx, my)) {
+            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+                "路径点超出地图范围");
+            return false;
+        }
+        
+        int idx = my * width_ + mx;
+        if (idx < 0 || idx >= static_cast<int>(grid_map_->data.size())) {
+            return false;
+        }
+        
+        int8_t val = grid_map_->data[idx];
+        // 检查是否与高代价障碍物重合 (值 > obstacle_check_threshold_)
+        if (val >= obstacle_check_threshold_ || val < 0) {
+            RCLCPP_WARN(node_->get_logger(), 
+                "路径点 (%.2f, %.2f) 与障碍物重合 (代价=%d >= %d)", 
+                pose.pose.position.x, pose.pose.position.y, 
+                static_cast<int>(val), static_cast<int>(obstacle_check_threshold_));
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// 功能2: 检查目标是否变化
+bool SimplePlanner::goalChanged(const geometry_msgs::msg::PoseStamped& new_goal) {
+    if (cached_goal_.header.frame_id.empty()) {
+        return true;  // 首次规划
+    }
+    
+    double dx = new_goal.pose.position.x - cached_goal_.pose.position.x;
+    double dy = new_goal.pose.position.y - cached_goal_.pose.position.y;
+    double dist = std::hypot(dx, dy);
+    
+    return dist > goal_tolerance_;
+}
+
+// 功能3: 剪枝已驶过的路径部分
+nav_msgs::msg::Path SimplePlanner::prunePath(
+    const nav_msgs::msg::Path& path,
+    const geometry_msgs::msg::PoseStamped& current_pose)
+{
+    if (path.poses.empty()) {
+        return path;
+    }
+    
+    // 查找最近点
+    double min_dist = std::numeric_limits<double>::max();
+    size_t nearest_idx = 0;
+    
+    for (size_t i = 0; i < path.poses.size(); ++i) {
+        double dx = path.poses[i].pose.position.x - current_pose.pose.position.x;
+        double dy = path.poses[i].pose.position.y - current_pose.pose.position.y;
+        double dist = std::hypot(dx, dy);
+        
+        if (dist < min_dist) {
+            min_dist = dist;
+            nearest_idx = i;
+        }
+    }
+    
+    // 剪枝策略: 从最近点开始保留，但向前保留一定距离的点
+    size_t prune_start_idx = 0;
+    double accumulated_dist = 0.0;
+    
+    for (size_t i = 0; i < nearest_idx; ++i) {
+        double dx = path.poses[nearest_idx].pose.position.x - path.poses[i].pose.position.x;
+        double dy = path.poses[nearest_idx].pose.position.y - path.poses[i].pose.position.y;
+        accumulated_dist = std::hypot(dx, dy);
+        
+        if (accumulated_dist <= prune_distance_) {
+            prune_start_idx = i;
+            break;
+        }
+    }
+    
+    // 构造剪枝后的路径
+    nav_msgs::msg::Path pruned_path;
+    pruned_path.header = path.header;
+    pruned_path.poses.assign(path.poses.begin() + prune_start_idx, path.poses.end());
+    
+    return pruned_path;
 }
 
 }  // namespace nav_components

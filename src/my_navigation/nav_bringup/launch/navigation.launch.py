@@ -23,19 +23,19 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_tf_map_odom',
-        arguments=['--x', '0', '--y', '0', '--z', '0', 
+        arguments=['--x', '0', '--y', '0', '--z', '0.1', 
                    '--roll', '0', '--pitch', '0', '--yaw', '0',
                    '--frame-id', 'map', '--child-frame-id', 'odom']
     )
     
-    static_tf_odom_base = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_odom_base',
-        arguments=['--x', '5', '--y', '3', '--z', '0', 
-                   '--roll', '0', '--pitch', '0', '--yaw', '0',
-                   '--frame-id', 'odom', '--child-frame-id', 'base_link']
-    )
+    # static_tf_odom_base = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     name='static_tf_odom_base',
+    #     arguments=['--x', '0', '--y', '0', '--z', '0', 
+    #                '--roll', '0', '--pitch', '0', '--yaw', '0',
+    #                '--frame-id', 'odom', '--child-frame-id', 'base_link']
+    # )
     
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -52,7 +52,6 @@ def generate_launch_description():
         
         # 静态TF (测试用)
         static_tf_map_odom,
-        static_tf_odom_base,
         
         Node(
             package='nav_components',

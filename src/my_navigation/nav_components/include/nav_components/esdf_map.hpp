@@ -16,13 +16,32 @@ public:
     // 从 OccupancyGrid 构建 ESDF
     void buildFromOccupancy(const nav_msgs::msg::OccupancyGrid::SharedPtr& grid,
                             int8_t obstacle_threshold = 50) {
-        if (!grid || grid->data.empty()) return;
+        if (!grid || grid->data.empty()) {
+            RCLCPP_ERROR(rclcpp::get_logger("esdf_map"), "输入地图无效或为空");
+            return;
+        }
         
         width_ = grid->info.width;
         height_ = grid->info.height;
         resolution_ = grid->info.resolution;
         origin_x_ = grid->info.origin.position.x;
         origin_y_ = grid->info.origin.position.y;
+        
+        // 边界检查
+        if (width_ <= 0 || height_ <= 0) {
+            RCLCPP_ERROR(rclcpp::get_logger("esdf_map"), 
+                "无效地图尺寸: width=%d, height=%d", width_, height_);
+            width_ = height_ = 0;
+            return;
+        }
+        
+        size_t expected_size = static_cast<size_t>(width_) * height_;
+        if (grid->data.size() != expected_size) {
+            RCLCPP_ERROR(rclcpp::get_logger("esdf_map"),
+                "地图数据大小不匹配: expected=%zu, actual=%zu", 
+                expected_size, grid->data.size());
+            return;
+        }
         
         // 分配距离场（米为单位）
         distance_.resize(width_ * height_);
@@ -185,6 +204,21 @@ private:
     // Meijster 二维 EDT 算法（O(n) 复杂度）
     // 参考: A. Meijster et al., "A General Algorithm for Computing Distance Transforms"
     void computeEDT(const std::vector<int8_t>& occ, int8_t threshold) {
+        // 边界检查
+        if (width_ <= 0 || height_ <= 0) {
+            RCLCPP_ERROR(rclcpp::get_logger("esdf_map"), 
+                "computeEDT: 无效地图尺寸 width=%d, height=%d", width_, height_);
+            return;
+        }
+        
+        size_t expected_size = static_cast<size_t>(width_) * height_;
+        if (occ.size() != expected_size) {
+            RCLCPP_ERROR(rclcpp::get_logger("esdf_map"),
+                "computeEDT: 数据大小不匹配 expected=%zu, actual=%zu", 
+                expected_size, occ.size());
+            return;
+        }
+        
         const float INF = 1e9f;
         std::vector<float> temp(width_ * height_);
         
@@ -215,13 +249,14 @@ private:
         }
         
         // 第二遍：沿 X 方向（行）计算欧氏距离
-        std::vector<int> s(width_);    // 抛物线位置
-        std::vector<float> t(width_);  // 抛物线交点
+        std::vector<int> s(width_ + 1);      // 抛物线位置（多分配1个防止越界）
+        std::vector<float> t(width_ + 2);    // 抛物线交点（多分配2个）
         
         for (int y = 0; y < height_; y++) {
             int q = 0;
             s[0] = 0;
             t[0] = -INF;
+            t[1] = INF;  // 初始化第二个边界
             
             // 构建下包络线
             for (int x = 1; x < width_; x++) {
@@ -236,8 +271,13 @@ private:
                 }
                 q++;
                 s[q] = x;
-                t[q] = computeSep(s[q - 1], temp[y * width_ + s[q - 1]] * temp[y * width_ + s[q - 1]],
-                                  x, fy_x * fy_x);
+                // 关键修复：确保 q > 0 时才访问 s[q-1]
+                if (q > 0) {
+                    float fy_prev = temp[y * width_ + s[q - 1]];
+                    t[q] = computeSep(s[q - 1], fy_prev * fy_prev, x, fy_x * fy_x);
+                } else {
+                    t[q] = -INF;  // 第一个抛物线覆盖 [-INF, t[1])
+                }
             }
             t[q + 1] = INF;
             

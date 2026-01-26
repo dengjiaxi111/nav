@@ -21,6 +21,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 find_package(rog_map REQUIRED)
@@ -31,7 +32,10 @@ include_directories(
 )
 
 # ROG-Map node (standalone executable，保留用于独立运行)
-add_executable(rog_map_node src/rog_map_node.cpp)
+add_executable(rog_map_node 
+  src/rog_map_node.cpp
+  src/map_2d_projector.cpp
+)
 
 # Define necessary macros for rog_map
 target_compile_definitions(rog_map_node PRIVATE 
@@ -40,13 +44,19 @@ target_compile_definitions(rog_map_node PRIVATE
   ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
 )
 
+target_link_libraries(rog_map_node
+  ${PCL_LIBRARIES}
+)
+
 ament_target_dependencies(rog_map_node
   rclcpp
   sensor_msgs
   nav_msgs
+  geometry_msgs
   visualization_msgs
   tf2
   tf2_ros
+  tf2_geometry_msgs
   pcl_conversions
   rog_map
 )
