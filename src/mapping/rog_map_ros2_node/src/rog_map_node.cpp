@@ -20,10 +20,11 @@ int main(int argc, char *argv[]) {
   // Instantiate ROGMapROS which handles all ROS2 integration internally
   auto rog_map_ros = std::make_unique<rog_map::ROGMapROS>(node, config_file);
   
-  // 2D地图投影配置（基于中科大爷的高程分析方案）
+  // 2D地图投影配置（基于中科大的高程分析方案）
   map_2d_projector::ProjectorConfig projector_cfg;
   projector_cfg.robot_height = node->declare_parameter("projector.robot_height", 0.55f);
-  projector_cfg.ground_clearance = node->declare_parameter("projector.ground_clearance", 0.03f);
+  projector_cfg.base_to_ground = node->declare_parameter("projector.base_to_ground", 0.10f);
+  projector_cfg.ground_tolerance = node->declare_parameter("projector.ground_tolerance", 0.03f);
   
   // 高程分析阈值
   projector_cfg.slope_height_max = node->declare_parameter("projector.slope_height_max", 0.10f);
@@ -40,6 +41,7 @@ int main(int argc, char *argv[]) {
   projector_cfg.publish_rate = node->declare_parameter("projector.publish_rate", 20.0f);
   projector_cfg.frame_id = node->declare_parameter("projector.frame_id", std::string("odom"));
   projector_cfg.topic_name = node->declare_parameter("projector.topic_name", std::string("/rog_map/map_2d"));
+  projector_cfg.enable_debug_log = node->declare_parameter("projector.enable_debug_log", false);
   
   // 创建2D地图投影器
   auto map_projector = std::make_unique<map_2d_projector::Map2DProjector>(node, projector_cfg);

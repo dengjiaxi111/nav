@@ -40,7 +40,7 @@ using Vec2f = Eigen::Vector2f;
 using Vec3f = Eigen::Vector3f;
 
 /**
- * @brief 柱状高程分析结果（基于中科大爷的方案）
+ * @brief 柱状高程分析结果（基于中科大的方案）
  */
 struct ColumnMetrics {
     float min_z;                     // 最低点高度
@@ -51,12 +51,13 @@ struct ColumnMetrics {
 };
 
 /**
- * @brief 2D地图投影配置（基于中科大爷的高程分析方案）
+ * @brief 2D地图投影配置（基于中科大的高程分析方案）
  */
 struct ProjectorConfig {
     // 机器人参数
-    float robot_height = 0.5f;       // 机器人高度（通行判定）
-    float ground_clearance = 0.05f;  // 地面间隙（低于此高度视为地面）
+    float robot_height = 0.5f;       // 机器人高度（从底部到顶部）
+    float base_to_ground = 0.05f;    // base_link到地面的距离（底盘中心到轮子底部）
+    float ground_tolerance = 0.03f;  // 地面起伏容差（用于过滤地面噪点）
     
     // 高程分析阈值（核心参数）
     float slope_height_max = 0.10f;   // 坡道/平面最大高度差（H < 0.1m → 可通行）
@@ -78,6 +79,9 @@ struct ProjectorConfig {
     int8_t obstacle_value = 100;     // 障碍物占据值
     int8_t free_value = 0;           // 自由空间占据值
     int8_t unknown_value = -1;       // 未知区域占据值
+    
+    // 调试开关
+    bool enable_debug_log = false;   // 启用详细分类日志
     
     // 发布参数
     float publish_rate = 10.0f;      // 发布频率 (Hz)

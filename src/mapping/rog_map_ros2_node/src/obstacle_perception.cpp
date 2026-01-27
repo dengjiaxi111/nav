@@ -180,7 +180,7 @@ void ObstaclePerceptionNode::elevationAnalysis(
         col.height_diff = col.max_height - col.min_height;
         
         // 占据率 = (点数 * 分辨率) / 高度差
-        // 中科大公式：占据率 = ((n + 1) * res) / H
+        // 公式：占据率 = ((n + 1) * res) / H
         if (col.height_diff > cfg_.resolution) {
             col.occupancy_rate = (col.point_count * cfg_.resolution) / col.height_diff;
         } else {

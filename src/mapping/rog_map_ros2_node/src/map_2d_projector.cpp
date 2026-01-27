@@ -155,7 +155,7 @@ void Map2DProjector::elevationAnalysis(
         column_z_values[key].push_back(pt.z);
     }
     
-    // 计算每列的高程统计量（中科大爷方案：高度差H + 占据率）
+    // 计算每列的高程统计量（中科大方案：高度差H + 占据率）
     for (auto& [key, z_values] : column_z_values) {
         auto& col = columns[key];
         col.point_count = static_cast<int>(z_values.size());
@@ -179,7 +179,7 @@ void Map2DProjector::elevationAnalysis(
 
 int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_z) {
     /*
-     * 基于中科大爷方案 + RM场景分析
+     * 基于中科大方案 + RM场景分析
      * 
      * 核心特征：高度差H + 占据率
      * 
@@ -194,18 +194,40 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     const float H = metrics.height_diff;
     const float occ_rate = metrics.occupancy_rate;
     
-    // 计算关键高度
-    float robot_bottom = robot_z;
-    float robot_top = robot_z + cfg_.robot_height;
-    float ground_level = robot_z + cfg_.ground_clearance;
+    // 计算关键高度（修正：基于base_link向下测量）
+    // robot_z 是 base_link 在odom系下的z坐标
+    // cfg_.base_to_ground: base_link到机器人底部（轮子底面）的距离
+    // 
+    // 物理意义：
+    //   robot_bottom = 机器人底部（轮子底面）的绝对高度
+    //   robot_top = 机器人顶部的绝对高度
+    //   ground_level = 地面参考高度（略高于robot_bottom，用于过滤贴地噪点）
+    float robot_bottom = robot_z - cfg_.base_to_ground;    // base_link下方，即轮子底面
+    float robot_top = robot_bottom + cfg_.robot_height;     // 从底部向上测量总高度
+    float ground_level = robot_bottom + cfg_.ground_tolerance;  // 地面=底部+小容差
+    
+    // 调试日志（每1000个栅格采样一次，避免刷屏）
+    static int debug_counter = 0;
+    bool should_log = cfg_.enable_debug_log && (debug_counter++ % 1000 == 0);
+    
+    if (should_log) {
+        RCLCPP_INFO(node_->get_logger(),
+            "[Classify Debug] H=%.3f, occ=%.2f, min_z=%.3f, max_z=%.3f | "
+            "robot_z=%.3f, robot_bottom=%.3f, robot_top=%.3f, ground_level=%.3f",
+            H, occ_rate, metrics.min_z, metrics.max_z,
+            robot_z, robot_bottom, robot_top, ground_level);
+    }
     
     // === Case 1: 噪声过滤 ===
     if (metrics.point_count < 2) {
+        if (should_log) RCLCPP_INFO(node_->get_logger(), "  → Case1: Noise (count=%d)", metrics.point_count);
         return cfg_.free_value;
     }
     
     // === Case 2: 完全悬空（限高杆、悬空物体）===
     if (metrics.min_z > robot_top) {
+        if (should_log) RCLCPP_INFO(node_->get_logger(), 
+            "  → Case2: Overhead (min_z=%.3f > robot_top=%.3f)", metrics.min_z, robot_top);
         return cfg_.free_value;  // 机器人可从下方通过
     }
     
@@ -215,6 +237,8 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
         
         // 3.1 完全低于机器人底部 → 地面
         if (metrics.max_z < ground_level) {
+            if (should_log) RCLCPP_INFO(node_->get_logger(), 
+                "  → Case3.1: Ground (max_z=%.3f < ground_level=%.3f)", metrics.max_z, ground_level);
             return cfg_.free_value;
         }
         
@@ -224,16 +248,22 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
             // 检查是否为小障碍（如地面凸起）
             float height_above_ground = metrics.max_z - robot_bottom;
             if (height_above_ground < cfg_.slope_height_max) {
+                if (should_log) RCLCPP_INFO(node_->get_logger(), 
+                    "  → Case3.2: Small bump (height_above_ground=%.3f < %.3f)", 
+                    height_above_ground, cfg_.slope_height_max);
                 return cfg_.free_value;  // 小凸起，可通行
             }
         }
         
         // 3.3 完全高于机器人 → 悬空平台
         if (metrics.min_z > robot_top) {
+            if (should_log) RCLCPP_INFO(node_->get_logger(), 
+                "  → Case3.3: Overhead platform (already checked in Case2)");
             return cfg_.free_value;
         }
         
         // 默认：H小的都视为可通行
+        if (should_log) RCLCPP_INFO(node_->get_logger(), "  → Case3.default: Slope/Flat (H=%.3f)", H);
         return cfg_.free_value;
     }
     
@@ -246,22 +276,25 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
                               (metrics.max_z > ground_level);
         
         if (!blocks_passage) {
+            if (should_log) RCLCPP_INFO(node_->get_logger(), 
+                "  → Case4.1: Step not blocking (blocks_passage=false)");
             return cfg_.free_value;  // 不阻挡通行高度
         }
         
         // 4.2 当前简化版本：暂时保守标记为obstacle
         // TODO: 需要邻域分析判断是台阶（两侧等高）还是矮墙（一侧悬空）
-        // 台阶判断逻辑：
-        //   - 检查相邻格子的高度
-        //   - 如果两侧都有高度相近的平面 → 台阶（可通行）
-        //   - 如果一侧悬空 → 矮墙/悬崖（不可通行）
         
         // 当前简化：如果占据率高（密集点云），可能是墙
         if (occ_rate > cfg_.high_occupancy_thresh) {
+            if (should_log) RCLCPP_INFO(node_->get_logger(), 
+                "  → Case4.2: Dense step/wall (occ=%.2f > %.2f) → OBSTACLE", 
+                occ_rate, cfg_.high_occupancy_thresh);
             return cfg_.obstacle_value;  // 密集垂直结构，可能是墙
         }
         
         // 占据率低，可能是稀疏障碍或台阶，保守处理
+        if (should_log) RCLCPP_INFO(node_->get_logger(), 
+            "  → Case4.3: Sparse step (occ=%.2f) → OBSTACLE", occ_rate);
         return cfg_.obstacle_value;
     }
     
@@ -278,10 +311,14 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
         
         if (blocks_passage) {
             // 高大且阻挡通行 → 障碍物
+            if (should_log) RCLCPP_INFO(node_->get_logger(), 
+                "  → Case5: High obstacle (H=%.3f, blocks_passage=true) → OBSTACLE", H);
             return cfg_.obstacle_value;
         }
         
         // 不阻挡通行高度（如地面深坑？）
+        if (should_log) RCLCPP_INFO(node_->get_logger(), 
+            "  → Case5: High but not blocking → FREE");
         return cfg_.free_value;
     }
     
@@ -291,9 +328,13 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
                           (metrics.max_z > ground_level);
     
     if (blocks_passage) {
+        if (should_log) RCLCPP_INFO(node_->get_logger(), 
+            "  → Case6: Medium obstacle (H=%.3f) → OBSTACLE", H);
         return cfg_.obstacle_value;
     }
     
+    if (should_log) RCLCPP_INFO(node_->get_logger(), 
+        "  → Case6.default: Medium but not blocking → FREE");
     return cfg_.free_value;
 }
 
