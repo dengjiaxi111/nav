@@ -58,7 +58,7 @@ rog_map:
   # Raycasting
   raycasting:
     enable: true
-    batch_update_size: 2
+    batch_update_size: 4
     unk_thresh: 0.5          # Unknown判定阈值（概率值在此附近为unknown）
     p_hit: 0.70              # Hit观测时增加的占据概率
     p_miss: 0.35             # Miss观测时减少的占据概率（应 < 0.5）

@@ -233,6 +233,10 @@ ros2 launch small_point_lio small_point_lio.launch.py
 ## 编译状态
 ✅ **编译成功** - 无错误、无警告
 
+## 性能
+- [small_point_lio_node-1] [INFO] [1769603643.007134815] [perf]: [📊 0.frame_total_batch] Avg: 0.621 ms, Freq: 250.0 Hz, Samples: 2500, Period: 10.0 s
+
+
 ## 作者
 AI Assistant with Human Guidance
 

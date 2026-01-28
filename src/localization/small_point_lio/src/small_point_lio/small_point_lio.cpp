@@ -51,6 +51,10 @@ namespace small_point_lio {
     }
 
     void SmallPointLio::handle_once_original() {
+        // 统计一帧点云的总用时
+        static AccumulativeTimer frame_timer("0.frame_total", 10000, parameters.enable_performance_debug);
+        ScopedTimer frame_scope_timer(frame_timer, parameters.enable_performance_debug);
+        
         // we need to init small point lio
         if (!is_init) {
             if ((!preprocess.point_deque.empty() || !preprocess.imu_deque.empty()) &&
@@ -120,14 +124,16 @@ namespace small_point_lio {
 
                 // predict
                 {
-                    ScopedTimer timer("1.predict_state", parameters.enable_performance_debug);
+                    static AccumulativeTimer acc_timer("1.predict_state", 10000, parameters.enable_performance_debug);
+                    ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                     estimator.kf.predict_state(time_current);
                 }
 
                 // update
                 estimator.point_lidar_frame = point_lidar_frame.position;
                 {
-                    ScopedTimer timer("2.update_point", parameters.enable_performance_debug);
+                    static AccumulativeTimer acc_timer("2.update_point", 10000, parameters.enable_performance_debug);
+                    ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                     estimator.kf.update_point();
                 }
 
@@ -138,7 +144,8 @@ namespace small_point_lio {
 
                 // map incremental
                 {
-                    ScopedTimer timer("3.map_add_point", parameters.enable_performance_debug);
+                    static AccumulativeTimer acc_timer("3.map_add_point", 10000, parameters.enable_performance_debug);
+                    ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                     estimator.ivox->add_point(estimator.point_odom_frame);
                 }
 
@@ -153,11 +160,13 @@ namespace small_point_lio {
 
                 // predict
                 {
-                    ScopedTimer timer("4.predict_state_imu", parameters.enable_performance_debug);
+                    static AccumulativeTimer acc_timer("4.predict_state_imu", 10000, parameters.enable_performance_debug);
+                    ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                     estimator.kf.predict_state(time_current);
                 }
                 {
-                    ScopedTimer timer("5.predict_cov", parameters.enable_performance_debug);
+                    static AccumulativeTimer acc_timer("5.predict_cov", 10000, parameters.enable_performance_debug);
+                    ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                     estimator.kf.predict_cov(time_current, Q);
                 }
 
@@ -165,7 +174,8 @@ namespace small_point_lio {
                 estimator.angular_velocity = imu_msg.angular_velocity.cast<state::value_type>();
                 estimator.linear_acceleration = imu_msg.linear_acceleration.cast<state::value_type>();
                 {
-                    ScopedTimer timer("6.update_imu", parameters.enable_performance_debug);
+                    static AccumulativeTimer acc_timer("6.update_imu", 10000, parameters.enable_performance_debug);
+                    ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                     estimator.kf.update_imu();
                 }
 
@@ -207,6 +217,10 @@ namespace small_point_lio {
     }
 
     void SmallPointLio::handle_once_batch() {
+        // 统计一帧点云的总用时（Batch模式）
+        static AccumulativeTimer frame_timer("0.frame_total_batch", 10000, parameters.enable_performance_debug);
+        ScopedTimer frame_scope_timer(frame_timer, parameters.enable_performance_debug);
+        
         // 初始化逻辑与原始版本完全相同
         if (!is_init) {
             if ((!preprocess.point_deque.empty() || !preprocess.imu_deque.empty()) &&
@@ -291,19 +305,17 @@ namespace small_point_lio {
                         // 更新时间到最后一个点的时间
                         time_current = batch_points_buffer.back().timestamp;
                         
-                        if (parameters.enable_performance_debug) {
-                            RCLCPP_INFO(rclcpp::get_logger("perf"), "=== Batch Update: %d points ===", batch_point_count);
-                        }
-                        
                         // 状态预测
                         {
-                            ScopedTimer timer("B1.predict_state", parameters.enable_performance_debug);
+                            static AccumulativeTimer acc_timer("B1.predict_state", 10000, parameters.enable_performance_debug);
+                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                             estimator.kf.predict_state(time_current);
                         }
                         
                         // 准备Batch数据
                         {
-                            ScopedTimer timer("B2.prepare_batch_data", parameters.enable_performance_debug);
+                            static AccumulativeTimer acc_timer("B2.prepare_batch_data", 10000, parameters.enable_performance_debug);
+                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                             estimator.batch_points_lidar_frame.clear();
                             estimator.batch_points_timestamps.clear();
                             estimator.batch_points_lidar_frame.reserve(batch_points_buffer.size());
@@ -318,13 +330,15 @@ namespace small_point_lio {
                         // Batch更新
                         bool update_success;
                         {
-                            ScopedTimer timer("B3.update_point_batch", parameters.enable_performance_debug);
+                            static AccumulativeTimer acc_timer("B3.update_point_batch", 10000, parameters.enable_performance_debug);
+                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                             update_success = estimator.kf.update_point_batch();
                         }
                         
                         // 将Batch中的点添加到地图（使用去畸变后的点）
                         if (update_success) {
-                            ScopedTimer timer("B4.map_add_points", parameters.enable_performance_debug);
+                            static AccumulativeTimer acc_timer("B4.map_add_points", 10000, parameters.enable_performance_debug);
+                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                             for (const auto &pt_odom : estimator.batch_points_odom_frame) {
                                 estimator.ivox->add_point(pt_odom);
                             }
