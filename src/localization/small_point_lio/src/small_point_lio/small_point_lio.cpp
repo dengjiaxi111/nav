@@ -5,6 +5,7 @@
  */
 
 #include "small_point_lio.h"
+#include "performance_timer.h"
 
 namespace small_point_lio {
 
@@ -118,11 +119,17 @@ namespace small_point_lio {
                 time_current = point_lidar_frame.timestamp;
 
                 // predict
-                estimator.kf.predict_state(time_current);
+                {
+                    ScopedTimer timer("1.predict_state", parameters.enable_performance_debug);
+                    estimator.kf.predict_state(time_current);
+                }
 
                 // update
                 estimator.point_lidar_frame = point_lidar_frame.position;
-                estimator.kf.update_point();
+                {
+                    ScopedTimer timer("2.update_point", parameters.enable_performance_debug);
+                    estimator.kf.update_point();
+                }
 
                 // publish odometry
                 if (parameters.publish_odometry_without_downsample) {
@@ -130,7 +137,10 @@ namespace small_point_lio {
                 }
 
                 // map incremental
-                estimator.ivox->add_point(estimator.point_odom_frame);
+                {
+                    ScopedTimer timer("3.map_add_point", parameters.enable_performance_debug);
+                    estimator.ivox->add_point(estimator.point_odom_frame);
+                }
 
                 preprocess.point_deque.pop_front();
             } else {
@@ -142,13 +152,22 @@ namespace small_point_lio {
                 time_current = imu_msg.timestamp;
 
                 // predict
-                estimator.kf.predict_state(time_current);
-                estimator.kf.predict_cov(time_current, Q);
+                {
+                    ScopedTimer timer("4.predict_state_imu", parameters.enable_performance_debug);
+                    estimator.kf.predict_state(time_current);
+                }
+                {
+                    ScopedTimer timer("5.predict_cov", parameters.enable_performance_debug);
+                    estimator.kf.predict_cov(time_current, Q);
+                }
 
                 // update
                 estimator.angular_velocity = imu_msg.angular_velocity.cast<state::value_type>();
                 estimator.linear_acceleration = imu_msg.linear_acceleration.cast<state::value_type>();
-                estimator.kf.update_imu();
+                {
+                    ScopedTimer timer("6.update_imu", parameters.enable_performance_debug);
+                    estimator.kf.update_imu();
+                }
 
                 preprocess.imu_deque.pop_front();
             }
@@ -272,25 +291,40 @@ namespace small_point_lio {
                         // 更新时间到最后一个点的时间
                         time_current = batch_points_buffer.back().timestamp;
                         
+                        if (parameters.enable_performance_debug) {
+                            RCLCPP_INFO(rclcpp::get_logger("perf"), "=== Batch Update: %d points ===", batch_point_count);
+                        }
+                        
                         // 状态预测
-                        estimator.kf.predict_state(time_current);
+                        {
+                            ScopedTimer timer("B1.predict_state", parameters.enable_performance_debug);
+                            estimator.kf.predict_state(time_current);
+                        }
                         
                         // 准备Batch数据
-                        estimator.batch_points_lidar_frame.clear();
-                        estimator.batch_points_timestamps.clear();
-                        estimator.batch_points_lidar_frame.reserve(batch_points_buffer.size());
-                        estimator.batch_points_timestamps.reserve(batch_points_buffer.size());
-                        
-                        for (const auto &pt : batch_points_buffer) {
-                            estimator.batch_points_lidar_frame.push_back(pt.position);
-                            estimator.batch_points_timestamps.push_back(pt.timestamp);
+                        {
+                            ScopedTimer timer("B2.prepare_batch_data", parameters.enable_performance_debug);
+                            estimator.batch_points_lidar_frame.clear();
+                            estimator.batch_points_timestamps.clear();
+                            estimator.batch_points_lidar_frame.reserve(batch_points_buffer.size());
+                            estimator.batch_points_timestamps.reserve(batch_points_buffer.size());
+                            
+                            for (const auto &pt : batch_points_buffer) {
+                                estimator.batch_points_lidar_frame.push_back(pt.position);
+                                estimator.batch_points_timestamps.push_back(pt.timestamp);
+                            }
                         }
                         
                         // Batch更新
-                        bool update_success = estimator.kf.update_point_batch();
+                        bool update_success;
+                        {
+                            ScopedTimer timer("B3.update_point_batch", parameters.enable_performance_debug);
+                            update_success = estimator.kf.update_point_batch();
+                        }
                         
                         // 将Batch中的点添加到地图（使用去畸变后的点）
                         if (update_success) {
+                            ScopedTimer timer("B4.map_add_points", parameters.enable_performance_debug);
                             for (const auto &pt_odom : estimator.batch_points_odom_frame) {
                                 estimator.ivox->add_point(pt_odom);
                             }

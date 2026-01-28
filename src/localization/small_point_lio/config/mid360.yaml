@@ -55,5 +55,8 @@ small_point_lio:
         batch_point_size: 50                       # Batch中一次性更新的点数（推荐30-100）
         batch_max_points: 500                      # Batch最大累积点数（防止内存过大）
 
+        # 性能调试参数
+        enable_performance_debug: false            # 是否开启性能调试模式（打印各环节耗时）
+
         # 数据发布
         publish_odometry_without_downsample: false # 是否发布高频的里程计

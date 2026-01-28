@@ -56,6 +56,12 @@ namespace small_point_lio {
         use_batch_update = node.declare_parameter<bool>("use_batch_update", true);
         batch_point_size = static_cast<int>(node.declare_parameter<long>("batch_point_size", 50));
         batch_max_points = static_cast<int>(node.declare_parameter<long>("batch_max_points", 500));
+        
+        // 性能调试参数
+        enable_performance_debug = node.declare_parameter<bool>("enable_performance_debug", false);
+        if (enable_performance_debug) {
+            RCLCPP_WARN(node.get_logger(), "⚠️ Performance debug mode ENABLED - will print timing info");
+        }
 
         // 数据发布
         publish_odometry_without_downsample = node.declare_parameter<bool>("publish_odometry_without_downsample");
