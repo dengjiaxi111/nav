@@ -14,10 +14,7 @@
 #include "nav_interfaces/action/navigate.hpp"
 #include "nav_components/simple_planner.hpp"
 #include "nav_components/pure_pursuit.hpp"
-
 #include "nav_components/nmpc.hpp"
-
-
 #include "nav_components/backup_recovery.hpp"
 #include "nav_components/spin_recovery.hpp"
 #include "nav_components/recovery_manager.hpp"
@@ -38,7 +35,7 @@ public:
         
         // 周期性路径检查参数
         path_check_period_ = declare_parameter("path_check_period", 2.0);  // 路径检查周期(秒)
-        path_start_distance_threshold_ = declare_parameter("path_start_distance_threshold", 1.5);  // 距离路径起点阈值(米)
+        path_lateral_tolerance_ = declare_parameter("path_lateral_tolerance", 0.5);  // 横向偏离容忍度(米)
         
         map_file_ = declare_parameter("map_file", "");
         map_frame_ = declare_parameter("map_frame", "map");
@@ -319,6 +316,13 @@ private:
             current_path_ = path;
             controller_.setPath(path);
             path_pub_->publish(path);
+            
+            // 进入控制状态前，重置控制计数器和进展跟踪
+            control_count_ = 0;
+            last_progress_time_ = now();
+            last_progress_pose_ = current_pose_;
+            last_path_check_time_ = now();
+            
             fsm_.transitionTo(nav_core::NavState::CONTROLLING);
         } else {
             fsm_.triggerRecovery(nav_core::RecoveryTrigger::PLANNING_FAILED);
@@ -326,12 +330,9 @@ private:
     }
     
     void doControlling() {
-        static int control_count = 0;
-        if (++control_count == 1) {
+        control_count_++;
+        if (control_count_ == 1) {
             RCLCPP_INFO(get_logger(), "🎮 Controller: 开始控制循环");
-            last_progress_time_ = now();  // 初始化进展时间
-            last_progress_pose_ = current_pose_;
-            last_path_check_time_ = now();  // 初始化路径检查时间
         }
         
         // 周期性路径检查：检测动态障碍物导致路径不合法
@@ -349,23 +350,34 @@ private:
                 return;
             }
             
-            // 检查2: 当前位置是否偏离路径起点过远
+            // 检查2: 当前位置是否偏离路径过远（横向偏移检测）
             if (!current_path_.poses.empty()) {
-                const auto& path_start = current_path_.poses.front().pose.position;
-                double dx = current_pose_.pose.position.x - path_start.x;
-                double dy = current_pose_.pose.position.y - path_start.y;
-                double dist_to_start = std::hypot(dx, dy);
+                // 计算机器人到路径的最短距离
+                double min_dist = std::numeric_limits<double>::max();
+                size_t closest_idx = 0;
                 
-                if (dist_to_start > path_start_distance_threshold_) {
+                for (size_t i = 0; i < current_path_.poses.size(); ++i) {
+                    const auto& pose = current_path_.poses[i].pose.position;
+                    double dx = current_pose_.pose.position.x - pose.x;
+                    double dy = current_pose_.pose.position.y - pose.y;
+                    double dist = std::hypot(dx, dy);
+                    
+                    if (dist < min_dist) {
+                        min_dist = dist;
+                        closest_idx = i;
+                    }
+                }
+                
+                // 横向偏移阈值（可通过参数调整）
+                if (min_dist > path_lateral_tolerance_) {
                     RCLCPP_WARN(get_logger(), 
-                        "⚠️  偏离路径起点过远 (%.2f m > %.2f m), 触发重新规划", 
-                        dist_to_start, path_start_distance_threshold_);
+                        "⚠️  横向偏离路径过远 (%.2f m > %.2f m, 最近点索引: %zu/%zu), 触发重新规划", 
+                        min_dist, path_lateral_tolerance_, closest_idx, current_path_.poses.size());
                     stopRobot();
                     fsm_.transitionTo(nav_core::NavState::PLANNING);
                     return;
                 }
             }
-
         }
         
         // 超时检测：如果长时间无进展，触发恢复
@@ -394,7 +406,7 @@ private:
         geometry_msgs::msg::Twist cmd;
         auto result = controller_.computeVelocity(current_pose_, cmd);
         
-        if (control_count % 20 == 0) {
+        if (control_count_ % 20 == 0) {
             RCLCPP_INFO(get_logger(), "🎮 Controller: result=%d, v=%.2f, ω=%.2f, no_progress=%.1fs",
                 static_cast<int>(result), cmd.linear.x, cmd.angular.z, time_since_progress);
         }
@@ -486,14 +498,7 @@ private:
     
     nav_core::NavFSM fsm_;
     nav_components::SimplePlanner planner_;
-    
-    // 控制器 (条件编译选择 NMPC 或 PurePursuit)
-
-    nav_components::NMPC controller_;
-
-    // nav_components::PurePursuit controller_;
-
-    
+    nav_components::NMPC controller_;  // 控制器: NMPC (可替换为 PurePursuit)
     nav_components::RecoveryManager recovery_mgr_;
     
     rclcpp_action::Server<Navigate>::SharedPtr action_server_;
@@ -536,12 +541,13 @@ private:
     
     // 路径检查相关
     double path_check_period_ = 2.0;  // 路径检查周期(秒)
-    double path_start_distance_threshold_ = 1.5;  // 距离路径起点阈值(米)
+    double path_lateral_tolerance_ = 0.5;  // 横向偏离路径容忍度(米)
     rclcpp::Time last_path_check_time_;  // 上次路径检查时间
     
     rclcpp::Time start_time_;
     rclcpp::Time last_progress_time_;  // 上次有进展的时间
     geometry_msgs::msg::PoseStamped last_progress_pose_;  // 上次有进展的位置
+    int control_count_ = 0;  // 控制循环计数器（用于调试日志）
 };
 
 int main(int argc, char** argv) {

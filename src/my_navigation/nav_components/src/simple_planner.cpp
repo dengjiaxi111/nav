@@ -135,6 +135,20 @@ bool SimplePlanner::plan(
     const geometry_msgs::msg::PoseStamped& goal,
     nav_msgs::msg::Path& path)
 {
+    // 关键修复：每次规划时从 map_manager 获取最新的融合 costmap
+    if (map_manager_) {
+        auto latest_costmap = map_manager_->getCostmap();
+        if (latest_costmap) {
+            grid_map_ = latest_costmap;
+            // 同步更新地图元数据（地图大小通常不变，但确保一致性）
+            width_ = grid_map_->info.width;
+            height_ = grid_map_->info.height;
+            resolution_ = grid_map_->info.resolution;
+            origin_x_ = grid_map_->info.origin.position.x;
+            origin_y_ = grid_map_->info.origin.position.y;
+        }
+    }
+    
     if (!grid_map_) {
         RCLCPP_ERROR(node_->get_logger(), "地图未设置或类型不兼容");
         return false;
@@ -143,8 +157,25 @@ bool SimplePlanner::plan(
     // 功能2: 检查目标是否变化，如果缓存路径有效则复用
     if (enable_path_cache_ && !cached_path_.poses.empty()) {
         if (!goalChanged(goal)) {
-            // 目标未变化，检查缓存路径是否依然有效
-            if (validatePath(cached_path_)) {
+            // 目标未变化，先检查起点是否偏离缓存路径过远
+            double min_dist_to_path = std::numeric_limits<double>::max();
+            for (const auto& pose : cached_path_.poses) {
+                double dx = start.pose.position.x - pose.pose.position.x;
+                double dy = start.pose.position.y - pose.pose.position.y;
+                double dist = std::hypot(dx, dy);
+                min_dist_to_path = std::min(min_dist_to_path, dist);
+            }
+            
+            // 起点偏离阈值：1.0米（可调参数）
+            const double start_deviation_threshold = 1.0;
+            if (min_dist_to_path > start_deviation_threshold) {
+                RCLCPP_WARN(node_->get_logger(), 
+                    "规划器: 起点偏离缓存路径过远 (%.2f m > %.2f m)，重新规划",
+                    min_dist_to_path, start_deviation_threshold);
+                // 清空缓存，强制重新规划
+                cached_path_ = nav_msgs::msg::Path();
+            } else if (validatePath(cached_path_)) {
+                // 起点在路径附近且路径无障碍物，复用缓存
                 RCLCPP_INFO(node_->get_logger(), 
                     "规划器: 目标未变化且缓存路径有效，复用缓存 (%zu 点)", 
                     cached_path_.poses.size());
@@ -200,7 +231,9 @@ bool SimplePlanner::plan(
     
     Node* goal_node = nullptr;
     int iterations = 0;
-    const int max_iter = width_ * height_;
+    // 增大迭代上限：对于远距离规划，A* 可能需要探索超过格子总数的节点
+    // 3x 经验值：足够覆盖大部分情况，同时避免无限循环
+    const int max_iter = 3 * width_ * height_;
     
     while (!open.empty() && iterations++ < max_iter) {
         Node* curr = open.top();
@@ -245,7 +278,10 @@ bool SimplePlanner::plan(
     }
     
     if (!goal_node) {
-        RCLCPP_WARN(node_->get_logger(), "A*未找到路径");
+        RCLCPP_ERROR(node_->get_logger(), 
+            "A*未找到路径 (起点: [%d,%d], 终点: [%d,%d], 迭代: %d/%d, 展开: %zu)",
+            sx, sy, gx, gy, iterations, max_iter, 
+            std::count(closed.begin(), closed.end(), true));
         return false;
     }
     
