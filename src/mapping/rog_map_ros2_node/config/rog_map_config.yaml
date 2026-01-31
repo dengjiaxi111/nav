@@ -88,31 +88,65 @@ rog_map:
 
 # 2D地图投影配置（基于中科大的高程分析方案）
 projector:
-  # 机器人几何参数（关键：正确设置base_link到地面的距离）
-  robot_height: 0.8          # 机器人总高度(m)：从轮子底面到顶部
-  base_to_ground: 0.10        # base_link到地面的距离(m)：底盘中心到轮子底面
-  ground_tolerance: 0.10      # 地面起伏容差(m)：用于过滤贴地噪点
+  # === 机器人几何参数 ===
+  robot_height: 0.8           # 机器人总高度(m)：从轮子底面到顶部
+  robot_width: 0.4            # 机器人宽度(m)：用于台阶邻域分析
+  base_to_ground: 0.10        # base_link到地面的默认距离(m)
+  ground_tolerance: 0.05      # 地面起伏容差(m)：减小以保留更多坡面点
   
-  # 高程分析阈值（基于H + 占据率分类）
-  slope_height_max: 0.15      # 坡道/平面最大高度差(m)，H < 0.15m → 可通行
-  step_height_min: 0.10       # 台阶最小高度差(m)，0.1m < H < 0.2m
-  step_height_max: 0.20       # 台阶最大高度差(m)
-  obstacle_height_min: 0.30   # 障碍物最小高度差(m)，H > 0.3m → 机器人/人/墙
-  high_occupancy_thresh: 0.4  # 高占据率阈值，判断密集垂直结构
+  # === 动态腿长配置（轮腿机器人专用）===
+  enable_dynamic_leg_length: false  # 是否启用动态腿长TF订阅
+  wheel_frame: "wheel_link"         # 轮子坐标系名称
+  leg_length_min: 0.08              # 腿长最小值(m)：收腿状态
+  leg_length_max: 0.25              # 腿长最大值(m)：伸腿状态
   
-  # 地图范围参数
+  # === 高程分析阈值（基于H + 占据率分类）===
+  slope_height_max: 0.08       # 坡道/平面最大高度差(m)
+  step_height_min: 0.12        # 台阶最小高度差(m)，支持15cm台阶
+  step_height_max: 0.23        # 台阶最大高度差(m)，支持20cm台阶
+  obstacle_height_min: 0.25    # 障碍物最小高度差(m)
+  high_occupancy_thresh: 0.5   # 高占据率阈值（>此值跳过法向量分析，直接判障碍物）
+  
+  # === 法向量分析参数（PCA）===
+  normal_z_slope_thresh: 0.866    # cos(30°)，|nz|大于此值 → 可通行坡面
+  normal_z_wall_thresh: 0.5       # cos(60°)，|nz|小于此值 → 垂直障碍物
+  normal_min_points: 5            # 法向量估计最小点数
+  planarity_thresh: 0.7           # 平面性阈值，大于此值认为是平面
+  
+  # === 台阶检测参数 ===
+  step_15cm_min: 0.12             # 15cm台阶识别下限
+  step_15cm_max: 0.18             # 15cm台阶识别上限
+  step_20cm_min: 0.17             # 20cm台阶识别下限
+  step_20cm_max: 0.23             # 20cm台阶识别上限
+  step_continuity_thresh: 0.03    # 台阶连续性阈值(m)
+  step_neighbor_min_count: 2      # 台阶两侧最小邻域数
+  step_edge_ratio_thresh: 0.3     # 台阶边缘占比阈值
+  
+  # === 悬崖/下行台阶检测参数 ===
+  cliff_search_radius: 5          # 悬崖边缘搜索半径（栅格数）
+  cliff_min_drop: 0.10            # 最小高度跌落(m)
+  cliff_min_lower_points: 3       # 下方平面最小有效栅格数
+  
+  # === 坡面检测参数（梯度连续性）===
+  slope_gradient_thresh: 0.577    # tan(30°)，最大允许坡度
+  slope_continuity_thresh: 0.03   # 梯度连续性阈值
+  slope_min_continuous_count: 3   # 判定为坡面的最小连续邻域数
+  
+  # === 地图范围参数 ===
   map_range_x: 10.0           # X方向范围(m)
   map_range_y: 10.0           # Y方向范围(m)
   resolution: 0.025           # 栅格分辨率(m)
   
-  # 高度范围（相对于机器人当前z坐标）
-  z_min_relative: -1.5        # 相对最低高度(m)
-  z_max_relative: 2.5         # 相对最高高度(m)
+  # === 高度范围（相对于机器人当前z坐标）===
+  z_min_relative: -0.5        # 相对最低高度(m)
+  z_max_relative: 2.0         # 相对最高高度(m)
   
-  # 发布参数
+  # === 发布参数 ===
   publish_rate: 20.0          # 发布频率(Hz)
-  frame_id: "map"            # 坐标系
-  topic_name: "/rog_map/map_2d"  # 发布话题
+  frame_id: "odom"            # 坐标系
+  topic_name: "/rog_map/map_2d"  # 2D地图发布话题
   
-  # 调试开关
-  enable_debug_log: false     # 启用详细分类日志（每1000个栅格采样一次）名
+  # === 调试开关 ===
+  enable_debug_log: false         # 启用详细分类日志
+  enable_step_debug_viz: true     # 发布台阶可视化Marker
+  step_debug_topic: "rog_map/step_debug"

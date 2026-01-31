@@ -2,7 +2,7 @@
 // A* 路径规划 + B样条平滑 + B样条优化
 
 #include "nav_components/simple_planner.hpp"
-#include "nav_components/map_manager.hpp"
+#include "nav_components/layered_map_manager.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -70,8 +70,8 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
         return;
     }
     
-    // 从 MapManager 获取 costmap（膨胀后的地图）
-    map_manager_ = std::dynamic_pointer_cast<MapManager>(map);
+    // 从 LayeredMapManager 获取 costmap（膨胀后的地图）
+    map_manager_ = std::dynamic_pointer_cast<LayeredMapManager>(map);
     if (map_manager_ && map_manager_->getCostmap()) {
         grid_map_ = map_manager_->getCostmap();
         width_ = grid_map_->info.width;
@@ -88,6 +88,10 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
                 });
             RCLCPP_INFO(node_->get_logger(), "B样条优化: ESDF 回调已设置");
         }
+    } else {
+        RCLCPP_ERROR(node_->get_logger(), 
+            "SimplePlanner: 无法转换为 LayeredMapManager 或获取 costmap");
+        grid_map_ = nullptr;
     }
 }
 

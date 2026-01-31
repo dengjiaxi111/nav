@@ -21,7 +21,7 @@
 #include "nav_components/backup_recovery.hpp"
 #include "nav_components/spin_recovery.hpp"
 #include "nav_components/recovery_manager.hpp"
-#include "nav_components/map_manager.hpp"
+#include "nav_components/layered_map_manager.hpp"
 
 using Navigate = nav_interfaces::action::Navigate;
 using GoalHandle = rclcpp_action::ServerGoalHandle<Navigate>;
@@ -43,8 +43,16 @@ public:
         map_file_ = declare_parameter("map_file", "");
         map_frame_ = declare_parameter("map_frame", "map");
         base_frame_ = declare_parameter("base_frame", "base_link");
+        odom_frame_ = declare_parameter("odom_frame", "odom");
         enable_esdf_ = declare_parameter("enable_esdf", false);
         esdf_vis_max_dist_ = declare_parameter("esdf_vis_max_dist", 2.0);
+        
+        // 性能日志开关
+        bool enable_performance_logging = declare_parameter("enable_performance_logging", false);
+        
+        // 动态层配置
+        enable_dynamic_layer_ = declare_parameter("enable_dynamic_layer", false);
+        dynamic_layer_topic_ = declare_parameter("dynamic_layer_topic", "/rog_map/map_2d");
         
         // 膨胀参数
         nav_components::InflationParams inflation_params;
@@ -54,6 +62,7 @@ public:
         std::string decay_str = declare_parameter("inflation.decay_type", "exponential");
         inflation_params.decay_type = (decay_str == "linear") ? 
             nav_components::DecayType::LINEAR : nav_components::DecayType::EXPONENTIAL;
+        inflation_params_ = inflation_params;
         
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -61,7 +70,8 @@ public:
         // Publishers
         cmd_vel_pub_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
         path_pub_ = create_publisher<nav_msgs::msg::Path>("plan", 10);
-        map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("map", rclcpp::QoS(1).transient_local().reliable());
+        static_map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("static_map", rclcpp::QoS(1).transient_local().reliable());
+        fused_map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("fused_map", rclcpp::QoS(1).transient_local().reliable());
         costmap_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("costmap", rclcpp::QoS(1).transient_local().reliable());
         if (enable_esdf_) {
             esdf_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("esdf_map", rclcpp::QoS(1).transient_local().reliable());
@@ -72,31 +82,41 @@ public:
             "goal_pose", 10,
             std::bind(&NavServer::goalPoseCallback, this, std::placeholders::_1));
         
-        // 地图管理器
-        map_manager_ = std::make_shared<nav_components::MapManager>();
+        // 地图管理器（使用分层地图管理器）
+        map_manager_ = std::make_shared<nav_components::LayeredMapManager>();
+        map_manager_->initialize(this, tf_buffer_);
+        map_manager_->setEsdfEnabled(enable_esdf_);
+        map_manager_->setEsdfVisMaxDist(esdf_vis_max_dist_);
+        map_manager_->setEnablePerformanceLogging(enable_performance_logging);
         
         initComponents();
         
         if (!map_file_.empty()) {
-            // 从文件加载
-            if (map_manager_->loadFromFile(map_file_, inflation_params, get_logger())) {
-                if (enable_esdf_) {
-                    map_manager_->buildEsdf(esdf_vis_max_dist_);
-                }
+            // 从文件加载静态地图
+            if (map_manager_->loadStaticMap(map_file_, inflation_params)) {
                 planner_.setMap(map_manager_);
                 startMapPublisher();
+                RCLCPP_INFO(get_logger(), "静态地图加载完成");
             }
         } else {
-            // 订阅外部地图
-            map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+            // 订阅外部静态地图
+            static_map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
                 "map", rclcpp::QoS(1).transient_local(),
-                [this, inflation_params](nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-                    map_manager_->setInflationParams(inflation_params);
-                    map_manager_->setRawMap(msg);
-                    if (enable_esdf_) map_manager_->buildEsdf(esdf_vis_max_dist_);
+                [this](nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+                    map_manager_->setInflationParams(inflation_params_);
+                    map_manager_->setStaticMap(msg);
                     planner_.setMap(map_manager_);
-                    RCLCPP_INFO(get_logger(), "地图更新: %dx%d", msg->info.width, msg->info.height);
+                    RCLCPP_INFO(get_logger(), "静态地图更新: %dx%d", msg->info.width, msg->info.height);
                 });
+        }
+        
+        // 订阅动态障碍物层（来自rog_map）
+        if (enable_dynamic_layer_) {
+            const rclcpp::QoS qos(rclcpp::QoS(1).best_effort().keep_last(1));
+            dynamic_layer_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+                dynamic_layer_topic_, qos,
+                std::bind(&NavServer::dynamicLayerCallback, this, std::placeholders::_1));
+            RCLCPP_INFO(get_logger(), "动态层订阅: %s", dynamic_layer_topic_.c_str());
         }
         
         action_server_ = rclcpp_action::create_server<Navigate>(
@@ -109,22 +129,34 @@ public:
             std::chrono::duration<double>(1.0 / control_rate_),
             std::bind(&NavServer::controlLoop, this));
         
-        RCLCPP_INFO(get_logger(), "导航服务器启动");
+        RCLCPP_INFO(get_logger(), "导航服务器启动 (动态层: %s)", 
+                    enable_dynamic_layer_ ? "启用" : "禁用");
     }
 
 private:
+    // 动态障碍物层回调
+    void dynamicLayerCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+        if (map_manager_) {
+            map_manager_->updateDynamicLayer(msg);
+        }
+    }
+    
     // 启动地图发布定时器
     void startMapPublisher() {
         map_pub_timer_ = create_wall_timer(
-            std::chrono::milliseconds(500),  // 2Hz 发布
+            std::chrono::milliseconds(100),  // 10Hz 发布（动态层更新较快）
             [this]() {
                 if (!map_manager_) {
                     return;
                 }
                 
-                // 发布原始地图
-                if (auto grid = map_manager_->getRawMap()) {
-                    map_pub_->publish(*grid);
+                // 发布静态地图
+                if (auto grid = map_manager_->getStaticMap()) {
+                    static_map_pub_->publish(*grid);
+                }
+                // 发布融合地图
+                if (auto fused = map_manager_->getFusedMap()) {
+                    fused_map_pub_->publish(*fused);
                 }
                 // 发布膨胀代价地图
                 if (auto costmap = map_manager_->getCostmap()) {
@@ -472,30 +504,35 @@ private:
     
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
-    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr static_map_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr fused_map_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr esdf_pub_;
-    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
+    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr static_map_sub_;
+    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr dynamic_layer_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
     
     // 定时器
     rclcpp::TimerBase::SharedPtr control_timer_;      // 控制循环
     rclcpp::TimerBase::SharedPtr map_pub_timer_;      // 地图发布（可视化）
     
-    // 地图管理器：统一管理原始地图、膨胀地图、ESDF
-    std::shared_ptr<nav_components::MapManager> map_manager_;
+    // 分层地图管理器：管理静态层、动态层、融合地图、ESDF
+    std::shared_ptr<nav_components::LayeredMapManager> map_manager_;
     
     geometry_msgs::msg::PoseStamped current_pose_;
     geometry_msgs::msg::PoseStamped goal_;
     nav_msgs::msg::Path current_path_;
     
-    std::string map_file_, map_frame_, base_frame_;
+    std::string map_file_, map_frame_, base_frame_, odom_frame_;
+    std::string dynamic_layer_topic_;
     double control_rate_, goal_timeout_, goal_tolerance_, yaw_tolerance_;
     double controller_timeout_;  // 控制器无进展超时阈值(秒)
     double controller_progress_threshold_;  // 进展检测距离阈值(米)
     double map_update_rate_, esdf_vis_max_dist_;
     bool enable_esdf_;
+    bool enable_dynamic_layer_;  // 是否启用动态障碍物层
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
+    nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
     
     // 路径检查相关
     double path_check_period_ = 2.0;  // 路径检查周期(秒)

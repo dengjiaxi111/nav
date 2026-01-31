@@ -9,6 +9,11 @@ nav_server:
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
     
+    # 坐标系配置
+    map_frame: "map"
+    base_frame: "base_link"
+    odom_frame: "odom"
+    
     # 控制器超时保护
     controller_timeout: 10.0  # 控制器无进展超时(秒)
     controller_progress_threshold: 0.15  # 进展检测距离阈值(米)
@@ -17,9 +22,20 @@ nav_server:
     path_check_period: 2.0  # 路径检查周期(秒)
     path_start_distance_threshold: 0.5  # 距离路径起点阈值(米)，超过则重规划
     
-    # ESDF 地图
+    # ============ 动态障碍物层 (来自rog_map) ============
+    enable_dynamic_layer: true  # 启用动态层融合
+    dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
+    # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
+    # 融合策略: fused[i] = max(static[i], dynamic[i])
+    # 注意: 需要有odom->map的TF变换
+    
+    # ============ 地图更新性能日志 ============
+    enable_performance_logging: true  # 启用地图更新性能日志 (开发/调试时启用)
+    # 说明: 启用后会在控制台输出地图融合、ESDF/Costmap重建的详细耗时
+    
+    # ============ ESDF 地图 ============
     enable_esdf: true
-    esdf_vis_max_dist: 2.0  # 可视化最大距离(m)
+    esdf_vis_max_dist: 2.0      # 可视化最大距离(m)
     
     # Costmap 膨胀
     inflation:

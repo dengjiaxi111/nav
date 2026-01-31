@@ -53,6 +53,7 @@ set(NAV_SERVER_SOURCES
   src/backup_recovery.cpp
   src/spin_recovery.cpp
   src/recovery_manager.cpp
+  src/layered_map_manager.cpp
 )
 
 # 如果有 NMPC solver, 添加 NMPC 源文件

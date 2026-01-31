@@ -89,35 +89,7 @@ rclcpp_components_register_node(rog_map_component
   EXECUTABLE rog_map_component_node
 )
 
-# Obstacle Perception node (组件化)
-add_library(obstacle_perception_component SHARED
-  src/obstacle_perception.cpp
-)
-
-target_compile_definitions(obstacle_perception_component PRIVATE
-  USE_ROS2
-)
-
-target_link_libraries(obstacle_perception_component
-  ${PCL_LIBRARIES}
-)
-
-ament_target_dependencies(obstacle_perception_component
-  rclcpp
-  rclcpp_components
-  sensor_msgs
-  nav_msgs
-  geometry_msgs
-  visualization_msgs
-  pcl_conversions
-)
-
-rclcpp_components_register_node(obstacle_perception_component
-  PLUGIN "obstacle_perception::ObstaclePerceptionNode"
-  EXECUTABLE obstacle_perception_node
-)
-
-install(TARGETS rog_map_node rog_map_component obstacle_perception_component
+install(TARGETS rog_map_node rog_map_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
