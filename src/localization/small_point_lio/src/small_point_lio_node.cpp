@@ -278,6 +278,60 @@ namespace small_point_lio {
             odometry_msg.pose.pose.orientation.z = transform_stamped.transform.rotation.z;
             odometry_msg.pose.pose.orientation.w = transform_stamped.transform.rotation.w;
 
+            // ============================================================
+            // 填充 twist（速度信息），按照 ROS 约定在 child_frame_id (base_link) 系下表示
+            // 
+            // LIO 输出:
+            //   - odometry.velocity: lidar_odom 世界坐标系下 lidar 原点的线速度
+            //   - odometry.angular_velocity: lidar body 坐标系下的角速度
+            // 
+            // 需要变换到 base_link 坐标系:
+            //   1. 角速度: 刚体角速度在任意点相同，只需坐标变换
+            //      ω_base = R_lidar_to_base * ω_lidar
+            //   2. 线速度: 考虑刚体运动学 (不同点的线速度不同)
+            //      先将世界系速度转到 lidar 系: v_lidar_body = R_odom_to_lidar * v_odom
+            //      然后考虑杆臂效应: v_base_in_lidar = v_lidar_body + ω_lidar × t_lidar_to_base
+            //      最后转到 base 系: v_base = R_lidar_to_base * v_base_in_lidar
+            // ============================================================
+            
+            // LIO 输出的原始速度
+            Eigen::Vector3f vel_odom = odometry.velocity.cast<float>();        // 世界系下 lidar 的速度
+            Eigen::Vector3f omg_lidar = odometry.angular_velocity.cast<float>(); // lidar body 系下的角速度
+            
+            // 外参: lidar → base_link
+            Eigen::Matrix3f R_lidar_to_base = T_lidar_to_base_.rotation();
+            Eigen::Vector3f t_lidar_to_base = T_lidar_to_base_.translation();
+            
+            // Step 1: 计算 lidar 在 odom 系下的姿态 (用于速度坐标变换)
+            Eigen::Quaternionf q_odom_to_lidar;
+            if (gravity_alignment_enabled_) {
+                // q_lidar_in_odom = q_gravity_align * q_lidar_odom
+                Eigen::Quaternionf q_lidar_in_odom = q_gravity_align_ * q_lidar_odom;
+                q_odom_to_lidar = q_lidar_in_odom.inverse();
+            } else {
+                q_odom_to_lidar = q_lidar_odom.inverse();
+            }
+            Eigen::Matrix3f R_odom_to_lidar = q_odom_to_lidar.toRotationMatrix();
+            
+            // Step 2: 将世界系速度转到 lidar body 系
+            Eigen::Vector3f vel_lidar_body = R_odom_to_lidar * vel_odom;
+            
+            // Step 3: 刚体运动学 - 计算 base_link 原点在 lidar 系下的速度
+            // v_base = v_lidar + ω × r (杆臂效应)
+            Eigen::Vector3f vel_base_in_lidar = vel_lidar_body + omg_lidar.cross(t_lidar_to_base);
+            
+            // Step 4: 将速度从 lidar 系转到 base_link 系
+            Eigen::Vector3f vel_base = R_lidar_to_base * vel_base_in_lidar;
+            Eigen::Vector3f omg_base = R_lidar_to_base * omg_lidar;
+            
+            // 填充 twist (在 base_link 坐标系下)
+            odometry_msg.twist.twist.linear.x = vel_base.x();
+            odometry_msg.twist.twist.linear.y = vel_base.y();
+            odometry_msg.twist.twist.linear.z = vel_base.z();
+            odometry_msg.twist.twist.angular.x = omg_base.x();
+            odometry_msg.twist.twist.angular.y = omg_base.y();
+            odometry_msg.twist.twist.angular.z = omg_base.z();
+
             tf_broadcaster->sendTransform(transform_stamped);
             odometry_publisher->publish(odometry_msg);
         });
