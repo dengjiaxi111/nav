@@ -33,7 +33,7 @@ nav_server:
     # 注意: 需要有odom->map的TF变换
     
     # ============ 地图更新性能日志 ============
-    enable_performance_logging: true  # 启用地图更新性能日志 (开发/调试时启用)
+    enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)
     # 说明: 启用后会在控制台输出地图融合、ESDF/Costmap重建的详细耗时
     
     # ============ ESDF 地图 ============

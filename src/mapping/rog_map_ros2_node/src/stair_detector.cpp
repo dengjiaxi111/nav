@@ -453,9 +453,9 @@ void StairDetector::addCandidateMarker(
     bbox.pose.position.z = (candidate.bbox_min.z() + candidate.bbox_max.z()) / 2.0;
     bbox.pose.orientation.w = 1.0;
     
-    bbox.scale.x = candidate.bbox_max.x() - candidate.bbox_min.x();
-    bbox.scale.y = candidate.bbox_max.y() - candidate.bbox_min.y();
-    bbox.scale.z = candidate.bbox_max.z() - candidate.bbox_min.z();
+    bbox.scale.x = std::max(0.05f, candidate.bbox_max.x() - candidate.bbox_min.x());
+    bbox.scale.y = std::max(0.05f, candidate.bbox_max.y() - candidate.bbox_min.y());
+    bbox.scale.z = std::max(0.05f, candidate.bbox_max.z() - candidate.bbox_min.z());
     
     if (is_locked) {
         bbox.color.r = 0.0f;
@@ -466,8 +466,8 @@ void StairDetector::addCandidateMarker(
         bbox.color.g = 1.0f;
         bbox.color.b = 0.0f;
     }
-    bbox.color.a = 0.3f;
-    bbox.lifetime = rclcpp::Duration::from_seconds(0.2);
+    bbox.color.a = 0.7f;
+    bbox.lifetime = rclcpp::Duration::from_seconds(0.5);
     
     markers.markers.push_back(bbox);
     
@@ -484,7 +484,7 @@ void StairDetector::addCandidateMarker(
     center.pose.position.z = candidate.center.z();
     center.pose.orientation.w = 1.0;
     
-    center.scale.x = center.scale.y = center.scale.z = 0.1;
+    center.scale.x = center.scale.y = center.scale.z = 0.2;
     center.color = bbox.color;
     center.color.a = 1.0f;
     center.lifetime = bbox.lifetime;
@@ -511,7 +511,7 @@ void StairDetector::addCandidateMarker(
     edge_line.points.push_back(p1);
     edge_line.points.push_back(p2);
     
-    edge_line.scale.x = 0.02;  // 线宽
+    edge_line.scale.x = 0.05;  // 线宽
     edge_line.color.r = 1.0f;  // 红色
     edge_line.color.g = 0.0f;
     edge_line.color.b = 0.0f;
@@ -530,16 +530,65 @@ void StairDetector::addCandidateMarker(
     
     text.pose.position.x = candidate.center.x();
     text.pose.position.y = candidate.center.y();
-    text.pose.position.z = candidate.height + 0.2;
+    text.pose.position.z = candidate.height + 0.4;
     text.pose.orientation.w = 1.0;
     
     text.text = (candidate.type == StairType::SINGLE) ? "Single (15cm)" : "Double (35cm)";
-    text.scale.z = 0.15;
+    text.scale.z = 0.3;
     text.color.r = text.color.g = text.color.b = 1.0f;
     text.color.a = 1.0f;
     text.lifetime = bbox.lifetime;
     
     markers.markers.push_back(text);
+
+    // 包围盒线框（更醒目）
+    visualization_msgs::msg::Marker wire;
+    wire.header = bbox.header;
+    wire.ns = "stair_bbox_wire";
+    wire.id = id;
+    wire.type = visualization_msgs::msg::Marker::LINE_LIST;
+    wire.action = visualization_msgs::msg::Marker::ADD;
+    wire.scale.x = 0.03;
+    wire.color.r = 1.0f;
+    wire.color.g = 0.0f;
+    wire.color.b = 1.0f;  // 紫色线框
+    wire.color.a = 1.0f;
+    wire.lifetime = bbox.lifetime;
+
+    const double x_min = candidate.bbox_min.x();
+    const double x_max = candidate.bbox_max.x();
+    const double y_min = candidate.bbox_min.y();
+    const double y_max = candidate.bbox_max.y();
+    const double z_min = candidate.bbox_min.z();
+    const double z_max = candidate.bbox_max.z();
+
+    auto add_edge = [&wire](double x1, double y1, double z1,
+                            double x2, double y2, double z2) {
+        geometry_msgs::msg::Point a;
+        a.x = x1; a.y = y1; a.z = z1;
+        geometry_msgs::msg::Point b;
+        b.x = x2; b.y = y2; b.z = z2;
+        wire.points.push_back(a);
+        wire.points.push_back(b);
+    };
+
+    // 底面
+    add_edge(x_min, y_min, z_min, x_max, y_min, z_min);
+    add_edge(x_max, y_min, z_min, x_max, y_max, z_min);
+    add_edge(x_max, y_max, z_min, x_min, y_max, z_min);
+    add_edge(x_min, y_max, z_min, x_min, y_min, z_min);
+    // 顶面
+    add_edge(x_min, y_min, z_max, x_max, y_min, z_max);
+    add_edge(x_max, y_min, z_max, x_max, y_max, z_max);
+    add_edge(x_max, y_max, z_max, x_min, y_max, z_max);
+    add_edge(x_min, y_max, z_max, x_min, y_min, z_max);
+    // 立柱
+    add_edge(x_min, y_min, z_min, x_min, y_min, z_max);
+    add_edge(x_max, y_min, z_min, x_max, y_min, z_max);
+    add_edge(x_max, y_max, z_min, x_max, y_max, z_max);
+    add_edge(x_min, y_max, z_min, x_min, y_max, z_max);
+
+    markers.markers.push_back(wire);
 }
 
 void StairDetector::publishStairTarget() {

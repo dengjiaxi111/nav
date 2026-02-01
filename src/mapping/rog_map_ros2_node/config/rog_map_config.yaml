@@ -89,7 +89,7 @@ rog_map:
   virtual_ceil_height: 5.0
 
   # Performance logging
-  enable_performance_log: true
+  enable_performance_log: false
 
 # 2D地图投影参数已迁移到标准ROS2参数文件：
 #   rog_map_ros2_node/config/projector_params.yaml

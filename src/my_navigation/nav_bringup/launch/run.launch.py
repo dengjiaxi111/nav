@@ -27,7 +27,7 @@ def generate_launch_description():
     nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
     rog_map_config = os.path.join(rog_map_dir, 'config', 'rog_map_config.yaml')
     projector_params = os.path.join(rog_map_dir, 'config', 'projector_params.yaml')
-    stair_detector_params = os.path.join(nav_bringup_dir, 'config', 'stair_detector_params.yaml')
+    stair_detector_params = os.path.join(rog_map_dir, 'config', 'stair_detector_params.yaml')
     
     # RViz 配置 - 使用导航专用配置
     rviz_config_file = os.path.join(nav_bringup_dir, 'rviz', 'navigation_full.rviz')
@@ -136,7 +136,7 @@ def generate_launch_description():
         # 启动节点
         small_point_lio_launch,
         rog_map_node,
-        stair_detector_node,  # 台阶检测（依赖 ROG-Map）
+        stair_detector_node,  
         navigation_launch,
         rviz_node,
     ])

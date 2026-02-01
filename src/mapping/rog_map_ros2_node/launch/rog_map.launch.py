@@ -17,15 +17,8 @@ def generate_launch_description():
         description='Path to ROG-Map config file'
     )
     
-    config_file_path = os.path.join(config_dir, 'rog_map_config.yaml')
     projector_params_file = os.path.join(config_dir, 'projector_params.yaml')
-    
-    # 读取YAML配置文件
-    with open(config_file_path, 'r') as f:
-        config_yaml = yaml.safe_load(f)
-    
-    # 提取各模块配置
-    stair_detector_params = config_yaml.get('stair_detector', {})
+    stair_detector_params_file = os.path.join(config_dir, 'stair_detector_params.yaml')
     
     rviz_config = os.path.join(package_dir, 'rviz', 'rog_map.rviz')
     
@@ -46,7 +39,7 @@ def generate_launch_description():
         package='rog_map_ros2_node',
         executable='stair_detector_node',
         name='stair_detector',
-        parameters=[stair_detector_params],  # 从 YAML 读取
+    parameters=[stair_detector_params_file],
         output='screen'
     )
     

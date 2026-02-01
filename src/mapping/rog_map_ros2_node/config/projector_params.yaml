@@ -40,6 +40,6 @@ rog_map:
     projector.frame_id: "odom"
     projector.topic_name: "/rog_map/map_2d"
     projector.input_cloud_topic: "/rog_map/inf_occ"
-    projector.enable_debug_log: true
+    projector.enable_debug_log: false
     projector.enable_step_debug_viz: true
     projector.step_debug_topic: "rog_map/step_debug"

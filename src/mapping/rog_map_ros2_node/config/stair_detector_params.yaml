@@ -8,11 +8,11 @@ stair_detector:
     output_marker_topic: "/stair_detector/markers"
     enable_visualization: true
     update_rate: 20.0
-    
+
     # Frame IDs
     target_frame: "base_link"  # 目标坐标系（机器人本体）
     map_frame: "odom"          # 地图坐标系
-    
+
     # ROI filtering (in base_link frame)
     roi_x_min: 0.2
     roi_x_max: 2.0
@@ -20,12 +20,12 @@ stair_detector:
     roi_y_max: 0.6
     roi_z_min: 0.05
     roi_z_max: 0.5
-    
+
     # Clustering parameters
     cluster_tolerance: 0.05
     min_cluster_size: 200
     max_cluster_size: 10000
-    
+
     # Stair geometry constraints
     single_stair_height: 0.20
     double_stair_height: 0.35
@@ -33,7 +33,7 @@ stair_detector:
     min_stair_width: 0.35
     min_stair_depth: 0.15
     max_z_thickness: 0.08
-    
+
     # Temporal tracking
     min_detection_frames: 3
     lowpass_alpha: 0.7
