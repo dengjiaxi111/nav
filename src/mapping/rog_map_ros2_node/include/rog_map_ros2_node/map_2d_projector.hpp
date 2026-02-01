@@ -151,6 +151,9 @@ struct ProjectorConfig {
     std::string frame_id = "odom";
     std::string topic_name = "rog_map/map_2d";
     std::string step_debug_topic = "rog_map/step_debug";  // 台阶调试话题
+    
+    // === 输入话题 ===
+    std::string input_cloud_topic = "/rog_map/occ";  // 使用原始占据点云（非膨胀）
 };
 
 /**

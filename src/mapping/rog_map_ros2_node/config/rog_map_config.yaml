@@ -35,7 +35,7 @@ rog_map:
     frame_id: "odom"
     time_rate: 20.0
     frame_rate: 20
-    range: [10.0, 10.0, 5.0]
+    range: [8.0, 8.0, 5.0]
 
   # Grid resolution
   resolution: 0.025
@@ -55,17 +55,22 @@ rog_map:
   # Point filtering
   point_filt_num: 1
 
-  # Raycasting
+  # Raycasting - 动态障碍物响应优化
   raycasting:
     enable: true
     batch_update_size: 4
-    unk_thresh: 0.5          # Unknown判定阈值（概率值在此附近为unknown）
-    p_hit: 0.70              # Hit观测时增加的占据概率
-    p_miss: 0.35             # Miss观测时减少的占据概率（应 < 0.5）
+    unk_thresh: 0.5          # Unknown判定阈值
+    
+    # === 概率更新参数（优化动态响应）===
+    # 原理：logit(p) = log(p/(1-p))
+    # n_free = ceil(l_free/l_miss) 表示从unknown变free需要的miss次数
+    # 从occupied(l_max)变free需要 (l_max-l_free)/|l_miss| 次miss
+    p_hit: 0.65              # Hit观测↓(0.70→0.65)：降低单次hit权重，避免快速锁定
+    p_miss: 0.40             # Miss观测↑(0.35→0.40)：提高单次miss衰减速度
     p_min: 0.12              # 最小概率限制
-    p_max: 0.97              # 最大概率限制
-    p_occ: 0.70              # 判定为occupied的概率阈值（应 > 0.5）
-    p_free: 0.30             # 判定为free的概率阈值（应 < 0.5，且 < p_miss）
+    p_max: 0.90              # 最大概率↓(0.97→0.90)：降低occupied上限，便于清除
+    p_occ: 0.65              # Occupied阈值↓(0.70→0.65)：适度放宽
+    p_free: 0.35             # Free阈值↑(0.30→0.35)：稍微收紧
     ray_range: [0.2, 30.0]
     local_update_box: [10.0, 10.0, 2.0]
     
@@ -75,9 +80,10 @@ rog_map:
     grain_size: 512           # Points per task (larger = less overhead, less load balancing)
     min_cloud_size_for_parallel: 500  # Only parallelize if cloud has >= 500 points
     
-    # Fading mechanism - decay obstacles not observed for a long time
+    # === Fading机制 - 主动衰减未观测障碍物 ===
+    # 对于被遮挡/死角的动态障碍物残留，依靠fading清除
     fading_enable: true       # Enable obstacle fading
-    fading_frame_thresh: 25  
+    fading_frame_thresh: 15   # ↓(25→15)帧：约0.75秒后开始衰减（假设20Hz）  
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0
@@ -87,12 +93,13 @@ rog_map:
   enable_performance_log: true
 
 # 2D地图投影配置（基于中科大的高程分析方案）
+# 目标：准确区分 可通行(地面/坡道/高层平面) vs 不可通行(墙壁)
 projector:
   # === 机器人几何参数 ===
   robot_height: 0.8           # 机器人总高度(m)：从轮子底面到顶部
   robot_width: 0.4            # 机器人宽度(m)：用于台阶邻域分析
   base_to_ground: 0.10        # base_link到地面的默认距离(m)
-  ground_tolerance: 0.05      # 地面起伏容差(m)：减小以保留更多坡面点
+  ground_tolerance: 0.08      # ↑(0.05→0.08) 地面起伏容差：增大以适应坡面起始处
   
   # === 动态腿长配置（轮腿机器人专用）===
   enable_dynamic_leg_length: false  # 是否启用动态腿长TF订阅
@@ -100,18 +107,19 @@ projector:
   leg_length_min: 0.08              # 腿长最小值(m)：收腿状态
   leg_length_max: 0.25              # 腿长最大值(m)：伸腿状态
   
-  # === 高程分析阈值（基于H + 占据率分类）===
-  slope_height_max: 0.08       # 坡道/平面最大高度差(m)
+  # === 高程分析阈值（优化坡面识别）===
+  # 核心思路：不依赖单一阈值，而是结合法向量和占据率综合判断
+  slope_height_max: 0.15       # ↑(0.08→0.15) 增大：单栅格内高度差容忍度
   step_height_min: 0.12        # 台阶最小高度差(m)，支持15cm台阶
   step_height_max: 0.23        # 台阶最大高度差(m)，支持20cm台阶
   obstacle_height_min: 0.25    # 障碍物最小高度差(m)
-  high_occupancy_thresh: 0.5   # 高占据率阈值（>此值跳过法向量分析，直接判障碍物）
+  high_occupancy_thresh: 0.6   # ↑(0.5→0.6) 高占据率阈值：放宽，避免坡面被误判
   
-  # === 法向量分析参数（PCA）===
-  normal_z_slope_thresh: 0.866    # cos(30°)，|nz|大于此值 → 可通行坡面
-  normal_z_wall_thresh: 0.5       # cos(60°)，|nz|小于此值 → 垂直障碍物
-  normal_min_points: 5            # 法向量估计最小点数
-  planarity_thresh: 0.7           # 平面性阈值，大于此值认为是平面
+  # === 法向量分析参数（PCA）- 坡面识别关键 ===
+  normal_z_slope_thresh: 0.82     # ↓(0.866→0.82) ≈ cos(35°)：放宽坡面识别角度
+  normal_z_wall_thresh: 0.42      # ↓(0.5→0.42) ≈ cos(65°)：收紧墙面判定
+  normal_min_points: 3            # ↓(5→3) 降低最小点数要求，适应稀疏点云
+  planarity_thresh: 0.6           # ↓(0.7→0.6) 平面性阈值：放宽，坡面可能不够平坦
   
   # === 台阶检测参数 ===
   step_15cm_min: 0.12             # 15cm台阶识别下限
@@ -128,9 +136,9 @@ projector:
   cliff_min_lower_points: 3       # 下方平面最小有效栅格数
   
   # === 坡面检测参数（梯度连续性）===
-  slope_gradient_thresh: 0.577    # tan(30°)，最大允许坡度
-  slope_continuity_thresh: 0.03   # 梯度连续性阈值
-  slope_min_continuous_count: 3   # 判定为坡面的最小连续邻域数
+  slope_gradient_thresh: 0.70     # ↑(0.577→0.70) ≈ tan(35°)：放宽最大坡度
+  slope_continuity_thresh: 0.05   # ↑(0.03→0.05) 梯度连续性阈值：放宽
+  slope_min_continuous_count: 2   # ↓(3→2) 降低连续邻域要求
   
   # === 地图范围参数 ===
   map_range_x: 10.0           # X方向范围(m)
@@ -146,7 +154,12 @@ projector:
   frame_id: "odom"            # 坐标系
   topic_name: "/rog_map/map_2d"  # 2D地图发布话题
   
+  # === 输入话题（关键配置）===
+  # 使用原始占据点云 /rog_map/occ，而不是膨胀后的 /rog_map/inf_occ
+  # 原因：膨胀点云会在坡面上产生Z轴堆叠，导致坡面被误判为障碍物
+  input_cloud_topic: "/rog_map/occ"
+  
   # === 调试开关 ===
-  enable_debug_log: false         # 启用详细分类日志
+  enable_debug_log: true         # 启用详细分类日志
   enable_step_debug_viz: true     # 发布台阶可视化Marker
   step_debug_topic: "rog_map/step_debug"

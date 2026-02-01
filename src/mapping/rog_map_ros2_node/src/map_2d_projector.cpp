@@ -27,20 +27,24 @@ Map2DProjector::Map2DProjector(rclcpp::Node::SharedPtr node, const ProjectorConf
     // QoS配置 - 与ROG-Map一致使用best_effort
     const rclcpp::QoS qos(rclcpp::QoS(1).best_effort().keep_last(1));
     
-    // 订阅ROG-Map的膨胀占据点云
+    // 订阅ROG-Map的占据点云
+    // 关键：使用原始占据点云 /rog_map/occ，而不是膨胀后的 /rog_map/inf_occ
+    // 原因：膨胀点云会在坡面上产生Z轴堆叠，导致误判为障碍物
     cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/rog_map/inf_occ", qos,
+        cfg_.input_cloud_topic, qos,
         std::bind(&Map2DProjector::cloudCallback, this, std::placeholders::_1));
+    
+    RCLCPP_INFO(node_->get_logger(), "Subscribing to cloud topic: %s", cfg_.input_cloud_topic.c_str());
     
     // 发布2D地图
     map_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
         cfg_.topic_name, qos);
     
-    // 发布台阶调试可视化
-    if (cfg_.enable_step_debug_viz) {
-        step_debug_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
-            cfg_.step_debug_topic, qos);
-    }
+    // 发布台阶调试可视化（功能已移至独立节点）
+    // if (cfg_.enable_step_debug_viz) {
+    //     step_debug_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+    //         cfg_.step_debug_topic, qos);
+    // }
     
     // 定时发布器
     int publish_period_ms = static_cast<int>(1000.0 / cfg_.publish_rate);
@@ -200,8 +204,8 @@ void Map2DProjector::publishTimerCallback() {
     // Step 4: 坡面检测（结合法向量）
     slopeDetection(columns);
     
-    // Step 5: 台阶检测（含下行台阶）
-    stepDetection(columns, robot_position_.z());
+    // Step 5: 台阶检测（已移至独立 stair_detector_node，此处注释）
+    // stepDetection(columns, robot_position_.z());
     
     // Step 6: 更新2D地图
     update2DMap(columns, robot_position_);
@@ -469,10 +473,11 @@ void Map2DProjector::slopeDetection(std::unordered_map<int64_t, ColumnMetrics>& 
     /**
      * 坡面检测（结合法向量和梯度连续性）
      * 
-     * 新方案：
-     * 1. 法向量有效且|nz| > 0.866 (30°) → 直接判定为坡面
-     * 2. 法向量无效时，回退到梯度连续性分析
-     * 3. 占据率高的已在normalEstimation中跳过，不会误判
+     * 优化后方案：
+     * 1. 法向量有效且|nz| >= slope_thresh → 直接判定为坡面
+     * 2. 法向量有效且|nz|在中间范围 + 低占据率 → 倾向于判断为坡面
+     * 3. 法向量无效时，回退到梯度连续性分析
+     * 4. 占据率高的已在normalEstimation中跳过，不会误判
      */
     
     for (auto& [key, col] : columns) {
@@ -481,27 +486,37 @@ void Map2DProjector::slopeDetection(std::unordered_map<int64_t, ColumnMetrics>& 
             continue;
         }
         
-        // H很小，直接在classify中处理为FREE
+        // H很小，直接标记为FREE（平坦地面）
         if (col.height_diff < cfg_.slope_height_max) {
+            col.cell_type = CellType::FREE;
             continue;
         }
         
         // 方法1：法向量判定（优先）
         if (col.normal_valid) {
-            // |nz| > cos(30°) 且平面性好 → 坡面
-            if (col.normal_z_abs > cfg_.normal_z_slope_thresh && 
-                col.planarity > cfg_.planarity_thresh) {
+            // |nz| >= slope_thresh → 坡面（放宽平面性要求，因为真实坡面可能不够平坦）
+            if (col.normal_z_abs >= cfg_.normal_z_slope_thresh) {
                 col.cell_type = CellType::FREE;
                 continue;
             }
             
-            // |nz| < cos(60°) → 垂直障碍物（但不在这里标记，留给classify）
+            // |nz| 在中间范围 [wall_thresh, slope_thresh) + 低占据率 → 更可能是坡面
+            if (col.normal_z_abs >= cfg_.normal_z_wall_thresh && 
+                col.occupancy_rate < cfg_.high_occupancy_thresh * 0.7f) {
+                // 进一步检查平面性
+                if (col.planarity > cfg_.planarity_thresh * 0.8f) {
+                    col.cell_type = CellType::FREE;
+                    continue;
+                }
+            }
+            
+            // |nz| < wall_thresh → 垂直障碍物（但不在这里标记，留给classify）
             if (col.normal_z_abs < cfg_.normal_z_wall_thresh) {
                 continue;  // 跳过，让classify处理
             }
         }
         
-        // 方法2：梯度连续性分析（回退方案）
+        // 方法2：梯度连续性分析（回退方案，用于法向量无效的情况）
         if (isSlopeCell(key, columns)) {
             col.cell_type = CellType::FREE;
         }
@@ -762,12 +777,21 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
      * 
      * 分类优先级：
      * 1. 已标记为STEP或FREE → 直接返回
-     * 2. 高占据率 + H大 → 障碍物（墙壁/人/车）
-     * 3. 法向量有效 + |nz|小 → 垂直障碍物
-     * 4. H很小 → 可通行地面/坡面
-     * 5. 悬崖边缘 → 台阶
-     * 6. 默认按高度判断
+     * 2. 法向量有效 + |nz|大 → 可通行坡面（新增：优先判断坡面）
+     * 3. 高占据率 + H大 → 障碍物（墙壁/人/车）
+     * 4. 法向量有效 + |nz|小 → 垂直障碍物
+     * 5. H很小 → 可通行地面/坡面
+     * 6. 悬崖边缘 → 台阶
+     * 7. 默认按高度判断
      */
+    
+    // 调试日志辅助宏
+    #define DEBUG_CLASSIFY(reason, result) \
+        if (cfg_.enable_debug_log) { \
+            RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, \
+                "[Classify] %s: H=%.3f occ=%.2f nz=%.2f pts=%d → %s", \
+                reason, H, occ_rate, metrics.normal_z_abs, metrics.point_count, result); \
+        }
     
     // 已分类的直接返回
     if (metrics.cell_type == CellType::STEP) {
@@ -792,50 +816,95 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     
     // === Case 2: 完全悬空（限高杆）===
     if (metrics.min_z > robot_top) {
+        DEBUG_CLASSIFY("Suspended", "FREE");
         return cfg_.free_value;
     }
     
-    // === Case 3: 高占据率障碍物（快速路径）===
-    // 高占据率 + H大于坡面阈值 → 直接判障碍物
+    // === Case 3: 法向量判定的坡面（优先级高于高占据率判断）===
+    // 关键修复：如果法向量有效且指向上方（|nz|大），无论H多大都判为可通行
+    // 这解决了长坡面H很大但仍可通行的问题
+    if (metrics.normal_valid && metrics.normal_z_abs >= cfg_.normal_z_slope_thresh) {
+        // 法向量接近垂直向上 → 可通行坡面/平台
+        // 但需确保不是悬空结构（高层平台下方需有支撑或超出机器人高度）
+        if (metrics.min_z <= ground_level + cfg_.slope_height_max) {
+            // 地面附近的坡面 → 直接可通行
+            DEBUG_CLASSIFY("Slope(nz>=thresh,ground)", "FREE");
+            return cfg_.free_value;
+        }
+        // 高层平台：min_z高于地面，但法向量朝上，说明是可以上去的平台
+        // 如果min_z在机器人可达范围内（台阶或矮平台），可以考虑标记为台阶
+        if (metrics.min_z <= ground_level + cfg_.step_height_max) {
+            DEBUG_CLASSIFY("Slope(nz>=thresh,step)", "STEP");
+            return cfg_.step_value;  // 作为台阶处理
+        }
+        // 过高的平台，但不阻挡通行（机器人从下方穿过）
+        if (metrics.min_z > robot_top) {
+            DEBUG_CLASSIFY("Slope(nz>=thresh,high)", "FREE");
+            return cfg_.free_value;
+        }
+    }
+    
+    // === Case 4: 高占据率障碍物（快速路径）===
+    // 高占据率 + H大于坡面阈值 + 法向量不是坡面 → 判障碍物
     if (occ_rate > cfg_.high_occupancy_thresh && H > cfg_.slope_height_max) {
         bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
         if (blocks_passage) {
+            DEBUG_CLASSIFY("HighOccupancy+LargeH", "OBS");
             return cfg_.obstacle_value;
         }
     }
     
-    // === Case 4: 法向量判定的垂直障碍物 ===
+    // === Case 5: 法向量判定的垂直障碍物 ===
     if (metrics.normal_valid && metrics.normal_z_abs < cfg_.normal_z_wall_thresh) {
         // 法向量接近水平 → 垂直结构
         bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
         if (blocks_passage) {
+            DEBUG_CLASSIFY("Wall(nz<wall_thresh)", "OBS");
             return cfg_.obstacle_value;
         }
     }
     
-    // === Case 5: 坡道/平面（H很小）===
+    // === Case 6: 坡道/平面（H很小）===
     if (H < cfg_.slope_height_max) {
+        DEBUG_CLASSIFY("SmallH", "FREE");
         return cfg_.free_value;
     }
     
-    // === Case 6: 悬崖边缘（下行台阶）===
+    // === Case 7: 悬崖边缘（下行台阶）===
     if (metrics.is_cliff_edge && metrics.lower_z_valid) {
+        DEBUG_CLASSIFY("CliffEdge", "STEP");
         return cfg_.step_value;
     }
     
-    // === Case 7: 台阶范围但未被标记 → 矮墙 ===
+    // === Case 8: 法向量在中间范围（坡面阈值~墙面阈值之间）===
+    // 这种情况可能是：中等坡度坡面、倾斜墙面、复杂结构
+    // 策略：结合占据率和高度综合判断
+    if (metrics.normal_valid && 
+        metrics.normal_z_abs >= cfg_.normal_z_wall_thresh && 
+        metrics.normal_z_abs < cfg_.normal_z_slope_thresh) {
+        // 低占据率 + 中等法向量 → 倾向于判断为坡面
+        if (occ_rate < cfg_.high_occupancy_thresh * 0.8f) {
+            DEBUG_CLASSIFY("MidNormal+LowOcc", "FREE");
+            return cfg_.free_value;
+        }
+        // 否则按高度判断
+    }
+    
+    // === Case 9: 台阶范围但未被标记 → 矮墙 ===
     if (H >= cfg_.step_height_min && H <= cfg_.step_height_max) {
         bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
         if (blocks_passage) {
+            DEBUG_CLASSIFY("StepRange→Wall", "OBS");
             return cfg_.obstacle_value;
         }
         return cfg_.free_value;
     }
     
-    // === Case 8: 高障碍物 ===
+    // === Case 10: 高障碍物 ===
     if (H >= cfg_.obstacle_height_min) {
         bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
         if (blocks_passage) {
+            DEBUG_CLASSIFY("HighObstacle", "OBS");
             return cfg_.obstacle_value;
         }
         return cfg_.free_value;
@@ -844,10 +913,14 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     // === Default: 按通行判断 ===
     bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
     if (blocks_passage) {
+        DEBUG_CLASSIFY("Default→Blocks", "OBS");
         return cfg_.obstacle_value;
     }
     
+    DEBUG_CLASSIFY("Default→Pass", "FREE");
     return cfg_.free_value;
+    
+    #undef DEBUG_CLASSIFY
 }
 
 void Map2DProjector::update2DMap(

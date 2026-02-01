@@ -13,11 +13,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -25,6 +27,12 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 find_package(rog_map REQUIRED)
+
+# 生成自定义消息
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/StairTarget.msg"
+  DEPENDENCIES std_msgs geometry_msgs
+)
 
 include_directories(
   include
@@ -89,7 +97,31 @@ rclcpp_components_register_node(rog_map_component
   EXECUTABLE rog_map_component_node
 )
 
-install(TARGETS rog_map_node rog_map_component
+# Stair Detector Node
+add_executable(stair_detector_node
+  src/stair_detector.cpp
+)
+
+target_link_libraries(stair_detector_node
+  ${PCL_LIBRARIES}
+)
+
+ament_target_dependencies(stair_detector_node
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  pcl_conversions
+)
+
+# Link with generated message library
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(stair_detector_node "${cpp_typesupport_target}")
+
+install(TARGETS rog_map_node rog_map_component stair_detector_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}

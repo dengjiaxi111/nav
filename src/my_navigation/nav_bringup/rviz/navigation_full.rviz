@@ -10,6 +10,8 @@ Panels:
         - /Map1/Topic1
         - /TF1
         - /Path1
+        - /MarkerArray1
+        - /MarkerArray1/Topic1
       Splitter Ratio: 0.5
     Tree Height: 1469
   - Class: rviz_common/Selection
@@ -117,8 +119,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 1.0625
-        Min Value: -0.5625
+        Max Value: 1.1125000715255737
+        Min Value: 0.012500002980232239
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -223,6 +225,18 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /plan
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: System Default
+        Value: /stair_detector/markers
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -269,25 +283,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 11.027597427368164
+      Distance: 8.719980239868164
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 3.444221258163452
-        Y: -1.9488015174865723
-        Z: -0.8927821516990662
+        X: -1.51402747631073
+        Y: -6.356269359588623
+        Z: -1.0963420867919922
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.524796485900879
+      Pitch: 1.4747964143753052
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.655426502227783
+      Yaw: 1.6553924083709717
     Saved: ~
 Window Geometry:
   Displays:

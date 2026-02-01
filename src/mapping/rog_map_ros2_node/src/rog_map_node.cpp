@@ -75,6 +75,8 @@ int main(int argc, char *argv[]) {
   projector_cfg.enable_debug_log = node->declare_parameter("projector.enable_debug_log", false);
   projector_cfg.enable_step_debug_viz = node->declare_parameter("projector.enable_step_debug_viz", true);
   projector_cfg.step_debug_topic = node->declare_parameter("projector.step_debug_topic", std::string("rog_map/step_debug"));
+  // 输入点云话题：默认使用原始占据点云（非膨胀），避免坡面Z轴堆叠
+  projector_cfg.input_cloud_topic = node->declare_parameter("projector.input_cloud_topic", std::string("/rog_map/occ"));
   
   // 创建2D地图投影器
   auto map_projector = std::make_unique<map_2d_projector::Map2DProjector>(node, projector_cfg);
