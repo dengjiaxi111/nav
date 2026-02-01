@@ -1,5 +1,4 @@
 # Stair Detector 参数配置
-# 标准 ROS2 格式: /<node_name>/ros__parameters
 
 stair_detector:
   ros__parameters:

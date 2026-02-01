@@ -18,13 +18,13 @@ def generate_launch_description():
     )
     
     config_file_path = os.path.join(config_dir, 'rog_map_config.yaml')
+    projector_params_file = os.path.join(config_dir, 'projector_params.yaml')
     
     # 读取YAML配置文件
     with open(config_file_path, 'r') as f:
         config_yaml = yaml.safe_load(f)
     
     # 提取各模块配置
-    projector_params = config_yaml.get('projector', {})
     stair_detector_params = config_yaml.get('stair_detector', {})
     
     rviz_config = os.path.join(package_dir, 'rviz', 'rog_map.rviz')
@@ -36,7 +36,7 @@ def generate_launch_description():
         name='rog_map',
         parameters=[
             {'config_file': LaunchConfiguration('config_file')},
-            projector_params  # 传递projector参数
+            projector_params_file
         ],
         output='screen'
     )

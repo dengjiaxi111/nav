@@ -31,59 +31,58 @@ rog_map:
   visualization:
     enable: true
     use_dynamic_reconfigure: false
-    pub_unknown_map_en: true
+    pub_unknown_map_en: false    # ← 关闭unknown可视化，减少开销
     frame_id: "odom"
-    time_rate: 20.0
-    frame_rate: 20
-    range: [8.0, 8.0, 5.0]
+    time_rate: 10.0              # ← 降低可视化频率
+    frame_rate: 10
+    range: [8.0, 8.0, 2.0]
 
-  # Grid resolution
-  resolution: 0.025
-  inflation_resolution: 0.025
 
-  # Unknown inflation
-  unk_inflation_en: true
+  # === 分辨率配置 ===
+  # ROG-Map用0.025m保证3D精度，2D Projector用0.05m与导航地图对齐
+  # 这样每个2D栅格对应2×2个3D体素，确保完整覆盖
+  resolution: 0.025              # ← 3D体素分辨率（保持高精度）
+  inflation_resolution: 0.025    # ← 与主分辨率一致   
+
+  # Unknown inflation - 建议关闭以提升性能
+  unk_inflation_en: false       # ← 关闭unknown膨胀，大幅减少计算
   unk_inflation_step: 1
 
-  # Inflation
+  # Inflation - 保持1步膨胀
   inflation_step: 1
   intensity_thresh: -1
 
-  # Map size
-  map_size: [8.0, 8.0, 2.0]
+  # Map size - 减小z方向范围
+  map_size: [10.0, 10.0, 2.0]   # ← Z方向从2m减到1m（地面机器人足够）
 
-  # Point filtering
-  point_filt_num: 1
+  # Point filtering 
+  point_filt_num: 1           
 
-  # Raycasting - 动态障碍物响应优化
+  # Raycasting - 性能优化配置
   raycasting:
     enable: true
-    batch_update_size: 4
-    unk_thresh: 0.5          # Unknown判定阈值
+    batch_update_size: 1        # ← 改为1，每帧都更新（避免累积延迟）
+    unk_thresh: 0.5
     
-    # === 概率更新参数（优化动态响应）===
-    # 原理：logit(p) = log(p/(1-p))
-    # n_free = ceil(l_free/l_miss) 表示从unknown变free需要的miss次数
-    # 从occupied(l_max)变free需要 (l_max-l_free)/|l_miss| 次miss
-    p_hit: 0.65              # Hit观测↓(0.70→0.65)：降低单次hit权重，避免快速锁定
-    p_miss: 0.40             # Miss观测↑(0.35→0.40)：提高单次miss衰减速度
-    p_min: 0.12              # 最小概率限制
-    p_max: 0.90              # 最大概率↓(0.97→0.90)：降低occupied上限，便于清除
-    p_occ: 0.65              # Occupied阈值↓(0.70→0.65)：适度放宽
-    p_free: 0.35             # Free阈值↑(0.30→0.35)：稍微收紧
-    ray_range: [0.2, 30.0]
-    local_update_box: [10.0, 10.0, 2.0]
+    # === 概率更新参数 ===
+    p_hit: 0.65
+    p_miss: 0.40
+    p_min: 0.12
+    p_max: 0.90
+    p_occ: 0.65
+    p_free: 0.35
+    ray_range: [0.3, 15.0]      # ← 缩短ray range (30→15m)，减少raycasting长度
+    local_update_box: [8.0, 8.0, 1.5]  # ← 缩小更新范围
     
-    # TBB Parallelization parameters (requires compilation with USE_TBB_PARALLEL=ON)
-    parallel_enable: true     # Enable/disable parallelization at runtime
-    max_threads: 3            # Conservative: 2 threads to avoid CPU overload
-    grain_size: 512           # Points per task (larger = less overhead, less load balancing)
-    min_cloud_size_for_parallel: 500  # Only parallelize if cloud has >= 500 points
+    # TBB Parallelization - 优化并行参数
+    parallel_enable: true
+    max_threads: 4              # ↑(3→4) 增加线程数
+    grain_size: 256             # ↓(512→256) 减小grain以提高负载均衡
+    min_cloud_size_for_parallel: 200  # ↓(500→200) 更早启用并行
     
-    # === Fading机制 - 主动衰减未观测障碍物 ===
-    # 对于被遮挡/死角的动态障碍物残留，依靠fading清除
-    fading_enable: true       # Enable obstacle fading
-    fading_frame_thresh: 15   # ↓(25→15)帧：约0.75秒后开始衰减（假设20Hz）  
+    # Fading机制
+    fading_enable: true
+    fading_frame_thresh: 30     # ↑(15→30) 适当增加，减少fading处理频率  
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0
@@ -92,74 +91,5 @@ rog_map:
   # Performance logging
   enable_performance_log: true
 
-# 2D地图投影配置（基于中科大的高程分析方案）
-# 目标：准确区分 可通行(地面/坡道/高层平面) vs 不可通行(墙壁)
-projector:
-  # === 机器人几何参数 ===
-  robot_height: 0.8           # 机器人总高度(m)：从轮子底面到顶部
-  robot_width: 0.4            # 机器人宽度(m)：用于台阶邻域分析
-  base_to_ground: 0.10        # base_link到地面的默认距离(m)
-  ground_tolerance: 0.08      # ↑(0.05→0.08) 地面起伏容差：增大以适应坡面起始处
-  
-  # === 动态腿长配置（轮腿机器人专用）===
-  enable_dynamic_leg_length: false  # 是否启用动态腿长TF订阅
-  wheel_frame: "wheel_link"         # 轮子坐标系名称
-  leg_length_min: 0.08              # 腿长最小值(m)：收腿状态
-  leg_length_max: 0.25              # 腿长最大值(m)：伸腿状态
-  
-  # === 高程分析阈值（优化坡面识别）===
-  # 核心思路：不依赖单一阈值，而是结合法向量和占据率综合判断
-  slope_height_max: 0.15       # ↑(0.08→0.15) 增大：单栅格内高度差容忍度
-  step_height_min: 0.12        # 台阶最小高度差(m)，支持15cm台阶
-  step_height_max: 0.23        # 台阶最大高度差(m)，支持20cm台阶
-  obstacle_height_min: 0.25    # 障碍物最小高度差(m)
-  high_occupancy_thresh: 0.6   # ↑(0.5→0.6) 高占据率阈值：放宽，避免坡面被误判
-  
-  # === 法向量分析参数（PCA）- 坡面识别关键 ===
-  normal_z_slope_thresh: 0.82     # ↓(0.866→0.82) ≈ cos(35°)：放宽坡面识别角度
-  normal_z_wall_thresh: 0.42      # ↓(0.5→0.42) ≈ cos(65°)：收紧墙面判定
-  normal_min_points: 3            # ↓(5→3) 降低最小点数要求，适应稀疏点云
-  planarity_thresh: 0.6           # ↓(0.7→0.6) 平面性阈值：放宽，坡面可能不够平坦
-  
-  # === 台阶检测参数 ===
-  step_15cm_min: 0.12             # 15cm台阶识别下限
-  step_15cm_max: 0.18             # 15cm台阶识别上限
-  step_20cm_min: 0.17             # 20cm台阶识别下限
-  step_20cm_max: 0.23             # 20cm台阶识别上限
-  step_continuity_thresh: 0.03    # 台阶连续性阈值(m)
-  step_neighbor_min_count: 2      # 台阶两侧最小邻域数
-  step_edge_ratio_thresh: 0.3     # 台阶边缘占比阈值
-  
-  # === 悬崖/下行台阶检测参数 ===
-  cliff_search_radius: 5          # 悬崖边缘搜索半径（栅格数）
-  cliff_min_drop: 0.10            # 最小高度跌落(m)
-  cliff_min_lower_points: 3       # 下方平面最小有效栅格数
-  
-  # === 坡面检测参数（梯度连续性）===
-  slope_gradient_thresh: 0.70     # ↑(0.577→0.70) ≈ tan(35°)：放宽最大坡度
-  slope_continuity_thresh: 0.05   # ↑(0.03→0.05) 梯度连续性阈值：放宽
-  slope_min_continuous_count: 2   # ↓(3→2) 降低连续邻域要求
-  
-  # === 地图范围参数 ===
-  map_range_x: 10.0           # X方向范围(m)
-  map_range_y: 10.0           # Y方向范围(m)
-  resolution: 0.025           # 栅格分辨率(m)
-  
-  # === 高度范围（相对于机器人当前z坐标）===
-  z_min_relative: -0.5        # 相对最低高度(m)
-  z_max_relative: 2.0         # 相对最高高度(m)
-  
-  # === 发布参数 ===
-  publish_rate: 20.0          # 发布频率(Hz)
-  frame_id: "odom"            # 坐标系
-  topic_name: "/rog_map/map_2d"  # 2D地图发布话题
-  
-  # === 输入话题（关键配置）===
-  # 使用原始占据点云 /rog_map/occ，而不是膨胀后的 /rog_map/inf_occ
-  # 原因：膨胀点云会在坡面上产生Z轴堆叠，导致坡面被误判为障碍物
-  input_cloud_topic: "/rog_map/occ"
-  
-  # === 调试开关 ===
-  enable_debug_log: true         # 启用详细分类日志
-  enable_step_debug_viz: true     # 发布台阶可视化Marker
-  step_debug_topic: "rog_map/step_debug"
+# 2D地图投影参数已迁移到标准ROS2参数文件：
+#   rog_map_ros2_node/config/projector_params.yaml

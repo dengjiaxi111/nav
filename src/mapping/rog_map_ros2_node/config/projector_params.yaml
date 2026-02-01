@@ -1,0 +1,45 @@
+# ROS2标准参数文件：Map2DProjector参数
+rog_map:
+  ros__parameters:
+    projector.robot_height: 0.8
+    projector.robot_width: 0.4
+    projector.base_to_ground: 0.10
+    projector.ground_tolerance: 0.08
+    projector.enable_dynamic_leg_length: false
+    projector.wheel_frame: "wheel_link"
+    projector.leg_length_min: 0.08
+    projector.leg_length_max: 0.25
+    projector.slope_height_max: 0.15
+    projector.step_height_min: 0.12
+    projector.step_height_max: 0.23
+    projector.obstacle_height_min: 0.25
+    projector.high_occupancy_thresh: 0.6
+    projector.normal_z_slope_thresh: 0.82
+    projector.normal_z_wall_thresh: 0.42
+    projector.normal_min_points: 3
+    projector.planarity_thresh: 0.6
+    projector.step_15cm_min: 0.12
+    projector.step_15cm_max: 0.18
+    projector.step_20cm_min: 0.17
+    projector.step_20cm_max: 0.23
+    projector.step_continuity_thresh: 0.03
+    projector.step_neighbor_min_count: 2
+    projector.step_edge_ratio_thresh: 0.3
+    projector.cliff_search_radius: 5
+    projector.cliff_min_drop: 0.10
+    projector.cliff_min_lower_points: 3
+    projector.slope_gradient_thresh: 0.70
+    projector.slope_continuity_thresh: 0.05
+    projector.slope_min_continuous_count: 2
+    projector.map_range_x: 10.0
+    projector.map_range_y: 10.0
+    projector.resolution: 0.05
+    projector.z_min_relative: -0.5
+    projector.z_max_relative: 2.0
+    projector.publish_rate: 20.0
+    projector.frame_id: "odom"
+    projector.topic_name: "/rog_map/map_2d"
+    projector.input_cloud_topic: "/rog_map/inf_occ"
+    projector.enable_debug_log: true
+    projector.enable_step_debug_viz: true
+    projector.step_debug_topic: "rog_map/step_debug"

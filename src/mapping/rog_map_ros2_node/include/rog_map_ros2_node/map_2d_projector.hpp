@@ -153,7 +153,7 @@ struct ProjectorConfig {
     std::string step_debug_topic = "rog_map/step_debug";  // 台阶调试话题
     
     // === 输入话题 ===
-    std::string input_cloud_topic = "/rog_map/occ";  // 使用原始占据点云（非膨胀）
+    std::string input_cloud_topic = "/rog_map/inf_occ";  // 使用膨胀后的占据点云
 };
 
 /**

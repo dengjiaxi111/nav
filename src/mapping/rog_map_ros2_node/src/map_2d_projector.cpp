@@ -28,8 +28,6 @@ Map2DProjector::Map2DProjector(rclcpp::Node::SharedPtr node, const ProjectorConf
     const rclcpp::QoS qos(rclcpp::QoS(1).best_effort().keep_last(1));
     
     // 订阅ROG-Map的占据点云
-    // 关键：使用原始占据点云 /rog_map/occ，而不是膨胀后的 /rog_map/inf_occ
-    // 原因：膨胀点云会在坡面上产生Z轴堆叠，导致误判为障碍物
     cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
         cfg_.input_cloud_topic, qos,
         std::bind(&Map2DProjector::cloudCallback, this, std::placeholders::_1));

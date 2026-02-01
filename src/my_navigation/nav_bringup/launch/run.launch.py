@@ -26,6 +26,7 @@ def generate_launch_description():
     # ==================== 配置文件 ====================
     nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
     rog_map_config = os.path.join(rog_map_dir, 'config', 'rog_map_config.yaml')
+    projector_params = os.path.join(rog_map_dir, 'config', 'projector_params.yaml')
     stair_detector_params = os.path.join(nav_bringup_dir, 'config', 'stair_detector_params.yaml')
     
     # RViz 配置 - 使用导航专用配置
@@ -77,6 +78,7 @@ def generate_launch_description():
         name='rog_map',
         parameters=[
             {'config_file': LaunchConfiguration('rog_map_config_file')},
+            projector_params,
             {'use_sim_time': LaunchConfiguration('use_sim_time')}
         ],
         output='screen',
