@@ -99,8 +99,14 @@ void NMPC::initialize(rclcpp::Node* node) {
         debug_marker_pub_ = node_->create_publisher<visualization_msgs::msg::Marker>(
             "nmpc/debug_markers", 10);
     }
-    debug_marker_pub_ = node_->create_publisher<visualization_msgs::msg::Marker>(
-        "nmpc/debug_markers", 10);
+    
+    // ========== 订阅里程计（来自 small_point_lio）==========
+    // 用于获取真实速度反馈，实现闭环控制
+    std::string odom_topic = node_->declare_parameter("nmpc.odom_topic", "/Odometry");
+    odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+        odom_topic, rclcpp::SensorDataQoS(),
+        std::bind(&NMPC::odomCallback, this, std::placeholders::_1));
+    RCLCPP_INFO(node_->get_logger(), "NMPC: 订阅里程计话题 %s", odom_topic.c_str());
     
     RCLCPP_INFO(node_->get_logger(), 
         "✓ NMPC Controller initialized (N=%d, T=%.2f s)", 
@@ -128,6 +134,7 @@ nav_core::ControlResult NMPC::computeVelocity(
     geometry_msgs::msg::Twist& cmd_vel) 
 {
     static int call_count = 0;
+    call_count++;
     
     if (!initialized_ || global_path_.poses.empty()) {
         if (call_count % 50 == 1) {
@@ -140,20 +147,41 @@ nav_core::ControlResult NMPC::computeVelocity(
         return nav_core::ControlResult::FAILED;
     }
     
-    // 1. 提取当前状态 [x, y, theta, v, omega] (odom 坐标系)
+    // 1. 提取当前状态 [x, y, theta, v, omega]
     std::vector<double> x0(5);
     x0[0] = current_pose.pose.position.x;
     x0[1] = current_pose.pose.position.y;
     x0[2] = tf2::getYaw(current_pose.pose.orientation);
-    x0[3] = last_state_[3];  // 使用上一次速度 (或从 odometry 获取)
-    x0[4] = last_state_[4];  // 使用上一次角速度
+    
+    // 从里程计获取真实速度（闭环反馈）
+    {
+        std::lock_guard<std::mutex> lock(odom_mutex_);
+        if (odom_received_) {
+            // small_point_lio 输出的速度在 body 坐标系下
+            // linear.x = 前向速度, angular.z = 角速度
+            x0[3] = latest_odom_.twist.twist.linear.x;
+            x0[4] = latest_odom_.twist.twist.angular.z;
+        } else {
+            // 里程计尚未收到，使用上次输出（开环估计）
+            x0[3] = last_state_[3];
+            x0[4] = last_state_[4];
+            if (call_count % 100 == 1) {
+                RCLCPP_WARN(node_->get_logger(), 
+                    "NMPC: 未收到里程计，使用开环速度估计");
+            }
+        }
+    }
     
     // 2. 检查是否到达目标
     const auto& goal = global_path_.poses.back().pose;
     double dx = goal.position.x - x0[0];
     double dy = goal.position.y - x0[1];
     double dist = std::hypot(dx, dy);
-    double yaw_err = std::abs(tf2::getYaw(goal.orientation) - x0[2]);
+    // 归一化 yaw 误差到 [-π, π]
+    double yaw_diff = tf2::getYaw(goal.orientation) - x0[2];
+    while (yaw_diff > M_PI) yaw_diff -= 2.0 * M_PI;
+    while (yaw_diff < -M_PI) yaw_diff += 2.0 * M_PI;
+    double yaw_err = std::abs(yaw_diff);
     
     if (dist < xy_tolerance_ && yaw_err < yaw_tolerance_) {
         cmd_vel.linear.x = 0.0;
@@ -187,12 +215,32 @@ nav_core::ControlResult NMPC::computeVelocity(
     stats_.max_solve_time_ms = std::max(stats_.max_solve_time_ms, solve_time_ms);
     
     if (status != 0 || u_opt.size() != 2) {
+        stats_.consecutive_failures++;
         RCLCPP_WARN(node_->get_logger(), 
-            "NMPC: 求解失败 (status=%d, solve_time=%.2f ms)", status, solve_time_ms);
-        cmd_vel.linear.x = 0.0;
-        cmd_vel.angular.z = 0.0;
-        return nav_core::ControlResult::FAILED;
+            "NMPC: 求解失败 (status=%d, 连续失败=%d, solve_time=%.2f ms)", 
+            status, stats_.consecutive_failures, solve_time_ms);
+        
+        // 连续失败超过阈值，直接返回失败
+        const int max_consecutive_failures = 10;  // 约 0.5 秒 @ 20Hz
+        if (stats_.consecutive_failures >= max_consecutive_failures) {
+            RCLCPP_ERROR(node_->get_logger(), 
+                "NMPC: 连续求解失败 %d 次，停止控制", stats_.consecutive_failures);
+            cmd_vel.linear.x = 0.0;
+            cmd_vel.angular.z = 0.0;
+            return nav_core::ControlResult::FAILED;
+        }
+        
+        // 平滑停车：逐渐减速而非突然停止
+        double decay = 0.8;  // 每周期衰减到 80%
+        cmd_vel.linear.x = last_state_[3] * decay;
+        cmd_vel.angular.z = last_state_[4] * decay;
+        last_state_[3] = cmd_vel.linear.x;
+        last_state_[4] = cmd_vel.angular.z;
+        return nav_core::ControlResult::RUNNING;  // 继续尝试
     }
+    
+    // 求解成功，重置失败计数
+    stats_.consecutive_failures = 0;
     
     // 5. 应用控制
     // u_opt = [a_lin, alpha_ang] (加速度)
@@ -234,11 +282,18 @@ void NMPC::reset() {
     std::fill(last_state_.begin(), last_state_.end(), 0.0);
     std::fill(last_control_.begin(), last_control_.end(), 0.0);
     stats_ = {};
+    odom_received_ = false;
     
     // 重置 solver
     if (acados_ocp_capsule_) {
         wheelleg_nmpc_acados_reset(acados_ocp_capsule_, 1);
     }
+}
+
+void NMPC::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    latest_odom_ = *msg;
+    odom_received_ = true;
 }
 
 // ========== 私有方法实现 ==========

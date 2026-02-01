@@ -4,9 +4,11 @@
 #pragma once
 #include <nav_core/controller_base.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <memory>
 #include <vector>
+#include <mutex>
 
 // 前向声明 acados solver (使用正确的类型名称)
 extern "C" {
@@ -85,6 +87,14 @@ private:
     std::vector<double> last_control_; // 上一次控制 [a,alpha]
     bool initialized_ = false;
     
+    // 里程计反馈（来自 small_point_lio）
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    nav_msgs::msg::Odometry latest_odom_;
+    bool odom_received_ = false;
+    mutable std::mutex odom_mutex_;
+    
+    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    
     // ========== acados Solver ==========
     wheelleg_nmpc_solver_capsule* acados_ocp_capsule_ = nullptr;
     int N_horizon_ = 20;  // 预测步数 (从生成脚本获取)
@@ -120,6 +130,7 @@ private:
         double avg_solve_time_ms = 0.0;
         double max_solve_time_ms = 0.0;
         int solve_count = 0;
+        int consecutive_failures = 0;  // 连续求解失败次数
     } stats_;
 };
 

@@ -8,11 +8,14 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <memory>
 
 namespace nav_components {
 
 class EsdfMap : public nav_core::MapInterface {
 public:
+    using Ptr = std::shared_ptr<EsdfMap>;
+    
     // 从 OccupancyGrid 构建 ESDF
     void buildFromOccupancy(const nav_msgs::msg::OccupancyGrid::SharedPtr& grid,
                             int8_t obstacle_threshold = 50) {
@@ -199,6 +202,68 @@ public:
     
     int width() const { return width_; }
     int height() const { return height_; }
+    double originX() const { return origin_x_; }
+    double originY() const { return origin_y_; }
+    
+    /**
+     * @brief 局部更新ESDF（仅更新指定区域）
+     * 使用简化的距离传播算法，适用于动态障碍物的快速更新
+     * 
+     * @param occ 完整的占据栅格数据
+     * @param min_x, min_y, max_x, max_y 更新区域边界（栅格坐标）
+     * @param search_radius 搜索半径（栅格数），用于计算距离
+     * @param threshold 障碍物阈值
+     */
+    void updateLocal(const std::vector<int8_t>& occ,
+                     int min_x, int min_y, int max_x, int max_y,
+                     int search_radius, int8_t threshold = 50) {
+        if (distance_.empty() || occ.size() != distance_.size()) {
+            return;
+        }
+        
+        // 扩展搜索区域
+        int search_min_x = std::max(0, min_x - search_radius);
+        int search_max_x = std::min(width_ - 1, max_x + search_radius);
+        int search_min_y = std::max(0, min_y - search_radius);
+        int search_max_y = std::min(height_ - 1, max_y + search_radius);
+        
+        float max_dist = search_radius * resolution_;
+        
+        // 遍历更新区域
+        for (int y = min_y; y <= max_y; ++y) {
+            for (int x = min_x; x <= max_x; ++x) {
+                int idx = y * width_ + x;
+                
+                // 检查当前点是否为障碍物
+                if (occ[idx] >= threshold || occ[idx] < 0) {
+                    distance_[idx] = 0.0f;
+                    continue;
+                }
+                
+                // 计算到最近障碍物的距离
+                float min_dist_sq = max_dist * max_dist + 1.0f;
+                
+                // 在搜索区域内查找最近障碍物
+                for (int sy = search_min_y; sy <= search_max_y; ++sy) {
+                    for (int sx = search_min_x; sx <= search_max_x; ++sx) {
+                        int sidx = sy * width_ + sx;
+                        
+                        if (occ[sidx] >= threshold || occ[sidx] < 0) {
+                            float dx = static_cast<float>(x - sx);
+                            float dy = static_cast<float>(y - sy);
+                            float dist_sq = dx * dx + dy * dy;
+                            if (dist_sq < min_dist_sq) {
+                                min_dist_sq = dist_sq;
+                            }
+                        }
+                    }
+                }
+                
+                // 转换为米
+                distance_[idx] = std::sqrt(min_dist_sq) * resolution_;
+            }
+        }
+    }
 
 private:
     // Meijster 二维 EDT 算法（O(n) 复杂度）

@@ -9,17 +9,36 @@ nav_server:
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
     
+    # 坐标系配置
+    map_frame: "map"
+    base_frame: "base_link"
+    odom_frame: "odom"
+    
     # 控制器超时保护
     controller_timeout: 10.0  # 控制器无进展超时(秒)
     controller_progress_threshold: 0.15  # 进展检测距离阈值(米)
     
     # 周期性路径检查 (动态障碍物应对，默认启用)
-    path_check_period: 2.0  # 路径检查周期(秒)
-    path_start_distance_threshold: 0.5  # 距离路径起点阈值(米)，超过则重规划
+    path_check_period: 0.1  # 路径检查周期(秒) - 降低以快速响应动态障碍物
+    path_lateral_tolerance: 0.5  # 横向偏离路径容忍度(米)，超过则重规划
+    # 说明: 系统每隔 path_check_period 秒检查机器人到路径的最短距离
+    # 如果横向偏离超过 path_lateral_tolerance，会停止并重新规划
+    # path_check_period 越小响应越快，但会增加 CPU 负载（建议 0.2-1.0 秒）
     
-    # ESDF 地图
+    # ============ 动态障碍物层 (来自rog_map) ============
+    enable_dynamic_layer: true  # 启用动态层融合
+    dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
+    # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
+    # 融合策略: fused[i] = max(static[i], dynamic[i])
+    # 注意: 需要有odom->map的TF变换
+    
+    # ============ 地图更新性能日志 ============
+    enable_performance_logging: true  # 启用地图更新性能日志 (开发/调试时启用)
+    # 说明: 启用后会在控制台输出地图融合、ESDF/Costmap重建的详细耗时
+    
+    # ============ ESDF 地图 ============
     enable_esdf: true
-    esdf_vis_max_dist: 2.0  # 可视化最大距离(m)
+    esdf_vis_max_dist: 2.0      # 可视化最大距离(m)
     
     # Costmap 膨胀
     inflation:
@@ -40,7 +59,9 @@ nav_server:
       enable_path_cache: true         # 启用路径缓存和复用
       enable_auto_prune: true         # 启用自动剪枝已驶过部分
       goal_tolerance: 0.2             # 目标变化阈值(米), 小于此值则认为目标未变化
-      obstacle_check_threshold: 95    # 障碍物检查阈值, 路径上代价值 >= 此值视为重合
+      obstacle_check_threshold: 99    # 障碍物检查阈值, 路径上代价值 >= 此值视为障碍物
+      # 说明: Costmap值范围: 0=自由, 1-98=膨胀区, 99=inscribed_radius内, 100=障碍物
+      # 设为99表示只有真正危险的区域才会导致路径失效，膨胀区域允许通过
       prune_distance: 0.5             # 剪枝保留距离(米), 保留当前位置前方此距离内的点
       
       # B样条优化（基于 Fast-Planner）

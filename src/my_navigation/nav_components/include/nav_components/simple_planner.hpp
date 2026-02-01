@@ -12,7 +12,7 @@
 namespace nav_components {
 
 // 前向声明
-class MapManager;
+class LayeredMapManager;
 
 class SimplePlanner : public nav_core::PlannerBase {
 public:
@@ -54,7 +54,7 @@ private:
     
     // 地图
     nav_msgs::msg::OccupancyGrid::SharedPtr grid_map_;
-    std::shared_ptr<MapManager> map_manager_;  // 用于 ESDF 查询
+    std::shared_ptr<LayeredMapManager> map_manager_;  // 用于 ESDF 查询
     int8_t obstacle_threshold_ = 99;
     double cost_weight_ = 0.5;
     
