@@ -97,31 +97,112 @@ rclcpp_components_register_node(rog_map_component
   EXECUTABLE rog_map_component_node
 )
 
-# Stair Detector Node
-add_executable(stair_detector_node
-  src/stair_detector.cpp
+# Map2DProjector Component (可组合节点)
+add_library(map_2d_projector_component SHARED
+  src/map_2d_projector.cpp
 )
 
-target_link_libraries(stair_detector_node
-  ${PCL_LIBRARIES}
+target_compile_definitions(map_2d_projector_component PRIVATE
+  USE_ROS2
+  ORIGIN_AT_CORNER
+  ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
 )
 
-ament_target_dependencies(stair_detector_node
+ament_target_dependencies(map_2d_projector_component
   rclcpp
+  rclcpp_components
   sensor_msgs
+  nav_msgs
   geometry_msgs
   visualization_msgs
   tf2
   tf2_ros
   tf2_geometry_msgs
   pcl_conversions
+  rog_map
+)
+
+target_link_libraries(map_2d_projector_component
+  ${PCL_LIBRARIES}
+)
+
+rclcpp_components_register_node(map_2d_projector_component
+  PLUGIN "map_2d_projector::Map2DProjector"
+  EXECUTABLE map_2d_projector_node
+)
+
+# Stair Detector Component (可组合节点)
+add_library(stair_detector_component SHARED
+  src/stair_detector.cpp
+)
+
+target_compile_definitions(stair_detector_component PRIVATE
+  USE_ROS2
+  ORIGIN_AT_CORNER
+  ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
+)
+
+ament_target_dependencies(stair_detector_component
+  rclcpp
+  rclcpp_components
+  sensor_msgs
+  nav_msgs
+  geometry_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  pcl_conversions
+  rog_map
+)
+
+target_link_libraries(stair_detector_component
+  ${PCL_LIBRARIES}
 )
 
 # Link with generated message library
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-target_link_libraries(stair_detector_node "${cpp_typesupport_target}")
+target_link_libraries(stair_detector_component "${cpp_typesupport_target}")
 
-install(TARGETS rog_map_node rog_map_component stair_detector_node
+rclcpp_components_register_node(stair_detector_component
+  PLUGIN "stair_detector::StairDetector"
+  EXECUTABLE stair_detector_node
+)
+
+# Integration Component (集成组件，管理所有子组件)
+add_library(integration_component SHARED
+  src/integration_component.cpp
+)
+
+target_compile_definitions(integration_component PRIVATE
+  USE_ROS2
+  ORIGIN_AT_CORNER
+  ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
+)
+
+ament_target_dependencies(integration_component
+  rclcpp
+  rclcpp_components
+  rog_map
+)
+
+target_link_libraries(integration_component
+  rog_map_component
+  map_2d_projector_component
+  stair_detector_component
+)
+
+rclcpp_components_register_node(integration_component
+  PLUGIN "rog_map_ros2_node::IntegrationComponent"
+  EXECUTABLE integration_node
+)
+
+install(TARGETS 
+  rog_map_node 
+  rog_map_component 
+  map_2d_projector_component
+  stair_detector_component
+  integration_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}

@@ -37,6 +37,11 @@
 #include <vector>
 #include <mutex>
 
+// ROG-Map forward declaration
+namespace rog_map {
+    class ROGMapROS;
+}
+
 namespace map_2d_projector {
 
 using Vec2f = Eigen::Vector2f;
@@ -157,18 +162,25 @@ struct ProjectorConfig {
 };
 
 /**
- * @brief 2D地图投影节点 - 将ROG-Map的3D占据转换为Nav2兼容的2D地图
+ * @brief 2D地图投影组件 - 将ROG-Map的3D占据转换为Nav2兼容的2D地图
+ * 
+ * **直接调用模式**: 通过指针直接访问 ROGMapROS 实例,无需 topic 通信
+ * **组件模式**: 继承 rclcpp::Node，支持进程内通信和动态加载
  */
-class Map2DProjector {
+class Map2DProjector : public rclcpp::Node {
 public:
-    Map2DProjector(rclcpp::Node::SharedPtr node, const ProjectorConfig& cfg);
+    /**
+     * @brief 构造函数（组件模式）
+     * @param options 节点选项
+     * @param rog_map_ptr ROG-Map 实例指针（用于直接查询）
+     */
+    explicit Map2DProjector(const rclcpp::NodeOptions& options,
+                            rog_map::ROGMapROS* rog_map_ptr = nullptr);
     
     /**
-     * @brief 处理3D点云并生成2D地图
+     * @brief 设置 ROG-Map 实例指针（延迟注入）
      */
-    void processPointCloud(
-        const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud,
-        const geometry_msgs::msg::Pose& robot_pose);
+    void setRogMapPtr(rog_map::ROGMapROS* ptr) { rog_map_ptr_ = ptr; }
     
     /**
      * @brief 获取最新的2D地图
@@ -181,8 +193,10 @@ public:
     float getCurrentLegLength() const { return current_leg_length_; }
 
 private:
-    rclcpp::Node::SharedPtr node_;
     ProjectorConfig cfg_;
+    
+    // ROG-Map 实例指针（直接查询）
+    rog_map::ROGMapROS* rog_map_ptr_;
     
     // 地图数据
     nav_msgs::msg::OccupancyGrid::SharedPtr map_2d_;
@@ -197,14 +211,12 @@ private:
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     
-    // 发布器和订阅器
+    // 发布器和定时器
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr step_debug_pub_;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
-    rclcpp::TimerBase::SharedPtr publish_timer_;
+    rclcpp::TimerBase::SharedPtr update_timer_;  // 改名: publish_timer_ -> update_timer_
     
     // 缓存
-    sensor_msgs::msg::PointCloud2::ConstSharedPtr latest_cloud_;
     std::unordered_set<int64_t> step_cells_;  // 被判定为台阶的栅格
     
     // 点云z值缓存（用于法向量计算）
@@ -288,8 +300,7 @@ private:
     void initializeMap();
     void publishMap();
     void publishStepDebugMarkers();
-    void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
-    void publishTimerCallback();
+    void updateTimerCallback();  // 改名: publishTimerCallback() -> updateTimerCallback()
     
     // === 工具函数 ===
     inline int64_t xyToGridKey(float x, float y) const {

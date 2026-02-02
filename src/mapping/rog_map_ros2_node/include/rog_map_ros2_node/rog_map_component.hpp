@@ -36,6 +36,22 @@ public:
     explicit ROGMapComponent(const rclcpp::NodeOptions& options);
     ~ROGMapComponent() override;
 
+    /**
+     * @brief 获取 ROG-Map 实例的只读指针（用于查询操作）
+     * @return ROGMapROS 实例指针，若未初始化则返回 nullptr
+     */
+    const rog_map::ROGMapROS* getRogMap() const {
+        return rog_map_ros_.get();
+    }
+
+    /**
+     * @brief 获取 ROG-Map 实例的可修改指针（用于直接查询操作）
+     * @return ROGMapROS 实例指针，若未初始化则返回 nullptr
+     */
+    rog_map::ROGMapROS* getRogMapMutable() {
+        return rog_map_ros_.get();
+    }
+
 private:
     std::unique_ptr<rog_map::ROGMapROS> rog_map_ros_;
 };

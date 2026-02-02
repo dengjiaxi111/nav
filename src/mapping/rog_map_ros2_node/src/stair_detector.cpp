@@ -1,9 +1,12 @@
 /**
  * @file stair_detector.cpp
- * @brief 台阶检测节点实现
+ * @brief 台阶检测节点实现（组件模式 + 直接调用）
+ * 
+ * **直接调用模式**: 通过 rog_map_ptr_ 直接访问 ROGMapROS boxSearchInflate()
  */
 
 #include "rog_map_ros2_node/stair_detector.hpp"
+#include <rog_map_ros/rog_map_ros2.hpp>  // 包含 ROGMapROS 定义
 #include <pcl/kdtree/kdtree.h>
 #include <limits>
 #include <array>
@@ -15,8 +18,12 @@
 
 namespace stair_detector {
 
-StairDetector::StairDetector(const rclcpp::NodeOptions& options)
+using namespace super_utils;  // 访问 vec_E 和其他工具
+
+StairDetector::StairDetector(const rclcpp::NodeOptions& options,
+                             rog_map::ROGMapROS* rog_map_ptr)
     : Node("stair_detector", options),
+      rog_map_ptr_(rog_map_ptr),
       current_state_(DetectionState::IDLE),
       consecutive_detection_count_(0),
       in_blind_zone_(false) {
@@ -98,13 +105,15 @@ StairDetector::StairDetector(const rclcpp::NodeOptions& options)
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     
-    // QoS 配置 - 与 ROG-Map 一致
+    // QoS 配置
     const rclcpp::QoS qos(rclcpp::QoS(1).best_effort().keep_last(1));
     
-    // 订阅 ROG-Map 占据点云
-    cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-        cfg_.input_cloud_topic, qos,
-        std::bind(&StairDetector::cloudCallback, this, std::placeholders::_1));
+    // 移除 topic 订阅，改用定时器直接调用 ROG-Map
+    // 定时更新器（直接调用 boxSearchInflate）
+    int update_period_ms = static_cast<int>(1000.0 / cfg_.update_rate);
+    update_timer_ = create_wall_timer(
+        std::chrono::milliseconds(update_period_ms),
+        std::bind(&StairDetector::updateTimerCallback, this));
     
     // 发布台阶目标
     target_pub_ = create_publisher<rog_map_ros2_node::msg::StairTarget>(
@@ -116,8 +125,8 @@ StairDetector::StairDetector(const rclcpp::NodeOptions& options)
             cfg_.output_marker_topic, 10);
     }
     
-    RCLCPP_INFO(get_logger(), "=== Stair Detector Initialized ===");
-    RCLCPP_INFO(get_logger(), "  Input: %s", cfg_.input_cloud_topic.c_str());
+    RCLCPP_INFO(get_logger(), "=== Stair Detector Initialized (Component + Direct-Call) ===");
+    RCLCPP_INFO(get_logger(), "  Direct ROG-Map access: %s", rog_map_ptr_ ? "ENABLED" : "PENDING");
     RCLCPP_INFO(get_logger(), "  Output: %s", cfg_.output_target_topic.c_str());
     RCLCPP_INFO(get_logger(), "  ROI: X[%.2f, %.2f] Y[%.2f, %.2f] Z[%.2f, %.2f]",
                 cfg_.roi_x_min, cfg_.roi_x_max,
@@ -131,15 +140,62 @@ StairDetector::StairDetector(const rclcpp::NodeOptions& options)
     last_process_time_ = now();
 }
 
-void StairDetector::cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+void StairDetector::updateTimerCallback() {
+    // 检查 ROG-Map 指针
+    if (rog_map_ptr_ == nullptr) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+            "ROG-Map pointer not set, skipping update");
+        return;
+    }
+    
     auto t_start = std::chrono::high_resolution_clock::now();
     
-    // 转换为 PCL 点云
-    PointCloud::Ptr cloud_odom(new PointCloud);
-    pcl::fromROSMsg(*msg, *cloud_odom);
-    
-    if (cloud_odom->empty()) {
+    // 获取机器人位姿（base_link在odom系中的位置）
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    try {
+        transform_stamped = tf_buffer_->lookupTransform(
+            cfg_.map_frame, cfg_.target_frame, tf2::TimePointZero);
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            "Failed to get transform from %s to %s: %s",
+            cfg_.target_frame.c_str(), cfg_.map_frame.c_str(), ex.what());
         return;
+    }
+    
+    Eigen::Vector3f robot_pos(
+        transform_stamped.transform.translation.x,
+        transform_stamped.transform.translation.y,
+        transform_stamped.transform.translation.z
+    );
+    
+    // === 直接调用 ROG-Map boxSearch() ===
+    // ROI 范围（相对于 base_link）
+    Eigen::Vector3d box_min(
+        robot_pos.x() + cfg_.roi_x_min,
+        robot_pos.y() + cfg_.roi_y_min,
+        robot_pos.z() + cfg_.roi_z_min
+    );
+    Eigen::Vector3d box_max(
+        robot_pos.x() + cfg_.roi_x_max,
+        robot_pos.y() + cfg_.roi_y_max,
+        robot_pos.z() + cfg_.roi_z_max
+    );
+    
+    // 台阶检测使用原始占据点云（不需要膨胀）
+    rog_map::vec_E<Eigen::Vector3d> occ_points;
+    rog_map_ptr_->boxSearch(box_min, box_max, rog_map::OCCUPIED, occ_points);
+    
+    if (occ_points.empty()) {
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,
+            "No occupied points in ROG-Map query range");
+        return;
+    }
+    
+    // 转换为 PCL 点云（odom 系）
+    PointCloud::Ptr cloud_odom(new PointCloud);
+    cloud_odom->reserve(occ_points.size());
+    for (const auto& pt : occ_points) {
+        cloud_odom->push_back(PointT(pt.x(), pt.y(), pt.z()));
     }
     
     // 转换到 base_link 坐标系
@@ -149,6 +205,9 @@ void StairDetector::cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr
                              "Failed to transform point cloud to %s", cfg_.target_frame.c_str());
         return;
     }
+    
+    RCLCPP_DEBUG(get_logger(), "Direct query: %zu points → %zu after transform",
+                 occ_points.size(), cloud_base->size());
     
     // 执行检测
     processPointCloud(cloud_base);
@@ -506,11 +565,10 @@ std::vector<StairCandidate> StairDetector::filterStairCandidates(
         
         // === 硬约束判定 ===
         
-        // 1. 高度校验：匹配一级或二级台阶
+        // 1. 高度校验：仅匹配一级台阶（禁用二级台阶判断，避免误识别）
         bool is_single = std::abs(candidate.height - cfg_.single_stair_height) < cfg_.height_tolerance;
-        bool is_double = std::abs(candidate.height - cfg_.double_stair_height) < cfg_.height_tolerance;
         
-        if (!is_single && !is_double) {
+        if (!is_single) {
             RejectedCandidate rejected;
             rejected.bbox_min = candidate.bbox_min;
             rejected.bbox_max = candidate.bbox_max;
@@ -527,7 +585,7 @@ std::vector<StairCandidate> StairDetector::filterStairCandidates(
             continue;  // 高度不匹配，丢弃
         }
         
-        candidate.type = is_single ? StairType::SINGLE : StairType::DOUBLE;
+        candidate.type = StairType::SINGLE;  // 仅识别单级台阶
         
         // 2. 形态校验：宽度、深度、厚度
         if (candidate.width < cfg_.min_stair_width) {
@@ -1232,11 +1290,3 @@ bool StairDetector::transformPointCloud(
 
 } // namespace stair_detector
 
-// 主函数
-int main(int argc, char** argv) {
-    rclcpp::init(argc, argv);
-    auto node = std::make_shared<stair_detector::StairDetector>();
-    rclcpp::spin(node);
-    rclcpp::shutdown();
-    return 0;
-}

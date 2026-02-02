@@ -31,11 +31,11 @@ rog_map:
   visualization:
     enable: true
     use_dynamic_reconfigure: false
-    pub_unknown_map_en: false    # ← 关闭unknown可视化，减少开销
+    pub_unknown_map_en: false   
     frame_id: "odom"
-    time_rate: 10.0              # ← 降低可视化频率
-    frame_rate: 10
-    range: [8.0, 8.0, 2.0]
+    time_rate: 10.0           
+    frame_rate: 100
+    range: [15.0, 15.0, 2.0]
 
 
   # === 分辨率配置 ===
@@ -53,7 +53,7 @@ rog_map:
   intensity_thresh: -1
 
   # Map size - 减小z方向范围
-  map_size: [10.0, 10.0, 2.0]   # ← Z方向从2m减到1m（地面机器人足够）
+  map_size: [15.0, 15.0, 2.0]  
 
   # Point filtering 
   point_filt_num: 1           
@@ -61,7 +61,7 @@ rog_map:
   # Raycasting - 性能优化配置
   raycasting:
     enable: true
-    batch_update_size: 1        # ← 改为1，每帧都更新（避免累积延迟）
+    batch_update_size: 2       
     unk_thresh: 0.5
     
     # === 概率更新参数 ===
@@ -71,18 +71,18 @@ rog_map:
     p_max: 0.90
     p_occ: 0.65
     p_free: 0.35
-    ray_range: [0.3, 15.0]      # ← 缩短ray range (30→15m)，减少raycasting长度
+    ray_range: [0.3, 15.0]     
     local_update_box: [8.0, 8.0, 1.5]  # ← 缩小更新范围
     
     # TBB Parallelization - 优化并行参数
     parallel_enable: true
-    max_threads: 4              # ↑(3→4) 增加线程数
-    grain_size: 256             # ↓(512→256) 减小grain以提高负载均衡
-    min_cloud_size_for_parallel: 200  # ↓(500→200) 更早启用并行
+    max_threads: 4          
+    grain_size: 256             
+    min_cloud_size_for_parallel: 200 
     
     # Fading机制
     fading_enable: true
-    fading_frame_thresh: 30     # ↑(15→30) 适当增加，减少fading处理频率  
+    fading_frame_thresh: 1000       
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0

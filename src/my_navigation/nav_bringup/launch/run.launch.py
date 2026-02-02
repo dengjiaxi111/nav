@@ -71,35 +71,26 @@ def generate_launch_description():
         }.items()
     )
     
-    # ==================== 2. ROG-Map (概率占用地图) ====================
-    rog_map_node = Node(
+    # ==================== 2. ROG-Map 集成节点 (3D地图 + 2D投影 + 台阶检测) ====================
+    # 使用组件化的 integration_node，直接调用内部 API，避免 topic 开销
+    integration_node = Node(
         package='rog_map_ros2_node',
-        executable='rog_map_node',
-        name='rog_map',
+        executable='integration_node',
+        name='rog_map_integration',
         parameters=[
             {'config_file': LaunchConfiguration('rog_map_config_file')},
             projector_params,
+            stair_detector_params,
             {'use_sim_time': LaunchConfiguration('use_sim_time')}
         ],
         output='screen',
         remappings=[
             # small_point_lio 输出
-            ('cloud_in', '/cloud_registered'),
-            ('odom_in', '/Odometry')
+            ('/cloud_registered', '/cloud_registered'),
+            ('/Odometry', '/Odometry')
         ]
     )
-    
-    # ==================== 2.5. 台阶检测器 (基于ROG-Map) ====================
-    stair_detector_node = Node(
-        package='rog_map_ros2_node',
-        executable='stair_detector_node',
-        name='stair_detector',
-        parameters=[
-            stair_detector_params,  # 标准 ROS2 参数文件路径
-            {'use_sim_time': LaunchConfiguration('use_sim_time')}
-        ],
-        output='screen'
-    )
+
     
     # ==================== 3. 导航服务器 (规划 + NMPC控制) ====================
     navigation_launch = IncludeLaunchDescription(
@@ -135,8 +126,7 @@ def generate_launch_description():
         
         # 启动节点
         small_point_lio_launch,
-        rog_map_node,
-        stair_detector_node,  
+        integration_node,      # ROG-Map 集成节点 (包含 3D地图 + 2D投影 + 台阶检测)
         navigation_launch,
         rviz_node,
     ])

@@ -1,5 +1,7 @@
 # ROS2标准参数文件：Map2DProjector参数
-rog_map:
+# 注意：这些参数会被 integration_component 加载并传递给 Map2DProjector
+
+/**:
   ros__parameters:
     projector.robot_height: 0.8
     projector.robot_width: 0.4

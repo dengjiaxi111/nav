@@ -1,6 +1,7 @@
 # Stair Detector 参数配置
+# 注意：这些参数会被 integration_component 加载并传递给 StairDetector
 
-stair_detector:
+/**:
   ros__parameters:
     # Input/Output topics
     input_cloud_topic: "/rog_map/occ"  

@@ -4,59 +4,95 @@
  * 
  * 核心算法：对每个(x,y)柱进行高度差H + 占据率分析
  * 新增功能：动态腿长支持、台阶邻域检测
+ * 
+ * **组件模式 + 直接调用**: 继承 rclcpp::Node，通过 rog_map_ptr_ 直接访问 
+ *                         ROGMapROS boxSearchInflate()，避免 topic 序列化开销
  */
 
 #include "rog_map_ros2_node/map_2d_projector.hpp"
+#include <rog_map_ros/rog_map_ros2.hpp>  // 包含 ROGMapROS 定义
 #include <algorithm>
 #include <cmath>
 
 namespace map_2d_projector {
 
-Map2DProjector::Map2DProjector(rclcpp::Node::SharedPtr node, const ProjectorConfig& cfg)
-    : node_(node), cfg_(cfg),
-      current_leg_length_(cfg.base_to_ground_default),
-      current_base_to_ground_(cfg.base_to_ground_default) {
+using namespace super_utils;  // 访问 vec_E 和其他工具
+
+Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
+                               rog_map::ROGMapROS* rog_map_ptr)
+    : Node("map_2d_projector", options), 
+      rog_map_ptr_(rog_map_ptr),
+      current_leg_length_(0.10f),
+      current_base_to_ground_(0.10f) {
+    
+    // 从参数服务器加载配置
+    cfg_.robot_height = this->declare_parameter<double>("robot_height", 0.5);
+    cfg_.robot_width = this->declare_parameter<double>("robot_width", 0.4);
+    cfg_.base_to_ground_default = this->declare_parameter<double>("base_to_ground_default", 0.10);
+    cfg_.ground_tolerance = this->declare_parameter<double>("ground_tolerance", 0.03);
+    
+    cfg_.enable_dynamic_leg_length = this->declare_parameter<bool>("enable_dynamic_leg_length", false);
+    cfg_.wheel_frame = this->declare_parameter<std::string>("wheel_frame", "wheel_link");
+    cfg_.leg_length_min = this->declare_parameter<double>("leg_length_min", 0.08);
+    cfg_.leg_length_max = this->declare_parameter<double>("leg_length_max", 0.25);
+    
+    cfg_.slope_height_max = this->declare_parameter<double>("slope_height_max", 0.08);
+    cfg_.step_height_min = this->declare_parameter<double>("step_height_min", 0.12);
+    cfg_.step_height_max = this->declare_parameter<double>("step_height_max", 0.23);
+    cfg_.obstacle_height_min = this->declare_parameter<double>("obstacle_height_min", 0.25);
+    cfg_.high_occupancy_thresh = this->declare_parameter<double>("high_occupancy_thresh", 0.5);
+    
+    cfg_.normal_z_slope_thresh = this->declare_parameter<double>("normal_z_slope_thresh", 0.866);
+    cfg_.normal_z_wall_thresh = this->declare_parameter<double>("normal_z_wall_thresh", 0.5);
+    cfg_.normal_min_points = this->declare_parameter<int>("normal_min_points", 5);
+    cfg_.planarity_thresh = this->declare_parameter<double>("planarity_thresh", 0.7);
+    
+    cfg_.map_range_x = this->declare_parameter<double>("map_range_x", 10.0);
+    cfg_.map_range_y = this->declare_parameter<double>("map_range_y", 10.0);
+    cfg_.resolution = this->declare_parameter<double>("resolution", 0.05);
+    cfg_.z_min_relative = this->declare_parameter<double>("z_min_relative", -0.5);
+    cfg_.z_max_relative = this->declare_parameter<double>("z_max_relative", 2.0);
+    
+    cfg_.publish_rate = this->declare_parameter<double>("publish_rate", 10.0);
+    cfg_.frame_id = this->declare_parameter<std::string>("frame_id", "odom");
+    cfg_.topic_name = this->declare_parameter<std::string>("topic_name", "rog_map/map_2d");
+    
+    current_leg_length_ = cfg_.base_to_ground_default;
+    current_base_to_ground_ = cfg_.base_to_ground_default;
+    
+    // 参数验证（允许延迟注入）
+    if (rog_map_ptr_ == nullptr) {
+        RCLCPP_WARN(this->get_logger(), "ROG-Map pointer not set, will need setRogMapPtr() call");
+    }
     
     // 初始化2D地图
     initializeMap();
     
     // 初始化TF2
-    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     
-    // QoS配置 - 与ROG-Map一致使用best_effort
+    // QoS配置
     const rclcpp::QoS qos(rclcpp::QoS(1).best_effort().keep_last(1));
     
-    // 订阅ROG-Map的占据点云
-    cloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        cfg_.input_cloud_topic, qos,
-        std::bind(&Map2DProjector::cloudCallback, this, std::placeholders::_1));
-    
-    RCLCPP_INFO(node_->get_logger(), "Subscribing to cloud topic: %s", cfg_.input_cloud_topic.c_str());
-    
     // 发布2D地图
-    map_pub_ = node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
+    map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
         cfg_.topic_name, qos);
     
-    // 发布台阶调试可视化（功能已移至独立节点）
-    // if (cfg_.enable_step_debug_viz) {
-    //     step_debug_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
-    //         cfg_.step_debug_topic, qos);
-    // }
+    // 定时更新器（直接调用 boxSearchInflate）
+    int update_period_ms = static_cast<int>(1000.0 / cfg_.publish_rate);
+    update_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(update_period_ms),
+        std::bind(&Map2DProjector::updateTimerCallback, this));
     
-    // 定时发布器
-    int publish_period_ms = static_cast<int>(1000.0 / cfg_.publish_rate);
-    publish_timer_ = node_->create_wall_timer(
-        std::chrono::milliseconds(publish_period_ms),
-        std::bind(&Map2DProjector::publishTimerCallback, this));
-    
-    RCLCPP_INFO(node_->get_logger(), "Map2DProjector initialized (wheel-leg optimized)");
-    RCLCPP_INFO(node_->get_logger(), "  Resolution: %.3f m", cfg_.resolution);
-    RCLCPP_INFO(node_->get_logger(), "  Map range: %.1fx%.1f m", cfg_.map_range_x, cfg_.map_range_y);
-    RCLCPP_INFO(node_->get_logger(), "  Height thresholds: slope<%.2f, step[%.2f-%.2f], obs>%.2f",
+    RCLCPP_INFO(this->get_logger(), "Map2DProjector initialized (component + direct-call mode)");
+    RCLCPP_INFO(this->get_logger(), "  Resolution: %.3f m", cfg_.resolution);
+    RCLCPP_INFO(this->get_logger(), "  Map range: %.1fx%.1f m", cfg_.map_range_x, cfg_.map_range_y);
+    RCLCPP_INFO(this->get_logger(), "  Height thresholds: slope<%.2f, step[%.2f-%.2f], obs>%.2f",
                 cfg_.slope_height_max, cfg_.step_height_min, cfg_.step_height_max, cfg_.obstacle_height_min);
-    RCLCPP_INFO(node_->get_logger(), "  Dynamic leg length: %s (frame: %s)",
+    RCLCPP_INFO(this->get_logger(), "  Dynamic leg length: %s (frame: %s)",
                 cfg_.enable_dynamic_leg_length ? "ENABLED" : "DISABLED", cfg_.wheel_frame.c_str());
+    RCLCPP_INFO(this->get_logger(), "  Direct ROG-Map access: %s", rog_map_ptr_ ? "ENABLED" : "PENDING");
 }
 
 void Map2DProjector::initializeMap() {
@@ -74,11 +110,80 @@ void Map2DProjector::initializeMap() {
     // 初始化为unknown
     map_2d_->data.resize(width * height, cfg_.unknown_value);
     
-    RCLCPP_INFO(node_->get_logger(), "  Map size: %dx%d cells", width, height);
+    RCLCPP_INFO(this->get_logger(), "  Map size: %dx%d cells", width, height);
 }
 
-void Map2DProjector::cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-    latest_cloud_ = msg;
+void Map2DProjector::updateTimerCallback() {
+    // 检查 ROG-Map 指针
+    if (rog_map_ptr_ == nullptr) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "ROG-Map pointer not set, skipping update");
+        return;
+    }
+    
+    // 获取机器人位姿
+    geometry_msgs::msg::Pose robot_pose;
+    if (!getRobotPose(robot_pose)) {
+        return;  // TF查询失败，跳过本次更新
+    }
+    
+    // 更新动态腿长（如果启用）
+    updateDynamicLegLength();
+    
+    // === 直接调用 ROG-Map boxSearchInflate() ===
+    Eigen::Vector3d box_min(
+        robot_position_.x() - cfg_.map_range_x / 2.0,
+        robot_position_.y() - cfg_.map_range_y / 2.0,
+        robot_position_.z() + cfg_.z_min_relative
+    );
+    Eigen::Vector3d box_max(
+        robot_position_.x() + cfg_.map_range_x / 2.0,
+        robot_position_.y() + cfg_.map_range_y / 2.0,
+        robot_position_.z() + cfg_.z_max_relative
+    );
+    
+    rog_map::vec_E<Eigen::Vector3d> inf_occ_points;
+    rog_map_ptr_->boxSearchInflate(box_min, box_max, rog_map::OCCUPIED, inf_occ_points);
+    
+    // 检查数据有效性
+    if (inf_occ_points.empty()) {
+        RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "No occupied points in ROG-Map query range");
+        return;
+    }
+    
+    // 转换为 PCL 点云格式（直接使用 Eigen::Vector3f）
+    pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
+    pcl_cloud.reserve(inf_occ_points.size());
+    for (const auto& pt : inf_occ_points) {
+        pcl_cloud.push_back(pcl::PointXYZ(pt.x(), pt.y(), pt.z()));
+    }
+    
+    RCLCPP_DEBUG(this->get_logger(), "Direct query: %zu occupied points", pcl_cloud.size());
+    
+    // === 改进后的处理流程 ===
+    std::unordered_map<int64_t, ColumnMetrics> columns;
+    
+    // Step 1: 高程分析（含点云缓存）
+    elevationAnalysis(pcl_cloud, robot_position_.z(), columns);
+    
+    // Step 2: 法向量估计（仅低占据率柱体，跳过高占据率障碍物）
+    normalEstimation(columns);
+    
+    // Step 3: 悬崖边缘检测（下行台阶识别）
+    cliffEdgeDetection(columns, robot_position_.z());
+    
+    // Step 4: 坡面检测（结合法向量）
+    slopeDetection(columns);
+    
+    // Step 5: 台阶检测（邻域分析）
+    stepDetection(columns, robot_position_.z());
+    
+    // Step 6: 写入2D地图
+    update2DMap(columns, robot_position_);
+    
+    // 发布地图
+    publishMap();
 }
 
 bool Map2DProjector::getRobotPose(geometry_msgs::msg::Pose& robot_pose) {
@@ -106,8 +211,8 @@ bool Map2DProjector::getRobotPose(geometry_msgs::msg::Pose& robot_pose) {
         
     } catch (const tf2::TransformException& ex) {
         RCLCPP_WARN_THROTTLE(
-            node_->get_logger(),
-            *node_->get_clock(),
+            this->get_logger(),
+            *this->get_clock(),
             5000,  // 每5秒警告一次
             "Could not get transform from base_link to %s: %s",
             cfg_.frame_id.c_str(), ex.what());
@@ -123,7 +228,6 @@ void Map2DProjector::updateDynamicLegLength() {
     
     try {
         // 查询 base_link -> wheel_link 的TF变换
-        // wheel_link 应该位于轮子中心，其z坐标相对于base_link表示腿长
         geometry_msgs::msg::TransformStamped transform = 
             tf_buffer_->lookupTransform("base_link", cfg_.wheel_frame, tf2::TimePointZero);
         
@@ -139,7 +243,7 @@ void Map2DProjector::updateDynamicLegLength() {
         current_base_to_ground_ = current_leg_length_;
         
     } catch (const tf2::TransformException& ex) {
-        RCLCPP_DEBUG_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+        RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
             "Leg length TF not available: %s, using default %.3f", 
             ex.what(), cfg_.base_to_ground_default);
         current_base_to_ground_ = cfg_.base_to_ground_default;
@@ -163,58 +267,6 @@ std::vector<int64_t> Map2DProjector::getNeighborKeys(int64_t key) const {
         }
     }
     return neighbors;
-}
-
-void Map2DProjector::publishTimerCallback() {
-    if (!latest_cloud_) {
-        return;
-    }
-    
-    // 获取机器人位姿
-    geometry_msgs::msg::Pose robot_pose;
-    if (!getRobotPose(robot_pose)) {
-        return;  // TF查询失败，跳过本次更新
-    }
-    
-    // 更新动态腿长（如果启用）
-    updateDynamicLegLength();
-    
-    // 转换点云
-    pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
-    pcl::fromROSMsg(*latest_cloud_, pcl_cloud);
-    
-    if (pcl_cloud.empty()) {
-        return;
-    }
-    
-    // === 改进后的处理流程 ===
-    std::unordered_map<int64_t, ColumnMetrics> columns;
-    
-    // Step 1: 高程分析（含点云缓存）
-    elevationAnalysis(pcl_cloud, robot_position_.z(), columns);
-    
-    // Step 2: 法向量估计（仅低占据率柱体，跳过高占据率障碍物）
-    normalEstimation(columns);
-    
-    // Step 3: 悬崖边缘检测（下行台阶识别）
-    cliffEdgeDetection(columns, robot_position_.z());
-    
-    // Step 4: 坡面检测（结合法向量）
-    slopeDetection(columns);
-    
-    // Step 5: 台阶检测（已移至独立 stair_detector_node，此处注释）
-    // stepDetection(columns, robot_position_.z());
-    
-    // Step 6: 更新2D地图
-    update2DMap(columns, robot_position_);
-    
-    // Step 7: 发布地图
-    publishMap();
-    
-    // Step 8: 发布台阶调试可视化
-    if (cfg_.enable_step_debug_viz && step_debug_pub_) {
-        publishStepDebugMarkers();
-    }
 }
 
 void Map2DProjector::elevationAnalysis(
@@ -682,7 +734,7 @@ void Map2DProjector::stepDetection(
     // 定期日志
     static int log_counter = 0;
     if (++log_counter % 100 == 0) {
-        RCLCPP_INFO(node_->get_logger(), 
+        RCLCPP_INFO(this->get_logger(), 
             "[StepDetect] cliff_edge=%d, normal=%d, skipped_slope=%d | total=%zu",
             cliff_edge_steps, normal_steps, skipped_by_slope, step_cells_.size());
     }
@@ -786,7 +838,7 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     // 调试日志辅助宏
     #define DEBUG_CLASSIFY(reason, result) \
         if (cfg_.enable_debug_log) { \
-            RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, \
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500, \
                 "[Classify] %s: H=%.3f occ=%.2f nz=%.2f pts=%d → %s", \
                 reason, H, occ_rate, metrics.normal_z_abs, metrics.point_count, result); \
         }
@@ -986,7 +1038,7 @@ void Map2DProjector::update2DMap(
     static int update_count = 0;
     update_count++;
     if (update_count % 100 == 0) {
-        RCLCPP_INFO(node_->get_logger(),
+        RCLCPP_INFO(this->get_logger(),
             "[Map2D] %zu columns: %d obs, %d step, %d free | leg=%.3f",
             columns.size(), obstacle_count, step_count, free_count, current_leg_length_);
     }
@@ -994,7 +1046,7 @@ void Map2DProjector::update2DMap(
 
 void Map2DProjector::publishMap() {
     std::lock_guard<std::mutex> lock(map_mutex_);
-    map_2d_->header.stamp = node_->get_clock()->now();
+    map_2d_->header.stamp = this->get_clock()->now();
     map_pub_->publish(*map_2d_);
 }
 
@@ -1003,37 +1055,13 @@ nav_msgs::msg::OccupancyGrid::SharedPtr Map2DProjector::getLatestMap() {
     return map_2d_;
 }
 
-void Map2DProjector::processPointCloud(
-    const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud,
-    const geometry_msgs::msg::Pose& robot_pose) {
-    
-    // 转换点云
-    pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
-    pcl::fromROSMsg(*cloud, pcl_cloud);
-    
-    Vec3f robot_pos(
-        robot_pose.position.x,
-        robot_pose.position.y,
-        robot_pose.position.z);
-    
-    // 高程分析
-    std::unordered_map<int64_t, ColumnMetrics> columns;
-    elevationAnalysis(pcl_cloud, robot_pos.z(), columns);
-    
-    // 台阶检测
-    stepDetection(columns, robot_pos.z());
-    
-    // 更新2D地图
-    update2DMap(columns, robot_pos);
-}
-
 void Map2DProjector::publishStepDebugMarkers() {
     if (step_cells_.empty()) {
         return;
     }
     
     visualization_msgs::msg::MarkerArray markers;
-    auto now = node_->get_clock()->now();
+    auto now = this->get_clock()->now();
     
     // 删除旧的marker
     visualization_msgs::msg::Marker delete_marker;

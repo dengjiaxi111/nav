@@ -39,6 +39,11 @@
 // 使用自定义消息
 #include "rog_map_ros2_node/msg/stair_target.hpp"
 
+// ROG-Map forward declaration
+namespace rog_map {
+    class ROGMapROS;
+}
+
 namespace stair_detector {
 
 using PointT = pcl::PointXYZ;
@@ -154,18 +159,32 @@ struct RejectedCandidate {
 };
 
 /**
- * @brief 台阶检测器主类
+ * @brief 台阶检测器主类（组件模式 + 直接调用）
  */
 class StairDetector : public rclcpp::Node {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     
-    explicit StairDetector(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+    /**
+     * @brief 构造函数（组件模式）
+     * @param options 节点选项
+     * @param rog_map_ptr ROG-Map 实例指针（用于直接查询）
+     */
+    explicit StairDetector(const rclcpp::NodeOptions& options = rclcpp::NodeOptions(),
+                          rog_map::ROGMapROS* rog_map_ptr = nullptr);
     ~StairDetector() override = default;
 
+    /**
+     * @brief 设置 ROG-Map 实例指针（延迟注入）
+     */
+    void setRogMapPtr(rog_map::ROGMapROS* ptr) { rog_map_ptr_ = ptr; }
+
 private:
+    // ROG-Map 实例指针（直接查询）
+    rog_map::ROGMapROS* rog_map_ptr_;
+    
     // === 核心算法流程 ===
-    void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+    void updateTimerCallback();  // 替换 cloudCallback
     void processPointCloud(const PointCloud::Ptr& cloud_in);
     
     // Step 1: ROI 裁剪
@@ -220,8 +239,8 @@ private:
     // 配置参数
     StairDetectorConfig cfg_;
     
-    // ROS 接口
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+    // ROS 接口（移除 cloud_sub_）
+    rclcpp::TimerBase::SharedPtr update_timer_;  // 定时查询 ROG-Map
     rclcpp::Publisher<rog_map_ros2_node::msg::StairTarget>::SharedPtr target_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
     
