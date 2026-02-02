@@ -3,7 +3,7 @@
 stair_detector:
   ros__parameters:
     # Input/Output topics
-    input_cloud_topic: "/rog_map/inf_occ"  # 使用膨胀后的占据点云
+    input_cloud_topic: "/rog_map/occ"  
     output_target_topic: "/stair_detector/target"
     output_marker_topic: "/stair_detector/markers"
     enable_visualization: true
@@ -15,26 +15,33 @@ stair_detector:
 
     # ROI filtering (in base_link frame)
     roi_x_min: 0.2
-    roi_x_max: 2.0
-    roi_y_min: -0.6
-    roi_y_max: 0.6
-    roi_z_min: 0.05
+    roi_x_max: 5.0
+    roi_y_min: -3.0
+    roi_y_max: 3.0
+    roi_z_min: -0.05
     roi_z_max: 0.5
 
     # Clustering parameters
     cluster_tolerance: 0.05
-    min_cluster_size: 200
+    min_cluster_size: 150
     max_cluster_size: 10000
 
     # Stair geometry constraints
     single_stair_height: 0.20
     double_stair_height: 0.35
-    height_tolerance: 0.04
-    min_stair_width: 0.35
-    min_stair_depth: 0.15
-    max_z_thickness: 0.08
+    height_tolerance: 0.05
+    min_stair_width: 0.3
+    min_stair_depth: 0.05
+    max_z_thickness: 0.4
+
+    # Prefilter (grid vertical occupancy)
+    cell_size_xy: 0.05
+    min_cell_points: 5
+    min_cell_height: 0.05
+    max_cell_height: 0.4
+    max_cell_top_z: 0.5
 
     # Temporal tracking
-    min_detection_frames: 3
+    min_detection_frames: 5
     lowpass_alpha: 0.7
     blind_zone_distance: 0.3

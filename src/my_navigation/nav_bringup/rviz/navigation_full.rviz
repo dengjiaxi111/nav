@@ -31,7 +31,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: PointCloud2
+    SyncSource: ""
 Visualization Manager:
   Class: ""
   Displays:
@@ -99,7 +99,7 @@ Visualization Manager:
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
       Draw Behind: false
-      Enabled: true
+      Enabled: false
       Name: DynamicLayer
       Topic:
         Depth: 5
@@ -115,7 +115,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /rog_map/map_2d_updates
       Use Timestamp: false
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -154,7 +154,7 @@ Visualization Manager:
       Class: rviz_default_plugins/Map
       Color Scheme: map
       Draw Behind: false
-      Enabled: true
+      Enabled: false
       Name: Map
       Topic:
         Depth: 5
@@ -170,7 +170,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /costmap_updates
       Use Timestamp: false
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15
@@ -229,7 +229,10 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        {}
+        stair_cluster: true
+        stair_rejected: true
+        stair_rejected_text: true
+        stair_roi: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -283,25 +286,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 8.719980239868164
+      Distance: 4.523276329040527
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -1.51402747631073
-        Y: -6.356269359588623
-        Z: -1.0963420867919922
+        X: 2.0871007442474365
+        Y: -0.61414635181427
+        Z: -0.6990447640419006
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.4747964143753052
+      Pitch: 0.4597972631454468
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.6553924083709717
+      Yaw: 2.6653926372528076
     Saved: ~
 Window Geometry:
   Displays:

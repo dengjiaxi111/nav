@@ -50,6 +50,11 @@ private:
     nav_msgs::msg::Path prunePath(const nav_msgs::msg::Path& path, 
                                    const geometry_msgs::msg::PoseStamped& current_pose);  // 剪枝已驶过部分
     
+    // A*搜索（独立函数，支持自适应重规划）
+    bool runAstar(int sx, int sy, int gx, int gy,
+                  const std_msgs::msg::Header& header,
+                  nav_msgs::msg::Path& path);
+    
     rclcpp::Node* node_ = nullptr;
     
     // 地图

@@ -212,6 +212,123 @@ bool SimplePlanner::plan(
         return false;
     }
     
+    // 【自适应规划】逐步降低A*代价容忍度，直到生成安全路径
+    // 策略：从 obstacle_threshold_ 开始，每次失败后降低5，最低到50
+    const int initial_threshold = obstacle_threshold_;
+    const int threshold_step = 5;
+    const int min_threshold = 50;
+    
+    for (int current_threshold = initial_threshold; 
+         current_threshold >= min_threshold; 
+         current_threshold -= threshold_step) {
+        
+        // 临时修改障碍物阈值
+        int original_threshold = obstacle_threshold_;
+        obstacle_threshold_ = current_threshold;
+        
+        // 执行A*搜索
+        nav_msgs::msg::Path raw_path;
+        bool astar_success = runAstar(sx, sy, gx, gy, goal.header, raw_path);
+        
+        // 恢复原始阈值
+        obstacle_threshold_ = original_threshold;
+        
+        if (!astar_success) {
+            if (current_threshold == initial_threshold) {
+                RCLCPP_ERROR(node_->get_logger(), 
+                    "A*规划失败 (阈值=%d)", current_threshold);
+            } else {
+                RCLCPP_WARN(node_->get_logger(), 
+                    "A*规划失败 (阈值=%d)，尝试更严格的阈值", current_threshold);
+            }
+            continue;  // 尝试更低的阈值
+        }
+        
+        // B样条平滑
+        nav_msgs::msg::Path smoothed_path;
+        if (enable_smooth_ && raw_path.poses.size() >= 4) {
+            if (!smoother_.smooth(raw_path, smoothed_path)) {
+                smoothed_path = raw_path;
+                RCLCPP_WARN(node_->get_logger(), "平滑失败，使用原始路径");
+            } else {
+                // 验证平滑后路径的ESDF安全性
+                if (map_manager_ && map_manager_->hasEsdf()) {
+                    double min_dist = 1e9;
+                    geometry_msgs::msg::PoseStamped worst_pose;
+                    int unsafe_count = 0;
+                    const double min_safe_dist = 0.12;
+                    
+                    for (const auto& pose : smoothed_path.poses) {
+                        double grad_x = 0, grad_y = 0;
+                        double dist = map_manager_->getEsdfDistanceWithGradient(
+                            pose.pose.position.x, pose.pose.position.y, &grad_x, &grad_y);
+                        
+                        if (dist < min_dist) {
+                            min_dist = dist;
+                            worst_pose = pose;
+                        }
+                        if (dist < min_safe_dist) {
+                            unsafe_count++;
+                        }
+                    }
+                    
+                    if (unsafe_count > 0) {
+                        RCLCPP_WARN(node_->get_logger(), 
+                            "平滑路径过于接近障碍物: %d/%zu 点 ESDF < %.2fm, 最小=%.3fm @ (%.2f, %.2f)",
+                            unsafe_count, smoothed_path.poses.size(), min_safe_dist, min_dist,
+                            worst_pose.pose.position.x, worst_pose.pose.position.y);
+                    }
+                }
+                
+                publishControlPoints(smoother_.getLastControlPoints(), goal.header.frame_id);
+            }
+        } else {
+            smoothed_path = raw_path;
+        }
+        
+        // 验证路径
+        if (validatePath(smoothed_path)) {
+            // 成功！
+            if (current_threshold < initial_threshold) {
+                RCLCPP_INFO(node_->get_logger(), 
+                    "规划成功 (A*阈值=%d→%d): A*=%zu点 -> 平滑=%zu点", 
+                    initial_threshold, current_threshold,
+                    raw_path.poses.size(), smoothed_path.poses.size());
+            } else {
+                RCLCPP_INFO(node_->get_logger(), 
+                    "规划成功: A*=%zu点 -> 平滑=%zu点", 
+                    raw_path.poses.size(), smoothed_path.poses.size());
+            }
+            
+            path = smoothed_path;
+            
+            // 缓存路径和目标
+            if (enable_path_cache_) {
+                cached_path_ = path;
+                cached_goal_ = goal;
+            }
+            
+            return true;
+        } else {
+            // 验证失败，尝试更严格的阈值
+            if (current_threshold > min_threshold) {
+                RCLCPP_WARN(node_->get_logger(), 
+                    "路径验证失败 (阈值=%d)，降低阈值重新规划", current_threshold);
+            }
+        }
+    }
+    
+    // 所有尝试都失败
+    RCLCPP_ERROR(node_->get_logger(), 
+        "规划失败: 尝试了阈值 %d → %d 均无法生成安全路径", 
+        initial_threshold, min_threshold);
+    return false;
+}
+
+// 独立的A*搜索函数
+bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
+                              const std_msgs::msg::Header& header,
+                              nav_msgs::msg::Path& path) {
     // A*搜索
     auto cmp = [](Node* a, Node* b) { return a->f() > b->f(); };
     std::priority_queue<Node*, std::vector<Node*>, decltype(cmp)> open(cmp);
@@ -278,18 +395,14 @@ bool SimplePlanner::plan(
     }
     
     if (!goal_node) {
-        RCLCPP_ERROR(node_->get_logger(), 
-            "A*未找到路径 (起点: [%d,%d], 终点: [%d,%d], 迭代: %d/%d, 展开: %zu)",
-            sx, sy, gx, gy, iterations, max_iter, 
-            std::count(closed.begin(), closed.end(), true));
-        return false;
+        return false;  // A*搜索失败
     }
     
     // 回溯路径
     std::vector<geometry_msgs::msg::PoseStamped> waypoints;
     for (Node* n = goal_node; n != nullptr; n = n->parent) {
         geometry_msgs::msg::PoseStamped pose;
-        pose.header = goal.header;
+        pose.header = header;
         mapToWorld(n->x, n->y, pose.pose.position.x, pose.pose.position.y);
         pose.pose.orientation.w = 1.0;
         waypoints.push_back(pose);
@@ -297,40 +410,9 @@ bool SimplePlanner::plan(
     
     std::reverse(waypoints.begin(), waypoints.end());
     
-    // 构造原始路径
-    nav_msgs::msg::Path raw_path;
-    raw_path.header = goal.header;
-    raw_path.poses = waypoints;
-    
-    // B样条平滑
-    if (enable_smooth_ && waypoints.size() >= 4) {
-        if (smoother_.smooth(raw_path, path)) {
-            RCLCPP_INFO(node_->get_logger(), "规划成功: A*=%zu点 -> 平滑=%zu点", 
-                        waypoints.size(), path.poses.size());
-            
-            // 发布控制点用于调试
-            publishControlPoints(smoother_.getLastControlPoints(), goal.header.frame_id);
-        } else {
-            path = raw_path;
-            RCLCPP_INFO(node_->get_logger(), "规划成功 (平滑失败): %zu点", waypoints.size());
-        }
-    } else {
-        path = raw_path;
-        RCLCPP_INFO(node_->get_logger(), "规划成功: %zu点", waypoints.size());
-    }
-    
-    // 功能1: 检查路径是否与障碍物重合
-    if (!validatePath(path)) {
-        RCLCPP_ERROR(node_->get_logger(), "规划失败: 路径与障碍物重合");
-        return false;
-    }
-    
-    // 缓存路径和目标
-    if (enable_path_cache_) {
-        cached_path_ = path;
-        cached_goal_ = goal;
-    }
-    
+    // 构造路径
+    path.header = header;
+    path.poses = waypoints;
     return true;
 }
 
@@ -417,7 +499,6 @@ bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
     if (!grid_map_ || path.poses.empty()) {
         return false;
     }
-    
     for (const auto& pose : path.poses) {
         int mx, my;
         if (!worldToMap(pose.pose.position.x, pose.pose.position.y, mx, my)) {
@@ -432,12 +513,21 @@ bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
         }
         
         int8_t val = grid_map_->data[idx];
-        // 检查是否与高代价障碍物重合 (值 > obstacle_check_threshold_)
+        // 检查是否与高代价障碍物重合 (值 >= obstacle_check_threshold_)
         if (val >= obstacle_check_threshold_ || val < 0) {
+            // 诊断：检查ESDF距离
+            double esdf_dist = -1.0;
+            if (map_manager_ && map_manager_->hasEsdf()) {
+                double grad_x = 0, grad_y = 0;
+                esdf_dist = map_manager_->getEsdfDistanceWithGradient(
+                    pose.pose.position.x, pose.pose.position.y, &grad_x, &grad_y);
+            }
+            
             RCLCPP_WARN(node_->get_logger(), 
-                "路径点 (%.2f, %.2f) 与障碍物重合 (代价=%d >= %d)", 
+                "路径点 (%.2f, %.2f) 与障碍物重合: costmap=%d >= %d, ESDF=%.3fm", 
                 pose.pose.position.x, pose.pose.position.y, 
-                static_cast<int>(val), static_cast<int>(obstacle_check_threshold_));
+                static_cast<int>(val), static_cast<int>(obstacle_check_threshold_),
+                esdf_dist);
             return false;
         }
     }

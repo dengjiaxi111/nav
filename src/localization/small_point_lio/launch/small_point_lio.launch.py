@@ -15,7 +15,7 @@ def generate_launch_description():
             PathJoinSubstitution(
                 [
                     FindPackageShare("small_point_lio"),
-                    "config",
+                    "config",                                                                                                                                                                                                                                                                              
                     "mid360.yaml",
                 ]
             )
@@ -27,17 +27,17 @@ def generate_launch_description():
         executable="static_transform_publisher",
         arguments=[
             "--x",
-            "0.25",
+            "0.06",
             "--y",
             "0.0",
             "--z",
-            "0.35",
+            "0.2",
             "--roll",
-            "-0.785",# "-0.5236", 
+            "-0.5236",# "-0.5236", 
             "--pitch",
             "0.0",
             "--yaw",
-            "0.0",
+            "-1.5708",
             "--frame-id",
             "base_link",
             "--child-frame-id",

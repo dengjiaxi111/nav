@@ -34,6 +34,7 @@
 #include <Eigen/Dense>
 #include <memory>
 #include <deque>
+#include <string>
 
 // 使用自定义消息
 #include "rog_map_ros2_node/msg/stair_target.hpp"
@@ -90,6 +91,13 @@ struct StairDetectorConfig {
     float max_z_thickness = 0.08f;          // Z 方向最大厚度 (m, 防止误识别墙壁)
     
     float normal_z_threshold = 0.9f;        // 法向量 Z 分量阈值 (防止斜面)
+
+    // === 预筛选（网格竖直占据率）===
+    float cell_size_xy = 0.05f;             // XY 网格大小 (m)
+    int min_cell_points = 8;                // 网格最小点数
+    float min_cell_height = 0.10f;          // 网格最小高度跨度 (m)
+    float max_cell_height = 0.45f;          // 网格最大高度跨度 (m)
+    float max_cell_top_z = 0.5f;            // 网格最高点上限 (m)
     
     // === 时间跟踪参数 ===
     int min_detection_frames = 3;           // 连续检测帧数要求
@@ -116,12 +124,33 @@ struct StairCandidate {
     Vec3f center;           // 中心点 (odom 系)
     Vec3f bbox_min;         // 包围盒最小点
     Vec3f bbox_max;         // 包围盒最大点
+    Vec3f obb_center;       // 有向包围盒中心
+    Eigen::Quaternionf obb_orientation;  // 有向包围盒朝向
+    Vec3f obb_dims;         // 有向包围盒尺寸 (x/y/z)
     float height;           // 台阶高度
+    float top_z;            // 顶面高度 (base_link z)
     float width;            // 台阶宽度
     float depth;            // 台阶深度
     float edge_x;           // 前沿 X 坐标
     StairType type;         // 台阶类型
     PointCloud::Ptr cloud;  // 原始点云
+};
+
+/**
+ * @brief 被过滤的候选（用于调试）
+ */
+struct RejectedCandidate {
+    Vec3f bbox_min;
+    Vec3f bbox_max;
+    Vec3f obb_center;
+    Eigen::Quaternionf obb_orientation;
+    Vec3f obb_dims;
+    float height = 0.0f;
+    float top_z = 0.0f;
+    float width = 0.0f;
+    float depth = 0.0f;
+    float z_thickness = 0.0f;
+    std::string reason;
 };
 
 /**
@@ -141,6 +170,9 @@ private:
     
     // Step 1: ROI 裁剪
     PointCloud::Ptr roiFilter(const PointCloud::Ptr& cloud_in);
+
+    // Step 1.5: 预筛选网格（竖直占据率）
+    PointCloud::Ptr stairLikeFilter(const PointCloud::Ptr& cloud_in);
     
     // Step 2: 欧式聚类
     std::vector<PointCloud::Ptr> euclideanClustering(const PointCloud::Ptr& cloud_filtered);
@@ -148,6 +180,10 @@ private:
     // Step 3: 硬约束筛选
     std::vector<StairCandidate> filterStairCandidates(
         const std::vector<PointCloud::Ptr>& clusters);
+
+    // Step 3.5: 重叠候选筛选（保留综合得分最佳）
+    std::vector<StairCandidate> resolveOverlappingCandidates(
+        const std::vector<StairCandidate>& candidates);
     
     // Step 4: 边缘提取与参数化
     void refineStairCandidate(StairCandidate& candidate);
@@ -165,7 +201,11 @@ private:
         visualization_msgs::msg::MarkerArray& markers,
         const StairCandidate& candidate,
         int id,
-        bool is_locked);
+        bool is_locked,
+        const std::string& frame_id);
+    void addRoiMarker(visualization_msgs::msg::MarkerArray& markers);
+    void addClusterMarkers(visualization_msgs::msg::MarkerArray& markers);
+    void addRejectedMarkers(visualization_msgs::msg::MarkerArray& markers);
     
     // === 发布结果 ===
     void publishStairTarget();
@@ -192,6 +232,7 @@ private:
     // 状态跟踪
     DetectionState current_state_;
     StairCandidate locked_stair_;
+    StairCandidate locked_stair_map_;
     int consecutive_detection_count_;
     std::deque<StairCandidate> history_buffer_;  // 用于平滑
     
@@ -202,6 +243,13 @@ private:
     
     // 性能监控
     rclcpp::Time last_process_time_;
+
+    // 调试可视化缓存
+    PointCloud::Ptr last_roi_cloud_;
+    PointCloud::Ptr last_prefilter_cloud_;
+    std::vector<PointCloud::Ptr> last_clusters_;
+    std::vector<StairCandidate> last_candidates_;
+    std::vector<RejectedCandidate> last_rejected_;
 };
 
 } // namespace stair_detector
