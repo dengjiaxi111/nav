@@ -28,6 +28,10 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
 #include <pcl/common/common.h>
 #include <pcl/common/centroid.h>
 
@@ -97,6 +101,21 @@ struct StairDetectorConfig {
     
     float normal_z_threshold = 0.9f;        // 法向量 Z 分量阈值 (防止斜面)
 
+    // === 法向量估计参数 (方案1) ===
+    bool enable_normal_estimation = true;       // 启用法向量筛选
+    float min_planarity = 0.7f;                 // 平面性阈值 (1 - λ0/λ1)
+    float horizontal_normal_z_min = 0.85f;      // 水平面法向量z分量下限
+    float horizontal_points_ratio_min = 0.6f;   // 水平点占比下限
+    int normal_min_points = 50;                 // 法向量计算最小点数
+
+    // === 多平面分割参数 (方案2) ===
+    bool enable_plane_segmentation = true;      // 启用RANSAC平面分割
+    float ransac_distance_threshold = 0.02f;    // RANSAC内点距离阈值 (m)
+    int ransac_max_iterations = 100;            // RANSAC最大迭代次数
+    int min_plane_points = 150;                 // 最小平面点数
+    float ground_plane_z_tolerance = 0.05f;     // 地面平面z容差 (m)
+    int max_planes = 3;                         // 最大提取平面数
+
     // === 预筛选（网格竖直占据率）===
     float cell_size_xy = 0.05f;             // XY 网格大小 (m)
     int min_cell_points = 8;                // 网格最小点数
@@ -123,6 +142,18 @@ struct StairDetectorConfig {
 };
 
 /**
+ * @brief 平面模型 (方案2: RANSAC提取)
+ */
+struct PlaneModel {
+    Vec3f normal;                   // 平面法向量
+    float d;                        // 平面方程: n·p + d = 0
+    PointCloud::Ptr inliers;        // 平面内点
+    float height_from_ground;       // 相对地面高度 (m)
+    int point_count;                // 点数
+    bool is_horizontal;             // 是否水平面 (|nz| > 0.9)
+};
+
+/**
  * @brief 台阶候选结构体
  */
 struct StairCandidate {
@@ -134,6 +165,13 @@ struct StairCandidate {
     Vec3f obb_dims;         // 有向包围盒尺寸 (x/y/z)
     float height;           // 台阶高度
     float top_z;            // 顶面高度 (base_link z)
+    
+    // === 方案1: 法向量特征 ===
+    Vec3f surface_normal;       // 表面法向量 (PCA最小特征向量)
+    float planarity;            // 平面性 (1 - λ0/λ1), [0,1]
+    int horizontal_points;      // 水平面点数 (|nz| > 0.9)
+    int vertical_points;        // 垂直面点数 (|nz| < 0.2)
+    bool normal_valid;          // 法向量是否有效
     float width;            // 台阶宽度
     float depth;            // 台阶深度
     float edge_x;           // 前沿 X 坐标
@@ -193,14 +231,21 @@ private:
     // Step 1.5: 预筛选网格（竖直占据率）
     PointCloud::Ptr stairLikeFilter(const PointCloud::Ptr& cloud_in);
     
-    // Step 2: 欧式聚类
+    // Step 2: 多平面分割 (方案2: RANSAC)
+    std::vector<PlaneModel> extractMultiplePlanes(const PointCloud::Ptr& cloud_in);
+    
+    // Step 2.5: 欧式聚类 (回退方案)
     std::vector<PointCloud::Ptr> euclideanClustering(const PointCloud::Ptr& cloud_filtered);
     
-    // Step 3: 硬约束筛选
+    // Step 3: 法向量估计与验证 (方案1)
+    void computeSurfaceNormals(StairCandidate& candidate);
+    bool validateNormalFeatures(const StairCandidate& candidate, std::string& reject_reason);
+    
+    // Step 3.5: 硬约束筛选
     std::vector<StairCandidate> filterStairCandidates(
         const std::vector<PointCloud::Ptr>& clusters);
 
-    // Step 3.5: 重叠候选筛选（保留综合得分最佳）
+    // Step 4: 重叠候选筛选（保留综合得分最佳）
     std::vector<StairCandidate> resolveOverlappingCandidates(
         const std::vector<StairCandidate>& candidates);
     
@@ -269,6 +314,7 @@ private:
     std::vector<PointCloud::Ptr> last_clusters_;
     std::vector<StairCandidate> last_candidates_;
     std::vector<RejectedCandidate> last_rejected_;
+    std::vector<PlaneModel> last_planes_;  // 新增：记录提取的平面
 };
 
 } // namespace stair_detector

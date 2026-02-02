@@ -35,6 +35,21 @@
     min_stair_depth: 0.05
     max_z_thickness: 0.4
 
+    # === 方案1: 法向量估计参数 ===
+    enable_normal_estimation: true       # 启用法向量筛选
+    min_planarity: 0.7                   # 平面性阈值 (1 - λ0/λ1)
+    horizontal_normal_z_min: 0.85        # 水平面法向量z分量下限
+    horizontal_points_ratio_min: 0.6     # 水平点占比下限
+    normal_min_points: 50                # 法向量计算最小点数
+
+    # === 方案2: 多平面分割参数 ===
+    enable_plane_segmentation: true      # 启用RANSAC平面分割
+    ransac_distance_threshold: 0.02      # RANSAC内点距离阈值 (m)
+    ransac_max_iterations: 100           # RANSAC最大迭代次数
+    min_plane_points: 150                # 最小平面点数
+    ground_plane_z_tolerance: 0.05       # 地面平面z容差 (m)
+    max_planes: 3                        # 最大提取平面数
+
     # Prefilter (grid vertical occupancy)
     cell_size_xy: 0.05
     min_cell_points: 5
