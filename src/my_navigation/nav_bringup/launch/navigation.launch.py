@@ -13,6 +13,7 @@ def generate_launch_description():
     
     params_file = LaunchConfiguration('params_file')
     map_file = LaunchConfiguration('map_file')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     
     # 默认地图路径
     default_map = os.path.join(pkg_dir, 'maps', 'RMUC_final.yaml')
@@ -23,6 +24,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_tf_map_odom',
+        parameters=[{'use_sim_time': use_sim_time}],
         arguments=['--x', '0', '--y', '0', '--z', '0.1', 
                    '--roll', '0', '--pitch', '0', '--yaw', '0',
                    '--frame-id', 'map', '--child-frame-id', 'odom']
@@ -50,6 +52,12 @@ def generate_launch_description():
             description='地图yaml文件路径'
         ),
         
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='false',
+            description='使用仿真时间'
+        ),
+        
         # 静态TF (测试用)
         static_tf_map_odom,
         
@@ -59,7 +67,8 @@ def generate_launch_description():
             name='nav_server',
             parameters=[
                 params_file,
-                {'map_file': map_file}
+                {'map_file': map_file},
+                {'use_sim_time': use_sim_time}
             ],
             output='screen',
             remappings=[

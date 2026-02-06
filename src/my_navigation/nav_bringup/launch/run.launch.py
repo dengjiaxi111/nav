@@ -70,6 +70,19 @@ def generate_launch_description():
             'use_sim_time': LaunchConfiguration('use_sim_time')
         }.items()
     )
+    lio_3se_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('lio_3se'),
+                'launch',
+                'mapping.launch.py',
+            ])
+        ]),
+        launch_arguments={
+            'use_sim_time': LaunchConfiguration('use_sim_time')
+        }.items()
+    )
+
     
     # ==================== 2. ROG-Map 集成节点 (3D地图 + 2D投影 + 台阶检测) ====================
     # 使用组件化的 integration_node，直接调用内部 API，避免 topic 开销
@@ -102,7 +115,8 @@ def generate_launch_description():
             ])
         ]),
         launch_arguments={
-            'params_file': LaunchConfiguration('nav_params_file')
+            'params_file': LaunchConfiguration('nav_params_file'),
+            'use_sim_time': LaunchConfiguration('use_sim_time')
         }.items()
     )
     

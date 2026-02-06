@@ -55,6 +55,14 @@ namespace small_point_lio {
         std::vector<Eigen::Vector3d> imu_accel_buffer_;  // 用于收集IMU加速度数据
         static constexpr size_t GRAVITY_INIT_SAMPLES = 200;  // 用于初始化重力的IMU样本数
 
+        // 速度估计：线速度用位置差分+低通滤波，角速度用刚体变换
+        bool velocity_initialized_{false};
+        Eigen::Vector3f prev_position_{Eigen::Vector3f::Zero()};
+        Eigen::Quaternionf prev_orientation_{Eigen::Quaternionf::Identity()};
+        double prev_timestamp_{0.0};
+        Eigen::Vector3f filtered_linear_velocity_{Eigen::Vector3f::Zero()};
+        static constexpr float VELOCITY_FILTER_ALPHA = 0.3f;  // 低通滤波系数 (0-1, 越小越平滑)
+
         // 计算重力对齐变换
         void computeGravityAlignment(const Eigen::Vector3d& measured_gravity);
 

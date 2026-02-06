@@ -278,59 +278,109 @@ namespace small_point_lio {
             odometry_msg.pose.pose.orientation.z = transform_stamped.transform.rotation.z;
             odometry_msg.pose.pose.orientation.w = transform_stamped.transform.rotation.w;
 
-            // ============================================================
+            // slh: ============================================================
             // 填充 twist（速度信息），按照 ROS 约定在 child_frame_id (base_link) 系下表示
-            // 
+            //
+            // 我们先约定：
+            // W = imu_odom（LIO 的 world / imu 第一帧）
+            // I = imu_link（IMU 机体）
+            // B = base_link（车体中心，ROS 惯例中的 child）
+            // 在机器人学中，T_A_to_B 这种命名存在两种相反的解读习惯，我们尽量采用第一种
+            //  T_A_to_B = 把点从A系变到B系的变换矩阵 使用方式：p_B = T_A_to_B * p_A （更常见，Eigen/ROS惯例）
+            // 所以：T_lidar_to_base_ 用于p_base = T_lidar_to_base_ * p_lidar
+            //
             // LIO 输出:
-            //   - odometry.velocity: lidar_odom 世界坐标系下 lidar 原点的线速度
-            //   - odometry.angular_velocity: lidar body 坐标系下的角速度
+            //   - odometry.velocity: v_W_I （world系下IMU的速度，经验证不准确）
+            //   - odometry.angular_velocity: ω_I （IMU body系下的角速度）
             // 
-            // 需要变换到 base_link 坐标系:
-            //   1. 角速度: 刚体角速度在任意点相同，只需坐标变换
-            //      ω_base = R_lidar_to_base * ω_lidar
-            //   2. 线速度: 考虑刚体运动学 (不同点的线速度不同)
-            //      先将世界系速度转到 lidar 系: v_lidar_body = R_odom_to_lidar * v_odom
-            //      然后考虑杆臂效应: v_base_in_lidar = v_lidar_body + ω_lidar × t_lidar_to_base
-            //      最后转到 base 系: v_base = R_lidar_to_base * v_base_in_lidar
+            // 目标：生成 ROS Odometry 的 twist（线速度 linear.x,y,z 与角速度 angular.x,y,z）
+            // 通常按惯例把 twist 表示在 child frame（base_link）下
+            // 同时 header.frame_id=odom（或imu_odom），child_frame_id=base_link
+            //
+            // 注意：LIO输出的velocity不准确（尤其在旋转时），因此：
+            //   - 角速度：使用刚体变换（ω_B = R_IB * ω_I）
+            //   - 线速度：改用位置差分法（v = Δp / Δt）
             // ============================================================
             
-            // LIO 输出的原始速度
-            Eigen::Vector3f vel_odom = odometry.velocity.cast<float>();        // 世界系下 lidar 的速度
+            // LIO 输出的原始数据
             Eigen::Vector3f omg_lidar = odometry.angular_velocity.cast<float>(); // lidar body 系下的角速度
-            
+
             // 外参: lidar → base_link
+            // T_lidar_to_base_ 用于 p_base = T_lidar_to_base_ * p_lidar
+            // 其旋转部分的列向量是 lidar 系的基向量在 base 系中的坐标
             Eigen::Matrix3f R_lidar_to_base = T_lidar_to_base_.rotation();
-            Eigen::Vector3f t_lidar_to_base = T_lidar_to_base_.translation();
-            
-            // Step 1: 计算 lidar 在 odom 系下的姿态 (用于速度坐标变换)
-            Eigen::Quaternionf q_odom_to_lidar;
-            if (gravity_alignment_enabled_) {
-                // q_lidar_in_odom = q_gravity_align * q_lidar_odom
-                Eigen::Quaternionf q_lidar_in_odom = q_gravity_align_ * q_lidar_odom;
-                q_odom_to_lidar = q_lidar_in_odom.inverse();
-            } else {
-                q_odom_to_lidar = q_lidar_odom.inverse();
+
+            // ============================================================
+            // 角速度估计：使用刚体变换
+            // 刚体角速度是绑定向量，坐标变换公式：ω_B = R_IB * ω_I
+            // ============================================================
+            Eigen::Vector3f angular_vel_base = R_lidar_to_base * omg_lidar;
+
+            // DEBUG: 定期打印角速度变换
+            static int omg_debug_counter = 0;
+            if (omg_debug_counter++ % 50 == 0) {
+                RCLCPP_INFO(get_logger(), "[OMG_DEBUG] omg_lidar (raw): [%.4f, %.4f, %.4f] rad/s",
+                    omg_lidar.x(), omg_lidar.y(), omg_lidar.z());
+                RCLCPP_INFO(get_logger(), "[OMG_DEBUG] omg_base (transformed): [%.4f, %.4f, %.4f] rad/s",
+                    angular_vel_base.x(), angular_vel_base.y(), angular_vel_base.z());
+                RCLCPP_INFO(get_logger(), "[OMG_DEBUG] |omg_lidar| = %.4f, |omg_base| = %.4f (should be equal)",
+                    omg_lidar.norm(), angular_vel_base.norm());
             }
-            Eigen::Matrix3f R_odom_to_lidar = q_odom_to_lidar.toRotationMatrix();
+
+            // ============================================================
+            // 线速度估计：使用位置差分+低通滤波
+            // 原因：LIO的velocity输出在旋转时不准确，改用数值微分
+            // 方法：v = (p_current - p_previous) / dt，然后低通滤波平滑
+            // ============================================================
+            Eigen::Vector3f linear_vel_base = Eigen::Vector3f::Zero();
             
-            // Step 2: 将世界系速度转到 lidar body 系
-            Eigen::Vector3f vel_lidar_body = R_odom_to_lidar * vel_odom;
+            if (velocity_initialized_) {
+                double dt = odometry.timestamp - prev_timestamp_;
+                
+                if (dt > 0.001 && dt < 0.5) {  // 有效时间间隔：1ms ~ 500ms
+                    // 位置差分（在odom系下）
+                    Eigen::Vector3f pos_diff_odom = pos_base_in_odom - prev_position_;
+                    Eigen::Vector3f instant_linear_vel_odom = pos_diff_odom / static_cast<float>(dt);
+                    
+                    // 转到 base_link 系
+                    Eigen::Vector3f instant_linear_vel_base = q_base_in_odom.inverse() * instant_linear_vel_odom;
+                    
+                    // 低通滤波：v_filtered = alpha * v_instant + (1 - alpha) * v_filtered_prev
+                    filtered_linear_velocity_ = VELOCITY_FILTER_ALPHA * instant_linear_vel_base + 
+                                                (1.0f - VELOCITY_FILTER_ALPHA) * filtered_linear_velocity_;
+                    
+                    linear_vel_base = filtered_linear_velocity_;
+                    
+                    // DEBUG: 定期打印速度估计
+                    static int vel_debug_counter = 0;
+                    if (vel_debug_counter++ % 50 == 0) {
+                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] dt=%.4f s", dt);
+                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] pos_diff (odom): [%.4f, %.4f, %.4f]",
+                            pos_diff_odom.x(), pos_diff_odom.y(), pos_diff_odom.z());
+                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] instant_linear (base): [%.4f, %.4f, %.4f] m/s",
+                            instant_linear_vel_base.x(), instant_linear_vel_base.y(), instant_linear_vel_base.z());
+                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] filtered_linear (base): [%.4f, %.4f, %.4f] m/s",
+                            filtered_linear_velocity_.x(), filtered_linear_velocity_.y(), filtered_linear_velocity_.z());
+                    }
+                }
+            } else {
+                // 第一帧，初始化
+                velocity_initialized_ = true;
+                RCLCPP_INFO(get_logger(), "Velocity estimator initialized: angular (rigid body), linear (differential + LPF)");
+            }
             
-            // Step 3: 刚体运动学 - 计算 base_link 原点在 lidar 系下的速度
-            // v_base = v_lidar + ω × r (杆臂效应)
-            Eigen::Vector3f vel_base_in_lidar = vel_lidar_body + omg_lidar.cross(t_lidar_to_base);
+            // 更新历史数据
+            prev_position_ = pos_base_in_odom;
+            prev_orientation_ = q_base_in_odom;
+            prev_timestamp_ = odometry.timestamp;
             
-            // Step 4: 将速度从 lidar 系转到 base_link 系
-            Eigen::Vector3f vel_base = R_lidar_to_base * vel_base_in_lidar;
-            Eigen::Vector3f omg_base = R_lidar_to_base * omg_lidar;
-            
-            // 填充 twist (在 base_link 坐标系下)
-            odometry_msg.twist.twist.linear.x = vel_base.x();
-            odometry_msg.twist.twist.linear.y = vel_base.y();
-            odometry_msg.twist.twist.linear.z = vel_base.z();
-            odometry_msg.twist.twist.angular.x = omg_base.x();
-            odometry_msg.twist.twist.angular.y = omg_base.y();
-            odometry_msg.twist.twist.angular.z = omg_base.z();
+            // 填充 twist
+            odometry_msg.twist.twist.linear.x = linear_vel_base.x();
+            odometry_msg.twist.twist.linear.y = linear_vel_base.y();
+            odometry_msg.twist.twist.linear.z = linear_vel_base.z();
+            odometry_msg.twist.twist.angular.x = angular_vel_base.x();
+            odometry_msg.twist.twist.angular.y = angular_vel_base.y();
+            odometry_msg.twist.twist.angular.z = angular_vel_base.z();
 
             tf_broadcaster->sendTransform(transform_stamped);
             odometry_publisher->publish(odometry_msg);

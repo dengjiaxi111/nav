@@ -1,10 +1,17 @@
 from launch import LaunchDescription
-from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
+from launch.actions import DeclareLaunchArgument
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='使用仿真时间'
+    )
 
     small_point_lio_node = Node(
         package="small_point_lio",
@@ -16,15 +23,17 @@ def generate_launch_description():
                 [
                     FindPackageShare("small_point_lio"),
                     "config",                                                                                                                                                                                                                                                                              
-                    "mid360.yaml",
+                    "mid360_sim.yaml",
                 ]
-            )
+            ),
+            {'use_sim_time': LaunchConfiguration('use_sim_time')}
         ],
     )
 
     static_base_link_to_livox_frame = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         arguments=[
             "--x",
             "0.06",
@@ -63,4 +72,8 @@ def generate_launch_description():
         # ],
     )
 
-    return LaunchDescription([small_point_lio_node, static_base_link_to_livox_frame])
+    return LaunchDescription([
+        declare_use_sim_time,
+        small_point_lio_node,
+        static_base_link_to_livox_frame
+    ])

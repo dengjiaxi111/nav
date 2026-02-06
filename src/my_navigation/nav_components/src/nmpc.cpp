@@ -193,11 +193,32 @@ nav_core::ControlResult NMPC::computeVelocity(
     // 3. 提取局部参考轨迹
     auto yref_sequence = extractLocalReference(current_pose.pose, params_.horizon_length);
     
-    if (yref_sequence.empty()) {
-        RCLCPP_WARN(node_->get_logger(), "NMPC: 无法提取参考轨迹");
+    // ✅ FIX: 验证参考轨迹质量
+    if (yref_sequence.size() < static_cast<size_t>(N_horizon_ + 1)) {
+        RCLCPP_WARN(node_->get_logger(), 
+            "NMPC: 参考轨迹点不足 (%zu < %d)", 
+            yref_sequence.size(), N_horizon_ + 1);
         cmd_vel.linear.x = 0.0;
         cmd_vel.angular.z = 0.0;
         return nav_core::ControlResult::FAILED;
+    }
+    
+    // ✅ FIX: 检查参考轨迹连续性（防止跳变）
+    for (size_t i = 1; i < yref_sequence.size(); ++i) {
+        double dx = yref_sequence[i][0] - yref_sequence[i-1][0];
+        double dy = yref_sequence[i][1] - yref_sequence[i-1][1];
+        double step_dist = std::hypot(dx, dy);
+        
+        // 单步距离不应超过 desired_velocity * dt * 1.5（允许15%误差）
+        double max_step = params_.desired_velocity * (T_horizon_ / N_horizon_) * 1.5;
+        if (step_dist > max_step) {
+            RCLCPP_WARN(node_->get_logger(),
+                "NMPC: 参考轨迹不连续 (step %zu: %.2f m > %.2f m)",
+                i, step_dist, max_step);
+            cmd_vel.linear.x = 0.0;
+            cmd_vel.angular.z = 0.0;
+            return nav_core::ControlResult::FAILED;
+        }
     }
     
     // 4. 求解 NMPC
@@ -364,13 +385,17 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     // 沿路径前向采样 N+1 个点 (在 odom 坐标系下)
     double dt = T_horizon_ / N_horizon_;
     
+    // ✅ FIX: 记住上一个找到的索引，确保参考轨迹单调递增
+    int last_found_idx = nearest_idx_;
+    double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
+    
     for (int i = 0; i <= N_horizon_; ++i) {
         // 计算期望的前向距离
         double forward_dist = params_.desired_velocity * i * dt;
         
-        // 在路径上查找对应点 (从剪枝后的起点开始)
-        int idx = nearest_idx_;
-        double dist = 0.0;
+        // ✅ 从上一个点继续搜索（保证单调性）
+        int idx = last_found_idx;
+        double dist = accumulated_dist;
         
         while (idx < static_cast<int>(global_path_.poses.size()) - 1) {
             auto& p1 = global_path_.poses[idx].pose.position;
@@ -385,6 +410,10 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 double theta = tf2::getYaw(global_path_.poses[idx + 1].pose.orientation);
                 
                 yref.push_back({x, y, theta, params_.desired_velocity, 0.0});
+                
+                // ✅ 更新索引和累积距离
+                last_found_idx = idx;
+                accumulated_dist = dist;
                 break;
             }
             
@@ -402,7 +431,21 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 0.0,  // 终点速度为0
                 0.0
             });
+            // ✅ 到达终点后，后续所有参考点都是终点
+            break;
         }
+    }
+    
+    // ✅ 如果提前到达终点，填充剩余参考点为终点（保证 N+1 个点）
+    while (yref.size() < static_cast<size_t>(N_horizon_ + 1)) {
+        auto& last = global_path_.poses.back().pose;
+        yref.push_back({
+            last.position.x, 
+            last.position.y,
+            tf2::getYaw(last.orientation),
+            0.0,
+            0.0
+        });
     }
     
     return yref;
