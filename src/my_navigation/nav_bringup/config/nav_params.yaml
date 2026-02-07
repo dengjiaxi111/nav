@@ -93,11 +93,11 @@ nav_server:
       max_linear_vel: 2.0       # 最大线速度 (m/s)
       max_angular_vel: 2.0      # 最大角速度 (rad/s)
       max_linear_accel: 2.0     # 最大线加速度 (m/s²)
-      max_angular_accel: 3.0    # 最大角加速度 (rad/s²)
+      max_angular_accel: 2.0    # 最大角加速度 (rad/s²)
       
       # === 局部参考轨迹提取 ===
       horizon_length: 5.0       # 前向提取距离 (米) - 应匹配预测时域
-      desired_velocity: 1.0     # 期望跟踪速度 (m/s)
+      desired_velocity: 1.5     # 期望跟踪速度 (m/s)
       
       # === 代价函数权重 (越大越重视) ===
       Q_position: 10.0          # 位置 (x,y) 跟踪权重

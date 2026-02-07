@@ -1,0 +1,5 @@
+uint8 should_chassis_spin
+uint8 should_gimbal_patrol
+uint8 buy_bullet
+uint8 rebirth
+uint8 use_capacity
