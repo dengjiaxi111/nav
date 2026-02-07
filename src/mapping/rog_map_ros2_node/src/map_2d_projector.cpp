@@ -340,20 +340,13 @@ void Map2DProjector::normalEstimation(std::unordered_map<int64_t, ColumnMetrics>
     /**
      * 法向量估计（PCA方法）
      * 
-     * 策略：仅对低占据率柱体计算，高占据率直接跳过
-     * - 高占据率（>0.5）：极大概率是墙壁/人/车等障碍物，无需法向量
-     * - 低占据率：可能是坡面、地面或薄障碍物，需要法向量区分
+     * 对所有点数充足的柱体计算法向量，不再按占据率跳过。
+     * 原因：坡面上的LiDAR点云密度很高，占据率也高，但仍需法向量区分坡面和墙壁。
      * 
      * PCA原理：点云协方差矩阵的最小特征值对应法向量
      */
     
     for (auto& [key, col] : columns) {
-        // 跳过高占据率柱体（障碍物快速路径）
-        if (col.occupancy_rate > cfg_.high_occupancy_thresh) {
-            col.normal_valid = false;
-            continue;
-        }
-        
         // 跳过点数不足的柱体
         if (col.point_count < cfg_.normal_min_points) {
             col.normal_valid = false;
@@ -895,12 +888,17 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     }
     
     // === Case 4: 高占据率障碍物（快速路径）===
-    // 高占据率 + H大于坡面阈值 + 法向量不是坡面 → 判障碍物
+    // 高占据率 + H大于坡面阈值 + 法向量确认不是坡面 → 判障碍物
+    // 关键：如果法向量有效且 nz >= wall_thresh（可能是坡面），不走此快速路径
     if (occ_rate > cfg_.high_occupancy_thresh && H > cfg_.slope_height_max) {
-        bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
-        if (blocks_passage) {
-            DEBUG_CLASSIFY("HighOccupancy+LargeH", "OBS");
-            return cfg_.obstacle_value;
+        bool likely_slope = metrics.normal_valid && 
+                            metrics.normal_z_abs >= cfg_.normal_z_wall_thresh;
+        if (!likely_slope) {
+            bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
+            if (blocks_passage) {
+                DEBUG_CLASSIFY("HighOccupancy+LargeH+NotSlope", "OBS");
+                return cfg_.obstacle_value;
+            }
         }
     }
     

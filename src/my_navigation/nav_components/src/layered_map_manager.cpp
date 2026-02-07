@@ -98,6 +98,55 @@ void LayeredMapManager::setInflationParams(const InflationParams& params) {
     }
 }
 
+void LayeredMapManager::createBlankStaticMap(double width_m, double height_m,
+                                              double resolution, const InflationParams& params) {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    
+    // 计算栅格尺寸
+    int width = static_cast<int>(std::ceil(width_m / resolution));
+    int height = static_cast<int>(std::ceil(height_m / resolution));
+    
+    // 创建空白地图
+    static_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
+    static_map_->header.frame_id = map_frame_;
+    static_map_->header.stamp = node_->get_clock()->now();
+    
+    static_map_->info.resolution = resolution;
+    static_map_->info.width = width;
+    static_map_->info.height = height;
+    
+    // 地图中心在原点
+    static_map_->info.origin.position.x = -width_m / 2.0;
+    static_map_->info.origin.position.y = -height_m / 2.0;
+    static_map_->info.origin.position.z = 0.0;
+    static_map_->info.origin.orientation.w = 1.0;
+    
+    // 全部初始化为自由空间 (0)
+    static_map_->data.resize(width * height, 0);
+    
+    // 更新成员变量
+    resolution_ = resolution;
+    origin_x_ = static_map_->info.origin.position.x;
+    origin_y_ = static_map_->info.origin.position.y;
+    width_ = width;
+    height_ = height;
+    
+    // 初始化融合地图
+    fused_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
+    *fused_map_ = *static_map_;
+    
+    // 设置膨胀参数并构建Costmap
+    inflation_params_ = params;
+    rebuildCostmap();
+    
+    if (esdf_enabled_) {
+        rebuildEsdf();
+    }
+    
+    RCLCPP_INFO(logger_, "创建空白静态地图: %dx%d (%.1fm x %.1fm) @ %.3f m/cell",
+                width, height, width_m, height_m, resolution);
+}
+
 void LayeredMapManager::updateDynamicLayer(
     const nav_msgs::msg::OccupancyGrid::SharedPtr& local_map) {
     
@@ -118,11 +167,19 @@ void LayeredMapManager::updateDynamicLayer(
         return;
     }
     
-    // 2. 重置融合地图为静态地图
+    // 2. 重置融合地图
     if (!fused_map_) {
         fused_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
     }
-    *fused_map_ = *static_map_;
+    
+    if (static_layer_enabled_) {
+        // 静态层启用：融合地图初始化为静态地图
+        *fused_map_ = *static_map_;
+    } else {
+        // 静态层禁用：融合地图初始化为空白（仅保留动态层）
+        *fused_map_ = *static_map_;  // 复用结构
+        std::fill(fused_map_->data.begin(), fused_map_->data.end(), 0);  // 清空为free space
+    }
     fused_map_->header.stamp = node_->get_clock()->now();
     
     // 3. 变换参数
@@ -179,9 +236,16 @@ void LayeredMapManager::updateDynamicLayer(
             
             int global_idx = gy * width_ + gx;
             
-            // 融合策略：取max（保守，障碍物优先）
-            int8_t static_val = static_map_->data[global_idx];
-            int8_t fused_val = std::max(static_val, local_val);
+            // 融合策略
+            int8_t fused_val;
+            if (static_layer_enabled_) {
+                // 静态层启用：取max（保守，障碍物优先）
+                int8_t static_val = static_map_->data[global_idx];
+                fused_val = std::max(static_val, local_val);
+            } else {
+                // 静态层禁用：直接使用动态层的值
+                fused_val = local_val;
+            }
             
             // 记录变化
             if (fused_map_->data[global_idx] != fused_val) {
@@ -215,9 +279,10 @@ void LayeredMapManager::updateDynamicLayer(
                 
                 int idx = gy * width_ + gx;
                 if (idx >= 0 && idx < width_ * height_) {
-                    // 恢复为静态地图的值
-                    if (fused_map_->data[idx] != static_map_->data[idx]) {
-                        fused_map_->data[idx] = static_map_->data[idx];
+                    // 恢复基础值
+                    int8_t base_val = static_layer_enabled_ ? static_map_->data[idx] : 0;
+                    if (fused_map_->data[idx] != base_val) {
+                        fused_map_->data[idx] = base_val;
                         changed_cells.push_back(idx);
                     }
                 }

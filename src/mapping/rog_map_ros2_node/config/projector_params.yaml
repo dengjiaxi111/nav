@@ -5,18 +5,18 @@
   ros__parameters:
     projector.robot_height: 0.8
     projector.robot_width: 0.4
-    projector.base_to_ground: 0.10
+    projector.base_to_ground: 0.05
     projector.ground_tolerance: 0.08
     projector.enable_dynamic_leg_length: false
     projector.wheel_frame: "wheel_link"
     projector.leg_length_min: 0.08
     projector.leg_length_max: 0.25
-    projector.slope_height_max: 0.15
+    projector.slope_height_max: 0.30
     projector.step_height_min: 0.12
     projector.step_height_max: 0.23
     projector.obstacle_height_min: 0.25
     projector.high_occupancy_thresh: 0.6
-    projector.normal_z_slope_thresh: 0.82
+    projector.normal_z_slope_thresh: 0.70
     projector.normal_z_wall_thresh: 0.42
     projector.normal_min_points: 3
     projector.planarity_thresh: 0.6
@@ -30,7 +30,7 @@
     projector.cliff_search_radius: 5
     projector.cliff_min_drop: 0.10
     projector.cliff_min_lower_points: 3
-    projector.slope_gradient_thresh: 0.70
+    projector.slope_gradient_thresh: 1.00
     projector.slope_continuity_thresh: 0.05
     projector.slope_min_continuous_count: 2
     projector.map_range_x: 10.0

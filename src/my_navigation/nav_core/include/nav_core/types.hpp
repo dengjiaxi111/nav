@@ -11,6 +11,7 @@ enum class NavState : uint8_t {
     IDLE = 0,        // 空闲
     PLANNING,        // 规划中
     CONTROLLING,     // 控制中
+    ESCAPING,        // 脱困中（起点在障碍物中，强制发送速度指令）
     RECOVERY,        // 恢复中
     SUCCEEDED,       // 成功
     FAILED           // 失败
@@ -38,6 +39,7 @@ inline const char* toString(NavState s) {
         case NavState::IDLE: return "IDLE";
         case NavState::PLANNING: return "PLANNING";
         case NavState::CONTROLLING: return "CONTROLLING";
+        case NavState::ESCAPING: return "ESCAPING";
         case NavState::RECOVERY: return "RECOVERY";
         case NavState::SUCCEEDED: return "SUCCEEDED";
         case NavState::FAILED: return "FAILED";

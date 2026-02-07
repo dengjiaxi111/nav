@@ -3,7 +3,7 @@
 nav_server:
   ros__parameters:
     # map_file 由 launch 文件设置
-    control_rate: 20.0
+    control_rate: 50.0
     map_update_rate: 20.0  # 地图更新频率(Hz)
     goal_timeout: 60.0
     goal_tolerance: 0.1
@@ -25,12 +25,18 @@ nav_server:
     # 如果横向偏离超过 path_lateral_tolerance，会停止并重新规划
     # path_check_period 越小响应越快，但会增加 CPU 负载（建议 0.2-1.0 秒）
     
-    # ============ 动态障碍物层 (来自rog_map) ============
+    # ============ 分层地图系统 ============
+    # 静态层: 从yaml/pgm文件加载的全局地图
+    enable_static_layer: false   # 启用静态层（默认启用）
+    # 说明: 
+    #   - 启用时: 从map_file加载pgm/yaml静态地图
+    #   - 禁用时: 自动创建50x50m空白地图框架（纯动态SLAM模式）
+    # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
+    
+    # 动态层: 来自rog_map的局部障碍物
     enable_dynamic_layer: true  # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
-    # 融合策略: fused[i] = max(static[i], dynamic[i])
-    # 注意: 需要有odom->map的TF变换
     
     # ============ 地图更新性能日志 ============
     enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)
@@ -91,25 +97,26 @@ nav_server:
     nmpc:
       # === 运动约束 (物理限制) ===
       max_linear_vel: 2.0       # 最大线速度 (m/s)
-      max_angular_vel: 2.0      # 最大角速度 (rad/s)
-      max_linear_accel: 2.0     # 最大线加速度 (m/s²)
-      max_angular_accel: 2.0    # 最大角加速度 (rad/s²)
+      max_angular_vel: 2.5      # 最大角速度 (rad/s)
+      max_linear_accel: 3.0     # 最大线加速度 (m/s²) - 提高以增强敏捷性
+      max_angular_accel: 4.0    # 最大角加速度 (rad/s²) - 提高以快速转弯
+      allow_reverse: false      # 禁止倒车
       
       # === 局部参考轨迹提取 ===
       horizon_length: 5.0       # 前向提取距离 (米) - 应匹配预测时域
-      desired_velocity: 1.5     # 期望跟踪速度 (m/s)
+      desired_velocity: 1.5     # 期望跟踪速度 (m/s) - 提高以更快行进
       
       # === 代价函数权重 (越大越重视) ===
-      Q_position: 10.0          # 位置 (x,y) 跟踪权重
-      Q_orientation: 5.0        # 航向角 (theta) 跟踪权重
-      Q_velocity: 1.0           # 速度 (v,omega) 跟踪权重
-      R_linear: 0.1             # 线加速度平滑性权重 (越大越平滑)
-      R_angular: 0.1            # 角加速度平滑性权重
-      terminal_multiplier: 2.0  # 终端代价倍数 (最后一步加权)
+      Q_position: 20.0          # 位置 (x,y) 跟踪权重
+      Q_orientation: 15.0        # 航向角 (theta) 跟踪权重
+      Q_velocity: 5.0           # 速度 (v,omega) 跟踪权重 - 提高以更快达到期望速度
+      R_linear: 0.1             # 线加速度平滑性权重 - 降低以允许更激进的加减速
+      R_angular: 0.15            # 角加速度平滑性权重 - 降低以允许更快转向
+      terminal_multiplier: 5.0  # 终端代价倍数 (最后一步加权)
       
       # === 容差参数 ===
-      xy_tolerance: 0.1         # 位置到达容差 (米)
-      yaw_tolerance: 0.1        # 航向到达容差 (弧度)
+      xy_tolerance: 0.15        # 位置到达容差 (米) - 增大以减少过冲
+      yaw_tolerance: 0.15       # 航向到达容差 (弧度) - 增大以减少旋转过冲
       
       # === 可视化选项 ===
       publish_predicted_path: true   # 发布 NMPC 预测轨迹 (/nmpc_predicted_path)
@@ -118,6 +125,7 @@ nav_server:
       # === 求解器参数 (高级选项) ===
       # 注意: N_horizon 和 T_horizon 在编译时固定 (model_ocp/export_ocp.py)
       # 当前设置: N=20, T=2.0s, dt=0.1s
+      # 建议重新导出求解器时增加预测时域: T=3.0s 或 N=30
       qp_solver_max_iter: 50    # QP 子问题最大迭代次数
       levenberg_marquardt: 1e-4 # 数值稳定性阻尼因子
     

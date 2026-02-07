@@ -35,6 +35,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.max_angular_vel", params_.max_angular_vel);
     node_->declare_parameter("nmpc.max_linear_accel", params_.max_linear_accel);
     node_->declare_parameter("nmpc.max_angular_accel", params_.max_angular_accel);
+    node_->declare_parameter("nmpc.allow_reverse", params_.allow_reverse);
     
     // 局部参考提取
     node_->declare_parameter("nmpc.horizon_length", params_.horizon_length);
@@ -61,6 +62,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.max_angular_vel = node_->get_parameter("nmpc.max_angular_vel").as_double();
     params_.max_linear_accel = node_->get_parameter("nmpc.max_linear_accel").as_double();
     params_.max_angular_accel = node_->get_parameter("nmpc.max_angular_accel").as_double();
+    params_.allow_reverse = node_->get_parameter("nmpc.allow_reverse").as_bool();
     
     params_.horizon_length = node_->get_parameter("nmpc.horizon_length").as_double();
     params_.desired_velocity = node_->get_parameter("nmpc.desired_velocity").as_double();
@@ -385,6 +387,16 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     // 沿路径前向采样 N+1 个点 (在 odom 坐标系下)
     double dt = T_horizon_ / N_horizon_;
     
+    // 计算到终点的总距离（用于渐进减速）
+    double total_dist_to_goal = 0.0;
+    const auto& goal_pos = global_path_.poses.back().pose.position;
+    const auto& nearest_pos = global_path_.poses[nearest_idx_].pose.position;
+    for (size_t k = nearest_idx_; k < global_path_.poses.size() - 1; ++k) {
+        auto& p1 = global_path_.poses[k].pose.position;
+        auto& p2 = global_path_.poses[k + 1].pose.position;
+        total_dist_to_goal += std::hypot(p2.x - p1.x, p2.y - p1.y);
+    }
+    
     // ✅ FIX: 记住上一个找到的索引，确保参考轨迹单调递增
     int last_found_idx = nearest_idx_;
     double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
@@ -409,7 +421,19 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 double y = p1.y + ratio * (p2.y - p1.y);
                 double theta = tf2::getYaw(global_path_.poses[idx + 1].pose.orientation);
                 
-                yref.push_back({x, y, theta, params_.desired_velocity, 0.0});
+                // 渐进减速逻辑：根据到终点的距离调整期望速度
+                double remaining_dist = total_dist_to_goal - dist;
+                double desired_v = params_.desired_velocity;
+                
+                // 在 2.0m 范围内开始减速，线性降到 0.3m/s
+                const double decel_start_dist = 2.0;
+                const double min_speed = 0.3;
+                if (remaining_dist < decel_start_dist) {
+                    desired_v = min_speed + 
+                        (params_.desired_velocity - min_speed) * (remaining_dist / decel_start_dist);
+                }
+                
+                yref.push_back({x, y, theta, desired_v, 0.0});
                 
                 // ✅ 更新索引和累积距离
                 last_found_idx = idx;
@@ -516,9 +540,10 @@ void NMPC::updateNMPCParameters() {
     
     // ========== 1. 更新状态约束 (速度限制) ==========
     // 状态约束作用于所有 shooting nodes (1 到 N-1)
+    double v_lower = params_.allow_reverse ? -params_.max_linear_vel : 0.0;
     for (int i = 1; i < N_horizon_; ++i) {
         // idxbx = [3, 4] 对应 [v, omega]
-        double lbx[2] = {-params_.max_linear_vel, -params_.max_angular_vel};
+        double lbx[2] = {v_lower, -params_.max_angular_vel};
         double ubx[2] = {params_.max_linear_vel, params_.max_angular_vel};
         
         ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, i, "lbx", lbx);

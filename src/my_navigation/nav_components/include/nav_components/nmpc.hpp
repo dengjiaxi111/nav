@@ -107,6 +107,7 @@ private:
         double max_angular_vel = 2.0;
         double max_linear_accel = 2.0;
         double max_angular_accel = 3.0;
+        bool allow_reverse = false;  // 是否允许倒车（负线速度）
         
         // 代价权重
         double Q_position = 10.0;

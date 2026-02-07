@@ -1,6 +1,7 @@
 // nav_components/src/nav_server.cpp
 // 导航服务器 - 核心状态机
 
+#include <chrono>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/buffer.h>
@@ -47,7 +48,8 @@ public:
         // 性能日志开关
         bool enable_performance_logging = declare_parameter("enable_performance_logging", false);
         
-        // 动态层配置
+        // 分层地图配置
+        enable_static_layer_ = declare_parameter("enable_static_layer", true);
         enable_dynamic_layer_ = declare_parameter("enable_dynamic_layer", false);
         dynamic_layer_topic_ = declare_parameter("dynamic_layer_topic", "/rog_map/map_2d");
         
@@ -85,26 +87,36 @@ public:
         map_manager_->setEsdfEnabled(enable_esdf_);
         map_manager_->setEsdfVisMaxDist(esdf_vis_max_dist_);
         map_manager_->setEnablePerformanceLogging(enable_performance_logging);
+        map_manager_->setStaticLayerEnabled(enable_static_layer_);  // 设置静态层开关
         
         initComponents();
         
-        if (!map_file_.empty()) {
-            // 从文件加载静态地图
-            if (map_manager_->loadStaticMap(map_file_, inflation_params)) {
-                planner_.setMap(map_manager_);
-                startMapPublisher();
-                RCLCPP_INFO(get_logger(), "静态地图加载完成");
+        if (enable_static_layer_) {
+            // 静态层启用时加载静态地图
+            if (!map_file_.empty()) {
+                // 从文件加载静态地图
+                if (map_manager_->loadStaticMap(map_file_, inflation_params)) {
+                    planner_.setMap(map_manager_);
+                    startMapPublisher();
+                    RCLCPP_INFO(get_logger(), "静态地图加载完成");
+                }
+            } else {
+                // 订阅外部静态地图
+                static_map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+                    "map", rclcpp::QoS(1).transient_local(),
+                    [this](nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+                        map_manager_->setInflationParams(inflation_params_);
+                        map_manager_->setStaticMap(msg);
+                        planner_.setMap(map_manager_);
+                        RCLCPP_INFO(get_logger(), "静态地图更新: %dx%d", msg->info.width, msg->info.height);
+                    });
             }
         } else {
-            // 订阅外部静态地图
-            static_map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
-                "map", rclcpp::QoS(1).transient_local(),
-                [this](nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-                    map_manager_->setInflationParams(inflation_params_);
-                    map_manager_->setStaticMap(msg);
-                    planner_.setMap(map_manager_);
-                    RCLCPP_INFO(get_logger(), "静态地图更新: %dx%d", msg->info.width, msg->info.height);
-                });
+            // 静态层禁用时，创建空白地图框架（50m x 50m @ 0.05m/cell）
+            map_manager_->createBlankStaticMap(50.0, 50.0, 0.05, inflation_params);
+            planner_.setMap(map_manager_);
+            startMapPublisher();
+            RCLCPP_WARN(get_logger(), "静态层已禁用，使用50x50m空白地图框架（纯动态SLAM模式）");
         }
         
         // 订阅动态障碍物层（来自rog_map）
@@ -126,7 +138,8 @@ public:
             std::chrono::duration<double>(1.0 / control_rate_),
             std::bind(&NavServer::controlLoop, this));
         
-        RCLCPP_INFO(get_logger(), "导航服务器启动 (动态层: %s)", 
+        RCLCPP_INFO(get_logger(), "导航服务器启动 (静态层: %s, 动态层: %s)", 
+                    enable_static_layer_ ? "启用" : "禁用",
                     enable_dynamic_layer_ ? "启用" : "禁用");
     }
 
@@ -189,7 +202,7 @@ private:
         recovery_mgr_.reset();
         fsm_.reset();
         fsm_.transitionTo(nav_core::NavState::PLANNING);
-        start_time_ = now();
+        start_time_ = std::chrono::steady_clock::now();
         rviz_goal_active_ = true;
     }
     
@@ -242,7 +255,7 @@ private:
         recovery_mgr_.reset();
         fsm_.reset();
         fsm_.transitionTo(nav_core::NavState::PLANNING);
-        start_time_ = now();
+        start_time_ = std::chrono::steady_clock::now();
         rviz_goal_active_ = false;  // Action 目标
     }
     
@@ -271,13 +284,14 @@ private:
             return;
         }
         
-        if ((now() - start_time_).seconds() > goal_timeout_) {
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time_).count() > goal_timeout_) {
             fsm_.triggerRecovery(nav_core::RecoveryTrigger::TIMEOUT);
         }
         
         switch (fsm_.state()) {
             case nav_core::NavState::PLANNING:    doPlanning(); break;
             case nav_core::NavState::CONTROLLING: doControlling(); break;
+            case nav_core::NavState::ESCAPING:    doEscaping(); break;
             case nav_core::NavState::RECOVERY:    doRecovery(); break;
             case nav_core::NavState::SUCCEEDED:   finishSuccess(); break;
             case nav_core::NavState::FAILED:      finishFailure(); break;
@@ -313,19 +327,88 @@ private:
         
         nav_msgs::msg::Path path;
         if (planner_.plan(current_pose_, goal_, path)) {
+            // 检查是否需要脱困
+            if (planner_.needsEscape()) {
+                RCLCPP_WARN(get_logger(), "规划器检测到起点在障碍物中，进入脱困模式");
+                fsm_.transitionTo(nav_core::NavState::ESCAPING);
+                escape_start_time_ = std::chrono::steady_clock::now();
+                return;
+            }
+            
             current_path_ = path;
             controller_.setPath(path);
             path_pub_->publish(path);
             
-            // 进入控制状态前，重置控制计数器和进展跟踪
             control_count_ = 0;
-            last_progress_time_ = now();
+            last_progress_time_ = std::chrono::steady_clock::now();
             last_progress_pose_ = current_pose_;
-            last_path_check_time_ = now();
+            last_path_check_wall_time_ = std::chrono::steady_clock::now();
             
             fsm_.transitionTo(nav_core::NavState::CONTROLLING);
         } else {
-            fsm_.triggerRecovery(nav_core::RecoveryTrigger::PLANNING_FAILED);
+            // 规划失败，检查是否因为脱困失败
+            if (planner_.needsEscape()) {
+                RCLCPP_ERROR(get_logger(), "脱困失败：无法找到附近的可通行点");
+                fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
+            } else {
+                fsm_.triggerRecovery(nav_core::RecoveryTrigger::PLANNING_FAILED);
+            }
+        }
+    }
+    
+    void doEscaping() {
+        // 脱困模式：强制发送低速指令远离障碍物
+        // 策略：后退 + 轻微转向，持续最多5秒
+        const double escape_duration = 5.0;  // 最多脱困5秒
+        double elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - escape_start_time_).count();
+        
+        if (elapsed > escape_duration) {
+            RCLCPP_WARN(get_logger(), "脱困超时(%g秒)，重新尝试规划", escape_duration);
+            fsm_.transitionTo(nav_core::NavState::PLANNING);
+            return;
+        }
+        
+        // 计算脱困方向：朝向目标的反方向后退
+        double dx = goal_.pose.position.x - current_pose_.pose.position.x;
+        double dy = goal_.pose.position.y - current_pose_.pose.position.y;
+        double target_yaw = std::atan2(dy, dx);
+        
+        // 获取当前朝向
+        tf2::Quaternion q;
+        tf2::fromMsg(current_pose_.pose.orientation, q);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+        
+        // 强制发送脱困速度指令
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = -0.1;  // 低速后退 0.1 m/s
+        
+        // 轻微转向对齐目标反方向
+        double yaw_error = target_yaw - yaw;
+        while (yaw_error > M_PI) yaw_error -= 2 * M_PI;
+        while (yaw_error < -M_PI) yaw_error += 2 * M_PI;
+        cmd.angular.z = -std::copysign(0.2, yaw_error);  // 反向转向
+        
+        cmd_vel_pub_->publish(cmd);
+        
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
+            "脱困中: 后退速度=%.2f, 转向=%.2f, 已用时%.1f秒", 
+            cmd.linear.x, cmd.angular.z, elapsed);
+        
+        // 每0.5秒检查一次是否脱困成功
+        if (static_cast<int>(elapsed * 2) % 10 == 0) {  // 0.5s检查一次
+            int mx, my;
+            if (planner_.worldToMap(current_pose_.pose.position.x, 
+                                   current_pose_.pose.position.y, mx, my) &&
+                planner_.isValid(mx, my)) {
+                RCLCPP_INFO(get_logger(), "脱困成功！重新规划路径");
+                // 停止运动
+                geometry_msgs::msg::Twist stop_cmd;
+                cmd_vel_pub_->publish(stop_cmd);
+                fsm_.transitionTo(nav_core::NavState::PLANNING);
+                return;
+            }
         }
     }
     
@@ -335,13 +418,12 @@ private:
             RCLCPP_INFO(get_logger(), "🎮 Controller: 开始控制循环");
         }
         
-        // 周期性路径检查：检测动态障碍物导致路径不合法
-        auto current_time = now();
-        double time_since_check = (current_time - last_path_check_time_).seconds();
+        auto wall_now = std::chrono::steady_clock::now();
+        double time_since_check = std::chrono::duration<double>(
+            wall_now - last_path_check_wall_time_).count();
         if (time_since_check > path_check_period_) {
-            last_path_check_time_ = current_time;
+            last_path_check_wall_time_ = wall_now;
             
-            // 检查1: 路径是否与障碍物重合
             if (!current_path_.poses.empty() && !planner_.validatePath(current_path_)) {
                 RCLCPP_WARN(get_logger(), 
                     "⚠️  路径验证失败: 检测到动态障碍物，触发重新规划");
@@ -381,7 +463,8 @@ private:
         }
         
         // 超时检测：如果长时间无进展，触发恢复
-        double time_since_progress = (current_time - last_progress_time_).seconds();
+        double time_since_progress = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - last_progress_time_).count();
         
         if (time_since_progress > controller_timeout_) {
             RCLCPP_ERROR(get_logger(), 
@@ -399,7 +482,7 @@ private:
         
         if (dist_moved > controller_progress_threshold_) {
             // 有明显进展，更新时间戳和位置
-            last_progress_time_ = current_time;
+            last_progress_time_ = std::chrono::steady_clock::now();
             last_progress_pose_ = current_pose_;
         }
         
@@ -446,7 +529,8 @@ private:
     }
     
     void finishSuccess() {
-        double elapsed = (now() - start_time_).seconds();
+        double elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start_time_).count();
         
         if (goal_handle_) {
             auto result = std::make_shared<Navigate::Result>();
@@ -535,6 +619,7 @@ private:
     double controller_progress_threshold_;  // 进展检测距离阈值(米)
     double map_update_rate_, esdf_vis_max_dist_;
     bool enable_esdf_;
+    bool enable_static_layer_;   // 是否启用静态地图层
     bool enable_dynamic_layer_;  // 是否启用动态障碍物层
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
@@ -542,10 +627,11 @@ private:
     // 路径检查相关
     double path_check_period_ = 2.0;  // 路径检查周期(秒)
     double path_lateral_tolerance_ = 0.5;  // 横向偏离路径容忍度(米)
-    rclcpp::Time last_path_check_time_;  // 上次路径检查时间
+    std::chrono::steady_clock::time_point last_path_check_wall_time_;  // 使用wall clock
     
-    rclcpp::Time start_time_;
-    rclcpp::Time last_progress_time_;  // 上次有进展的时间
+    std::chrono::steady_clock::time_point start_time_;           // 导航开始时间(wall clock)
+    std::chrono::steady_clock::time_point last_progress_time_;   // 上次有进展的时间(wall clock)
+    std::chrono::steady_clock::time_point escape_start_time_;    // 脱困开始时间(wall clock)
     geometry_msgs::msg::PoseStamped last_progress_pose_;  // 上次有进展的位置
     int control_count_ = 0;  // 控制循环计数器（用于调试日志）
 };

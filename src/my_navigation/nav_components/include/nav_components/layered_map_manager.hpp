@@ -64,6 +64,16 @@ public:
      */
     void setInflationParams(const InflationParams& params);
 
+    /**
+     * @brief 创建空白静态地图（用于纯动态SLAM模式）
+     * @param width_m 地图宽度（米）
+     * @param height_m 地图高度（米）
+     * @param resolution 分辨率（米/格）
+     * @param params 膨胀参数
+     */
+    void createBlankStaticMap(double width_m, double height_m, 
+                              double resolution, const InflationParams& params);
+
     // ============ 动态层更新 ============
 
     /**
@@ -105,6 +115,12 @@ public:
      * @brief 启用/禁用性能日志输出
      */
     void setEnablePerformanceLogging(bool enabled) { enable_performance_logging_ = enabled; }
+    
+    /**
+     * @brief 启用/禁用静态层
+     * @param enabled true=启用静态层, false=禁用（仅使用动态层）
+     */
+    void setStaticLayerEnabled(bool enabled) { static_layer_enabled_ = enabled; }
 
     // ============ MapInterface实现 ============
 
@@ -180,6 +196,9 @@ private:
     // ESDF配置
     std::atomic<bool> esdf_enabled_{false};
     double esdf_vis_max_dist_ = 2.0;
+
+    // 分层地图开关
+    bool static_layer_enabled_ = true;   // 静态层开关（默认启用）
 
     // 性能日志开关
     bool enable_performance_logging_ = false;

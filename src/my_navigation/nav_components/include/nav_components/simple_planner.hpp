@@ -28,6 +28,14 @@ public:
     
     // 公开接口：路径验证（供 nav_server 周期性检查使用）
     bool validatePath(const nav_msgs::msg::Path& path);
+    
+    // 公开接口：检查是否需要脱困（起点在障碍物中）
+    bool needsEscape() const { return needs_escape_; }
+    
+    // 公开接口：供脱困模式检查当前位置是否可通行
+    bool worldToMap(double wx, double wy, int& mx, int& my);
+    void mapToWorld(int mx, int my, double& wx, double& wy);
+    bool isValid(int x, int y);
 
 private:
     // A*节点
@@ -39,9 +47,6 @@ private:
     };
     
     // 坐标转换
-    bool worldToMap(double wx, double wy, int& mx, int& my);
-    void mapToWorld(int mx, int my, double& wx, double& wy);
-    bool isValid(int x, int y);
     double getCost(int x, int y);
     double heuristic(int x1, int y1, int x2, int y2);
     
@@ -54,6 +59,9 @@ private:
     bool runAstar(int sx, int sy, int gx, int gy,
                   const std_msgs::msg::Header& header,
                   nav_msgs::msg::Path& path);
+    
+    // 脱困：BFS搜索最近的可通行格子
+    bool findNearestFreeCell(int cx, int cy, int& fx, int& fy, int max_radius = 50);
     
     rclcpp::Node* node_ = nullptr;
     
@@ -80,6 +88,9 @@ private:
     bool enable_path_cache_ = true;  // 启用路径缓存
     bool enable_auto_prune_ = true;  // 启用自动剪枝
     double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
+    
+    // 脱困标志
+    bool needs_escape_ = false;  // 标记本次规划是否使用了脱困模式
     
     // 调试可视化
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr ctrl_pts_pub_;

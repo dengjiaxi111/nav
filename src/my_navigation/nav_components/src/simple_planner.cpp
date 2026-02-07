@@ -14,14 +14,12 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     cost_weight_ = node_->declare_parameter("planner.cost_weight", 0.5);
     enable_smooth_ = node_->declare_parameter("planner.enable_smooth", true);
     
-    // 新增：路径复用和剪枝参数
     enable_path_cache_ = node_->declare_parameter("planner.enable_path_cache", true);
     enable_auto_prune_ = node_->declare_parameter("planner.enable_auto_prune", true);
     goal_tolerance_ = node_->declare_parameter("planner.goal_tolerance", 0.2);
     obstacle_check_threshold_ = node_->declare_parameter("planner.obstacle_check_threshold", 95);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
     
-    // 平滑参数
     SmoothParams smooth_params;
     smooth_params.resample_interval = node_->declare_parameter("planner.resample_interval", 0.3);
     smooth_params.output_resolution = node_->declare_parameter("planner.smooth_resolution", 0.05);
@@ -80,7 +78,6 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
         origin_x_ = grid_map_->info.origin.position.x;
         origin_y_ = grid_map_->info.origin.position.y;
         
-        // 设置 ESDF 回调用于 B样条优化
         if (map_manager_->hasEsdf()) {
             smoother_.setESDFCallback(
                 [this](double x, double y, double* gx, double* gy) -> double {
@@ -130,17 +127,40 @@ double SimplePlanner::heuristic(int x1, int y1, int x2, int y2) {
     return std::hypot(x2 - x1, y2 - y1);
 }
 
+bool SimplePlanner::findNearestFreeCell(int cx, int cy, int& fx, int& fy, int max_radius) {
+    // BFS 螺旋搜索：从 (cx, cy) 开始逐层扩展，找到最近的可通行格子
+    // 返回 true 表示找到，结果存入 (fx, fy)
+    for (int r = 1; r <= max_radius; ++r) {
+        // 搜索正方形环上的所有格子
+        for (int dx = -r; dx <= r; ++dx) {
+            for (int dy = -r; dy <= r; ++dy) {
+                // 只搜索外环（跳过内部已搜过的区域）
+                if (std::abs(dx) != r && std::abs(dy) != r) continue;
+                
+                int nx = cx + dx;
+                int ny = cy + dy;
+                if (isValid(nx, ny)) {
+                    fx = nx;
+                    fy = ny;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool SimplePlanner::plan(
     const geometry_msgs::msg::PoseStamped& start,
     const geometry_msgs::msg::PoseStamped& goal,
     nav_msgs::msg::Path& path)
 {
-    // 关键修复：每次规划时从 map_manager 获取最新的融合 costmap
+    needs_escape_ = false;
+    
     if (map_manager_) {
         auto latest_costmap = map_manager_->getCostmap();
         if (latest_costmap) {
             grid_map_ = latest_costmap;
-            // 同步更新地图元数据（地图大小通常不变，但确保一致性）
             width_ = grid_map_->info.width;
             height_ = grid_map_->info.height;
             resolution_ = grid_map_->info.resolution;
@@ -154,7 +174,6 @@ bool SimplePlanner::plan(
         return false;
     }
     
-    // 功能2: 检查目标是否变化，如果缓存路径有效则复用
     if (enable_path_cache_ && !cached_path_.poses.empty()) {
         if (!goalChanged(goal)) {
             // 目标未变化，先检查起点是否偏离缓存路径过远
@@ -180,7 +199,6 @@ bool SimplePlanner::plan(
                     "规划器: 目标未变化且缓存路径有效，复用缓存 (%zu 点)", 
                     cached_path_.poses.size());
                 
-                // 功能3: 自动剪枝已驶过部分
                 if (enable_auto_prune_) {
                     path = prunePath(cached_path_, start);
                     RCLCPP_INFO(node_->get_logger(), 
@@ -203,55 +221,69 @@ bool SimplePlanner::plan(
         return false;
     }
     
+    // 起点脱困：如果起点在障碍物中，BFS搜索最近的可通行格子
     if (!isValid(sx, sy)) {
-        RCLCPP_ERROR(node_->get_logger(), "起点在障碍物中");
-        return false;
+        int free_x, free_y;
+        if (findNearestFreeCell(sx, sy, free_x, free_y)) {
+            double wx, wy;
+            mapToWorld(free_x, free_y, wx, wy);
+            double escape_dist = std::hypot(free_x - sx, free_y - sy) * resolution_;
+            RCLCPP_WARN(node_->get_logger(), 
+                "⚠️ 脱困模式: 起点(%d,%d)在障碍物中，跳转到最近可通行点(%d,%d)，距离%.2fm",
+                sx, sy, free_x, free_y, escape_dist);
+            sx = free_x;
+            sy = free_y;
+            needs_escape_ = true;
+        } else {
+            RCLCPP_ERROR(node_->get_logger(), "起点在障碍物中且无法找到附近可通行格子");
+            needs_escape_ = true;
+            return false;
+        }
     }
+    
     if (!isValid(gx, gy)) {
-        RCLCPP_ERROR(node_->get_logger(), "终点在障碍物中");
-        return false;
+        int free_x, free_y;
+        if (findNearestFreeCell(gx, gy, free_x, free_y)) {
+            double wx, wy;
+            mapToWorld(free_x, free_y, wx, wy);
+            double escape_dist = std::hypot(free_x - gx, free_y - gy) * resolution_;
+            RCLCPP_WARN(node_->get_logger(), 
+                "⚠️ 脱困模式: 终点(%d,%d)在障碍物中，调整到最近可通行点(%d,%d)，距离%.2fm",
+                gx, gy, free_x, free_y, escape_dist);
+            gx = free_x;
+            gy = free_y;
+        } else {
+            RCLCPP_ERROR(node_->get_logger(), "终点在障碍物中且无法找到附近可通行格子");
+            return false;
+        }
     }
     
-    // 【自适应规划】逐步降低A*代价容忍度，直到生成安全路径
-    // 策略：从 obstacle_threshold_ 开始，每次失败后降低5，最低到50
-    const int initial_threshold = obstacle_threshold_;
-    const int threshold_step = 5;
-    const int min_threshold = 50;
+    const int max_attempts = 2;
+    const int threshold_step = 10;
     
-    for (int current_threshold = initial_threshold; 
-         current_threshold >= min_threshold; 
-         current_threshold -= threshold_step) {
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        int current_threshold = obstacle_threshold_ - attempt * threshold_step;
         
-        // 临时修改障碍物阈值
         int original_threshold = obstacle_threshold_;
         obstacle_threshold_ = current_threshold;
         
-        // 执行A*搜索
         nav_msgs::msg::Path raw_path;
         bool astar_success = runAstar(sx, sy, gx, gy, goal.header, raw_path);
         
-        // 恢复原始阈值
         obstacle_threshold_ = original_threshold;
         
         if (!astar_success) {
-            if (current_threshold == initial_threshold) {
-                RCLCPP_ERROR(node_->get_logger(), 
-                    "A*规划失败 (阈值=%d)", current_threshold);
-            } else {
-                RCLCPP_WARN(node_->get_logger(), 
-                    "A*规划失败 (阈值=%d)，尝试更严格的阈值", current_threshold);
-            }
-            continue;  // 尝试更低的阈值
+            RCLCPP_WARN(node_->get_logger(), 
+                "A*规划失败 (阈值=%d)", current_threshold);
+            continue;
         }
         
-        // B样条平滑
         nav_msgs::msg::Path smoothed_path;
         if (enable_smooth_ && raw_path.poses.size() >= 4) {
             if (!smoother_.smooth(raw_path, smoothed_path)) {
                 smoothed_path = raw_path;
                 RCLCPP_WARN(node_->get_logger(), "平滑失败，使用原始路径");
             } else {
-                // 验证平滑后路径的ESDF安全性
                 if (map_manager_ && map_manager_->hasEsdf()) {
                     double min_dist = 1e9;
                     geometry_msgs::msg::PoseStamped worst_pose;
@@ -286,50 +318,30 @@ bool SimplePlanner::plan(
             smoothed_path = raw_path;
         }
         
-        // 验证路径
         if (validatePath(smoothed_path)) {
-            // 成功！
-            if (current_threshold < initial_threshold) {
-                RCLCPP_INFO(node_->get_logger(), 
-                    "规划成功 (A*阈值=%d→%d): A*=%zu点 -> 平滑=%zu点", 
-                    initial_threshold, current_threshold,
-                    raw_path.poses.size(), smoothed_path.poses.size());
-            } else {
-                RCLCPP_INFO(node_->get_logger(), 
-                    "规划成功: A*=%zu点 -> 平滑=%zu点", 
-                    raw_path.poses.size(), smoothed_path.poses.size());
-            }
-            
+            RCLCPP_INFO(node_->get_logger(), 
+                "规划成功 (阈值=%d): A*=%zu点 -> 平滑=%zu点", 
+                current_threshold, raw_path.poses.size(), smoothed_path.poses.size());
             path = smoothed_path;
             
-            // 缓存路径和目标
             if (enable_path_cache_) {
                 cached_path_ = path;
                 cached_goal_ = goal;
             }
-            
             return true;
         } else {
-            // 验证失败，尝试更严格的阈值
-            if (current_threshold > min_threshold) {
-                RCLCPP_WARN(node_->get_logger(), 
-                    "路径验证失败 (阈值=%d)，降低阈值重新规划", current_threshold);
-            }
+            RCLCPP_WARN(node_->get_logger(), 
+                "路径验证失败 (阈值=%d)，尝试降低阈值", current_threshold);
         }
     }
     
-    // 所有尝试都失败
-    RCLCPP_ERROR(node_->get_logger(), 
-        "规划失败: 尝试了阈值 %d → %d 均无法生成安全路径", 
-        initial_threshold, min_threshold);
+    RCLCPP_ERROR(node_->get_logger(), "规划失败: 尝试了 %d 次，均未成功", max_attempts);
     return false;
 }
 
-// 独立的A*搜索函数
 bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
                               const std_msgs::msg::Header& header,
                               nav_msgs::msg::Path& path) {
-    // A*搜索
     auto cmp = [](Node* a, Node* b) { return a->f() > b->f(); };
     std::priority_queue<Node*, std::vector<Node*>, decltype(cmp)> open(cmp);
     std::vector<std::unique_ptr<Node>> all_nodes;
@@ -341,16 +353,13 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     open.push(start_node.get());
     all_nodes.push_back(std::move(start_node));
     
-    // 8方向
     const int dx[] = {1, 1, 0, -1, -1, -1, 0, 1};
     const int dy[] = {0, 1, 1, 1, 0, -1, -1, -1};
     const double move_cost[] = {1, 1.414, 1, 1.414, 1, 1.414, 1, 1.414};
     
     Node* goal_node = nullptr;
     int iterations = 0;
-    // 增大迭代上限：对于远距离规划，A* 可能需要探索超过格子总数的节点
-    // 3x 经验值：足够覆盖大部分情况，同时避免无限循环
-    const int max_iter = 3 * width_ * height_;
+    const int max_iter = std::min(width_ * height_ * 2, 1000000);
     
     while (!open.empty() && iterations++ < max_iter) {
         Node* curr = open.top();
@@ -379,7 +388,6 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
                 continue;
             }
             
-            // 代价感知：移动成本 + 代价惩罚
             double cell_cost = getCost(nx, ny);
             double total_cost = move_cost[i] + cost_weight_ * cell_cost;
             
@@ -395,10 +403,9 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     }
     
     if (!goal_node) {
-        return false;  // A*搜索失败
+        return false;
     }
     
-    // 回溯路径
     std::vector<geometry_msgs::msg::PoseStamped> waypoints;
     for (Node* n = goal_node; n != nullptr; n = n->parent) {
         geometry_msgs::msg::PoseStamped pose;
@@ -410,7 +417,6 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     
     std::reverse(waypoints.begin(), waypoints.end());
     
-    // 构造路径
     path.header = header;
     path.poses = waypoints;
     return true;
@@ -494,51 +500,64 @@ void SimplePlanner::publishControlPoints(const std::vector<Eigen::Vector2d>& ctr
     ctrl_pts_pub_->publish(markers);
 }
 
-// 检查路径是否与障碍物重合
 bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
-    if (!grid_map_ || path.poses.empty()) {
+    if (path.poses.empty() || !map_manager_) {
         return false;
     }
+    
+    auto latest_costmap = map_manager_->getCostmap();
+    if (!latest_costmap) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+            "无法获取最新Costmap进行路径验证");
+        return false;
+    }
+    
+    int cm_width = latest_costmap->info.width;
+    int cm_height = latest_costmap->info.height;
+    double cm_resolution = latest_costmap->info.resolution;
+    double cm_origin_x = latest_costmap->info.origin.position.x;
+    double cm_origin_y = latest_costmap->info.origin.position.y;
+    
+    int8_t max_cost_on_path = 0;
+    
     for (const auto& pose : path.poses) {
-        int mx, my;
-        if (!worldToMap(pose.pose.position.x, pose.pose.position.y, mx, my)) {
-            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
-                "路径点超出地图范围");
-            return false;
+        int mx = static_cast<int>((pose.pose.position.x - cm_origin_x) / cm_resolution);
+        int my = static_cast<int>((pose.pose.position.y - cm_origin_y) / cm_resolution);
+        
+        if (mx < 0 || mx >= cm_width || my < 0 || my >= cm_height) {
+            continue;
         }
         
-        int idx = my * width_ + mx;
-        if (idx < 0 || idx >= static_cast<int>(grid_map_->data.size())) {
-            return false;
+        int idx = my * cm_width + mx;
+        if (idx < 0 || idx >= static_cast<int>(latest_costmap->data.size())) {
+            continue;
         }
         
-        int8_t val = grid_map_->data[idx];
-        // 检查是否与高代价障碍物重合 (值 >= obstacle_check_threshold_)
+        int8_t val = latest_costmap->data[idx];
+        if (val > max_cost_on_path) {
+            max_cost_on_path = val;
+        }
+        
         if (val >= obstacle_check_threshold_ || val < 0) {
-            // 诊断：检查ESDF距离
-            double esdf_dist = -1.0;
-            if (map_manager_ && map_manager_->hasEsdf()) {
-                double grad_x = 0, grad_y = 0;
-                esdf_dist = map_manager_->getEsdfDistanceWithGradient(
-                    pose.pose.position.x, pose.pose.position.y, &grad_x, &grad_y);
-            }
-            
             RCLCPP_WARN(node_->get_logger(), 
-                "路径点 (%.2f, %.2f) 与障碍物重合: costmap=%d >= %d, ESDF=%.3fm", 
+                "路径点 (%.2f, %.2f) 与障碍物重合: costmap=%d >= %d", 
                 pose.pose.position.x, pose.pose.position.y, 
-                static_cast<int>(val), static_cast<int>(obstacle_check_threshold_),
-                esdf_dist);
+                static_cast<int>(val), static_cast<int>(obstacle_check_threshold_));
             return false;
         }
     }
     
+    RCLCPP_DEBUG_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+        "路径验证通过: %zu点, 路径最大代价=%d, 阈值=%d",
+        path.poses.size(), static_cast<int>(max_cost_on_path),
+        static_cast<int>(obstacle_check_threshold_));
+    
     return true;
 }
 
-// 功能2: 检查目标是否变化
 bool SimplePlanner::goalChanged(const geometry_msgs::msg::PoseStamped& new_goal) {
     if (cached_goal_.header.frame_id.empty()) {
-        return true;  // 首次规划
+        return true;
     }
     
     double dx = new_goal.pose.position.x - cached_goal_.pose.position.x;
@@ -548,7 +567,6 @@ bool SimplePlanner::goalChanged(const geometry_msgs::msg::PoseStamped& new_goal)
     return dist > goal_tolerance_;
 }
 
-// 功能3: 剪枝已驶过的路径部分
 nav_msgs::msg::Path SimplePlanner::prunePath(
     const nav_msgs::msg::Path& path,
     const geometry_msgs::msg::PoseStamped& current_pose)
@@ -557,7 +575,6 @@ nav_msgs::msg::Path SimplePlanner::prunePath(
         return path;
     }
     
-    // 查找最近点
     double min_dist = std::numeric_limits<double>::max();
     size_t nearest_idx = 0;
     
@@ -572,7 +589,6 @@ nav_msgs::msg::Path SimplePlanner::prunePath(
         }
     }
     
-    // 剪枝策略: 从最近点开始保留，但向前保留一定距离的点
     size_t prune_start_idx = 0;
     double accumulated_dist = 0.0;
     
@@ -587,7 +603,6 @@ nav_msgs::msg::Path SimplePlanner::prunePath(
         }
     }
     
-    // 构造剪枝后的路径
     nav_msgs::msg::Path pruned_path;
     pruned_path.header = path.header;
     pruned_path.poses.assign(path.poses.begin() + prune_start_idx, path.poses.end());
