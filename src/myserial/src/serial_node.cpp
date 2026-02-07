@@ -32,10 +32,19 @@ void SerialNode::logger_init()
 // 注册一个事件监听器，监听串口的数据到来事件；一旦触发，就执行绑定的回调，同时继续监听下一次数据。
 void SerialNode::read_loop()
 {
-    asio::async_read(port_, asio::buffer(&read_byte_, 1),
+    if (enable_batch_read_) {
+        // 批量读取模式：一次读取多个字节
+        port_.async_read_some(asio::buffer(read_buffer_.data(), batch_read_size_),
+            asio::bind_executor(strand_,
+                bind(&SerialNode::read_batch_callback, this,
+                     placeholders::_1, placeholders::_2)));
+    } else {
+        // 原始单字节读取模式
+        asio::async_read(port_, asio::buffer(&read_byte_, 1),
             asio::bind_executor(strand_,
                 bind(&SerialNode::read_callback, this,
-                          placeholders::_1, placeholders::_2)));
+                     placeholders::_1, placeholders::_2)));
+    }
 }
 
 // 读取字节的回调
@@ -43,6 +52,19 @@ void SerialNode::read_callback(const boost::system::error_code& ec, size_t)
 {
     if (!ec && running_) {
         buffer_.push_back(read_byte_);
+        parse_buffer();
+        read_loop();
+    }
+}
+
+// 批量读取的回调
+void SerialNode::read_batch_callback(const boost::system::error_code& ec, size_t bytes_read)
+{
+    if (!ec && running_) {
+        // 将读取到的所有字节推入缓冲区
+        for (size_t i = 0; i < bytes_read; ++i) {
+            buffer_.push_back(read_buffer_[i]);
+        }
         parse_buffer();
         read_loop();
     }
@@ -65,7 +87,13 @@ void SerialNode::parse_buffer()
         if (buffer_.size() < WHOLE_GET_LEN) return;
 
         if (buffer_[WHOLE_GET_LEN - 1] != TAIL) {
-            buffer_.erase(buffer_.begin(), buffer_.begin() + WHOLE_GET_LEN);
+            if (enable_improved_framing_) {
+                // 改进的帧解析：只删除当前错误的帧头，继续搜索下一个帧头
+                buffer_.pop_front();
+            } else {
+                // 原始逻辑：删除整个 WHOLE_GET_LEN 长度（可能破坏后续数据）
+                buffer_.erase(buffer_.begin(), buffer_.begin() + WHOLE_GET_LEN);
+            }
             continue;
         }
 

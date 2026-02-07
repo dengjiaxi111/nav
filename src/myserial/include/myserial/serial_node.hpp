@@ -58,15 +58,30 @@ public:
         this->declare_parameter<bool>("debug_flag", false);
         this->declare_parameter<bool>("info_pub",true);
         this->declare_parameter<bool>("enable_rtt_measure", false);  // RTT 测量开关
+        
+        // 性能优化开关（用于对比测试）
+        this->declare_parameter<bool>("enable_batch_read", false);     // 批量读取优化
+        this->declare_parameter<bool>("enable_improved_framing", false); // 改进拼帧逻辑
+        // USB CDC Full-Speed: 64B/包, 建议设置为 64 的整数倍 (128=2包, 192=3包)
+        this->declare_parameter<int>("batch_read_size", 128);          // 批量读取缓冲区大小
+        
         this->declare_parameter<string>("log_path", "/home/nuc/logs");
 
         this->get_parameter("on_court",on_court_);
         this->get_parameter("debug_flag",debug_flag_);
         this->get_parameter("info_pub", info_pub_);
         this->get_parameter("enable_rtt_measure", enable_rtt_measure_);
+        this->get_parameter("enable_batch_read", enable_batch_read_);
+        this->get_parameter("enable_improved_framing", enable_improved_framing_);
+        this->get_parameter("batch_read_size", batch_read_size_);
         this->get_parameter("log_path",log_path_);
+        
         RCLCPP_INFO(this->get_logger(),"on_court: %d", static_cast<int>(on_court_));
         RCLCPP_INFO(this->get_logger(),"enable_rtt_measure: %d", static_cast<int>(enable_rtt_measure_));
+        RCLCPP_INFO(this->get_logger(),"enable_batch_read: %d (size=%d)", 
+            static_cast<int>(enable_batch_read_), batch_read_size_);
+        RCLCPP_INFO(this->get_logger(),"enable_improved_framing: %d", 
+            static_cast<int>(enable_improved_framing_));
 
         // 这个函数返回的是： <install space>/share/your_package_name
         package_path_ = ament_index_cpp::get_package_share_directory("myserial");
@@ -163,6 +178,7 @@ private:
 
     void read_loop();
     void read_callback(const boost::system::error_code& ec, size_t);
+    void read_batch_callback(const boost::system::error_code& ec, size_t bytes_read);  // 批量读取回调
     void parse_buffer();
     void msg_callback(const WholeGetFrame& msg);
     void write_timer_callback(const boost::system::error_code& ec);
@@ -250,6 +266,12 @@ private:
     uint32_t rtt_count_ = 0;            // 收到的响应数量
     uint32_t rtt_send_count_ = 0;       // 发送的总数量
     std::chrono::steady_clock::time_point last_rtt_report_time_;  // 上次报告时间
+    
+    // 优化开关
+    bool enable_batch_read_;            // 是否启用批量读取
+    bool enable_improved_framing_;      // 是否启用改进的帧解析
+    int batch_read_size_;               // 批量读取缓冲区大小
+    std::array<uint8_t, 256> read_buffer_;  // 批量读取缓冲区
 };
 
 }
