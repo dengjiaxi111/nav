@@ -10,7 +10,7 @@ void SerialNode::logger_init()
     // 获取当前时间作为文件名
     auto t = std::time(nullptr);
     std::tm tm;
-    localtime_r(&t, &tm);  // 线程安全版本
+    localtime_r(&t, &tm); 
 
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
@@ -89,6 +89,77 @@ void SerialNode::parse_buffer()
 // 在ROS中发布收到的消息
 void SerialNode::msg_callback(const WholeGetFrame& msg)
 {
+    // RTT 测量：检查是否收到回传的时间戳
+    if (enable_rtt_measure_) {
+        // STM32 应该将收到的 _buff_yaw_diff_angle 值转为 float 放到 _target_position_x 回传
+        float received_timestamp = msg._target_position_x;
+        
+        // 合理性检查：时间戳应该在 0~10000 范围内
+        if (received_timestamp >= 0.0f && received_timestamp < 10000.0f) {
+            // 获取当前时间
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            double now_ms = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / 1000.0;
+            double now_mod = fmod(now_ms, 10000.0);
+            
+            // 计算 RTT（处理跨越 10 秒边界的情况）
+            double rtt_ms = now_mod - received_timestamp;
+            if (rtt_ms < 0) {
+                rtt_ms += 10000.0;  // 跨越边界，加上循环周期
+            }
+            
+            // 合理性检查：RTT 应该在 0.1ms 到 1000ms 之间
+            if (rtt_ms > 0.1 && rtt_ms < 1000.0) {
+                rtt_sum_ += rtt_ms;
+                rtt_count_++;
+                
+                if (rtt_ms < rtt_min_) rtt_min_ = rtt_ms;
+                if (rtt_ms > rtt_max_) rtt_max_ = rtt_ms;
+                
+                if (debug_flag_) {
+                    RCLCPP_INFO(this->get_logger(), 
+                        "[RTT] Timestamp=%.3f, Now=%.3f, RTT=%.3f ms", 
+                        received_timestamp, now_mod, rtt_ms);
+                }
+            } else if (debug_flag_) {
+                RCLCPP_WARN(this->get_logger(), 
+                    "[RTT] Abnormal RTT=%.3f ms (timestamp=%.3f, now=%.3f)", 
+                    rtt_ms, received_timestamp, now_mod);
+            }
+        }
+        
+        // 每 5 秒报告一次统计信息
+        auto report_duration = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - last_rtt_report_time_);
+        
+        if (report_duration.count() >= 5 && rtt_count_ > 0) {
+            double avg_rtt = rtt_sum_ / rtt_count_;
+            double packet_loss = 100.0 * (1.0 - static_cast<double>(rtt_count_) / rtt_send_count_);
+            
+            RCLCPP_INFO(this->get_logger(), 
+                "========== RTT Statistics (last 5s) ==========");
+            RCLCPP_INFO(this->get_logger(), 
+                "  Sent: %u, Received: %u, Loss: %.2f%%", 
+                rtt_send_count_, rtt_count_, packet_loss);
+            RCLCPP_INFO(this->get_logger(), 
+                "  RTT - Avg: %.3f ms, Min: %.3f ms, Max: %.3f ms", 
+                avg_rtt, rtt_min_, rtt_max_);
+            RCLCPP_INFO(this->get_logger(), 
+                "=============================================");
+            
+            my_logger_->info("[RTT_STATS] Sent={}, Recv={}, Loss={:.2f}%, Avg={:.3f}ms, Min={:.3f}ms, Max={:.3f}ms",
+                rtt_send_count_, rtt_count_, packet_loss, avg_rtt, rtt_min_, rtt_max_);
+            
+            // 重置统计
+            rtt_sum_ = 0.0;
+            rtt_min_ = 999999.0;
+            rtt_max_ = 0.0;
+            rtt_count_ = 0;
+            rtt_send_count_ = 0;
+            last_rtt_report_time_ = std::chrono::steady_clock::now();
+        }
+    }
+
     // ------------------ GameStatus ------------------
     game_status_.game_type = msg._game_type;
     game_status_.game_progress = msg._game_process;
@@ -201,13 +272,28 @@ void SerialNode::send_msg()
         vector<uint8_t> packet(WHOLE_SEND_LEN);
         // 默认见谁打谁
         _send_frame_._priority = this->enemy_priority_;
-        auto cmd_vel_time_diff = last_cmd_vel_time_ - this->get_clock()->now();
+        auto cmd_vel_time_diff = this->get_clock()->now() - last_cmd_vel_time_;  // 修复时间差计算
         if(cmd_vel_time_diff.seconds() >= 0.2){
             // 认为已超时
             _send_frame_._speed_x = 0;
             _send_frame_._speed_y = 0;
         }
         
+        // RTT 测量：在发送帧中嵌入当前时间戳
+        if (enable_rtt_measure_) {
+            // 获取当前时间（steady_clock 单调递增，不受系统时间调整影响）
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            double timestamp_ms = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / 1000.0;
+            
+            // 只保留最后 4 位数字的毫秒部分（0~9999.999ms，约10秒循环）
+            // 使用 fmod 取模，确保值在 0~10000 范围内
+            double timestamp_mod = fmod(timestamp_ms, 10000.0);
+            
+            // 直接存储到 float 字段（测试时角速度不用）
+            _send_frame_._speed_w = static_cast<float>(timestamp_mod);
+            rtt_send_count_++;
+        }
 
         memcpy(packet.data(), &_send_frame_, WHOLE_SEND_LEN);
 

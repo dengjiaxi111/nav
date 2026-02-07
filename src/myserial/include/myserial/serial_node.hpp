@@ -57,13 +57,16 @@ public:
         this->declare_parameter<bool>("on_court", false);
         this->declare_parameter<bool>("debug_flag", false);
         this->declare_parameter<bool>("info_pub",true);
+        this->declare_parameter<bool>("enable_rtt_measure", false);  // RTT 测量开关
         this->declare_parameter<string>("log_path", "/home/nuc/logs");
 
         this->get_parameter("on_court",on_court_);
         this->get_parameter("debug_flag",debug_flag_);
         this->get_parameter("info_pub", info_pub_);
+        this->get_parameter("enable_rtt_measure", enable_rtt_measure_);
         this->get_parameter("log_path",log_path_);
         RCLCPP_INFO(this->get_logger(),"on_court: %d", static_cast<int>(on_court_));
+        RCLCPP_INFO(this->get_logger(),"enable_rtt_measure: %d", static_cast<int>(enable_rtt_measure_));
 
         // 这个函数返回的是： <install space>/share/your_package_name
         package_path_ = ament_index_cpp::get_package_share_directory("myserial");
@@ -91,6 +94,9 @@ public:
 
         // 初始化logger
         logger_init();
+
+        // 初始化 RTT 相关
+        last_rtt_report_time_ = std::chrono::steady_clock::now();
 
         signal(SIGINT, [](int) {
             rclcpp::shutdown();
@@ -233,6 +239,17 @@ private:
 
     // 打符用
     double buff_yaw_diff_;
+
+    // RTT 测量相关
+    bool enable_rtt_measure_;           // 是否启用 RTT 测量
+    
+    // RTT 统计
+    double rtt_sum_ = 0.0;              // RTT 累计（毫秒）
+    double rtt_min_ = 999999.0;         // 最小 RTT（毫秒）
+    double rtt_max_ = 0.0;              // 最大 RTT（毫秒）
+    uint32_t rtt_count_ = 0;            // 收到的响应数量
+    uint32_t rtt_send_count_ = 0;       // 发送的总数量
+    std::chrono::steady_clock::time_point last_rtt_report_time_;  // 上次报告时间
 };
 
 }
