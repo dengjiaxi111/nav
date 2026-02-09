@@ -103,6 +103,11 @@ void SimplePlanner::mapToWorld(int mx, int my, double& wx, double& wy) {
     wy = origin_y_ + (my + 0.5) * resolution_;
 }
 
+void SimplePlanner::clearCache() {
+    cached_path_ = nav_msgs::msg::Path();
+    cached_goal_ = geometry_msgs::msg::PoseStamped();
+}
+
 bool SimplePlanner::isValid(int x, int y) {
     if (x < 0 || x >= width_ || y < 0 || y >= height_) {
         return false;
@@ -155,7 +160,6 @@ bool SimplePlanner::plan(
     const geometry_msgs::msg::PoseStamped& goal,
     nav_msgs::msg::Path& path)
 {
-    needs_escape_ = false;
     
     if (map_manager_) {
         auto latest_costmap = map_manager_->getCostmap();
@@ -221,34 +225,21 @@ bool SimplePlanner::plan(
         return false;
     }
     
-    // 起点脱困：如果起点在障碍物中，BFS搜索最近的可通行格子
+    // 起点终点有效性检查（纯粹检查，不做脱困处理）
     if (!isValid(sx, sy)) {
-        int free_x, free_y;
-        if (findNearestFreeCell(sx, sy, free_x, free_y)) {
-            double wx, wy;
-            mapToWorld(free_x, free_y, wx, wy);
-            double escape_dist = std::hypot(free_x - sx, free_y - sy) * resolution_;
-            RCLCPP_WARN(node_->get_logger(), 
-                "⚠️ 脱困模式: 起点(%d,%d)在障碍物中，跳转到最近可通行点(%d,%d)，距离%.2fm",
-                sx, sy, free_x, free_y, escape_dist);
-            sx = free_x;
-            sy = free_y;
-            needs_escape_ = true;
-        } else {
-            RCLCPP_ERROR(node_->get_logger(), "起点在障碍物中且无法找到附近可通行格子");
-            needs_escape_ = true;
-            return false;
-        }
+        RCLCPP_ERROR(node_->get_logger(), "起点(%d,%d)在障碍物中", sx, sy);
+        return false;
     }
     
     if (!isValid(gx, gy)) {
+        // 终点在障碍物中，尝试调整到附近可通行点
         int free_x, free_y;
         if (findNearestFreeCell(gx, gy, free_x, free_y)) {
             double wx, wy;
             mapToWorld(free_x, free_y, wx, wy);
             double escape_dist = std::hypot(free_x - gx, free_y - gy) * resolution_;
             RCLCPP_WARN(node_->get_logger(), 
-                "⚠️ 脱困模式: 终点(%d,%d)在障碍物中，调整到最近可通行点(%d,%d)，距离%.2fm",
+                "终点(%d,%d)在障碍物中，调整到最近可通行点(%d,%d)，距离%.2fm",
                 gx, gy, free_x, free_y, escape_dist);
             gx = free_x;
             gy = free_y;
@@ -319,7 +310,7 @@ bool SimplePlanner::plan(
         }
         
         if (validatePath(smoothed_path)) {
-            RCLCPP_INFO(node_->get_logger(), 
+            RCLCPP_DEBUG(node_->get_logger(), 
                 "规划成功 (阈值=%d): A*=%zu点 -> 平滑=%zu点", 
                 current_threshold, raw_path.poses.size(), smoothed_path.poses.size());
             path = smoothed_path;
@@ -330,7 +321,7 @@ bool SimplePlanner::plan(
             }
             return true;
         } else {
-            RCLCPP_WARN(node_->get_logger(), 
+            RCLCPP_DEBUG(node_->get_logger(), 
                 "路径验证失败 (阈值=%d)，尝试降低阈值", current_threshold);
         }
     }

@@ -1,6 +1,7 @@
 """
 使用 acados 导出 NMPC 求解器
 设计目标: 50Hz+ 控制频率, 低延迟
+特性: 集成 ESDF 障碍物代价 (通过运行时参数 p 注入)
 """
 
 from acados_template import AcadosOcp, AcadosOcpSolver
@@ -21,51 +22,91 @@ def export_nmpc_solver():
     ocp.model.name = "wheelleg_nmpc"
     ocp.model.x = model_obj.state
     ocp.model.u = model_obj.control
+    ocp.model.p = model_obj.params  # 运行时参数: 参考 + ESDF 距离 + 权重缩放
     ocp.model.f_expl_expr = model_obj.dynamics()
     
     # 维度
-    nx = model_obj.state.shape[0]  # 5
-    nu = model_obj.control.shape[0]  # 2
+    nx = model_obj.state.shape[0]   # 5
+    nu = model_obj.control.shape[0] # 2
+    np_ = model_obj.np              # 9 (参考 + ESDF 距离)
     
     # 时间参数 (关键性能参数)
-    T_horizon = 2.0      # 预测时域 2秒
-    N = 20               # 离散化步数 (越少越快,但精度下降)
+    T_horizon = 1.5      
+    N = 50             
     ocp.solver_options.tf = T_horizon
     ocp.dims.N = N
     
-    # ========== 代价函数 ==========
-    # 跟踪代价矩阵 (调整权重以优化性能)
-    Q = np.diag([10.0, 10.0, 5.0, 1.0, 1.0])  # 位置>速度
-    R = np.diag([0.1, 0.1])                    # 控制平滑性
+    # ========== ESDF 障碍物代价参数 ==========
+    esdf_safe_dist = 0.5   # 安全距离 (m)
+    esdf_weight = 20.0     # ESDF 代价权重
+    contouring_weight = 50.0  # 路径偏离代价权重（防止切角）
     
-    ocp.cost.cost_type = 'LINEAR_LS'
-    ocp.cost.cost_type_e = 'LINEAR_LS'
+    # ========== 代价函数 (EXTERNAL cost) ==========
+    # 参数展开
+    x_ref = model_obj.x_ref
+    y_ref = model_obj.y_ref
+    theta_ref = model_obj.theta_ref
+    v_ref = model_obj.v_ref
+    omega_ref = model_obj.omega_ref
+    a_ref = model_obj.a_ref
+    alpha_ref = model_obj.alpha_ref
+    weight_scale = model_obj.weight_scale
     
-    # 初始阶段代价 (与中间阶段相同)
-    ocp.cost.cost_type_0 = 'LINEAR_LS'
-    ocp.cost.W_0 = np.block([[Q, np.zeros((nx, nu))],
-                             [np.zeros((nu, nx)), R]])
-    ocp.cost.Vx_0 = np.vstack([np.eye(nx), np.zeros((nu, nx))])
-    ocp.cost.Vu_0 = np.vstack([np.zeros((nx, nu)), np.eye(nu)])
-    ocp.cost.yref_0 = np.zeros(nx + nu)
-    ocp.model.cost_y_expr_0 = ca.vertcat(model_obj.state, model_obj.control)
-    ocp.dims.ny_0 = nx + nu
+    # 角度误差 (wrap 到 [-pi, pi])
+    theta_err = model_obj.angle_diff(model_obj.theta, theta_ref)
     
-    # 中间阶段代价
-    ocp.cost.W = np.block([[Q, np.zeros((nx, nu))],
-                           [np.zeros((nu, nx)), R]])
-    ocp.cost.Vx = np.vstack([np.eye(nx), np.zeros((nu, nx))])
-    ocp.cost.Vu = np.vstack([np.zeros((nx, nu)), np.eye(nu)])
-    ocp.cost.yref = np.zeros(nx + nu)
-    ocp.model.cost_y_expr = ca.vertcat(model_obj.state, model_obj.control)
-    ocp.dims.ny = nx + nu
+    # 跟踪误差
+    state_err = ca.vertcat(
+        model_obj.x - x_ref,
+        model_obj.y - y_ref,
+        theta_err,
+        model_obj.v - v_ref,
+        model_obj.omega - omega_ref
+    )
+    control_err = ca.vertcat(
+        model_obj.a_lin - a_ref,
+        model_obj.alpha_ang - alpha_ref
+    )
     
-    # 终端代价 (只关注状态)
-    ocp.cost.W_e = Q * 2.0  # 终端代价加权
-    ocp.cost.Vx_e = np.eye(nx)
-    ocp.cost.yref_e = np.zeros(nx)
-    ocp.model.cost_y_expr_e = model_obj.state
-    ocp.dims.ny_e = nx
+    # Q: 位置 > 航向 > 速度 (根据URDF差速模型调整)
+    Q_diag = np.array([10.0, 10.0, 5.0, 1.0, 1.0])
+    R_diag = np.array([0.1, 0.1])
+    Q = ca.diag(Q_diag)
+    R = ca.diag(R_diag)
+    
+    # ESDF 违反量
+    esdf_violation = model_obj.esdf_cost_expr(safe_dist=esdf_safe_dist)
+    
+    # 路径偏离代价（contouring error）- 防止"切西瓜"
+    contouring_cost = contouring_weight * model_obj.contouring_error()
+    
+    tracking_cost = ca.mtimes([state_err.T, Q, state_err])
+    control_cost = ca.mtimes([control_err.T, R, control_err])
+    esdf_cost = esdf_weight * esdf_violation**2
+    
+    # 近端/终端缩放作用于 tracking + esdf + contouring，控制平滑性不缩放
+    stage_cost = weight_scale * (tracking_cost + esdf_cost + contouring_cost) + control_cost
+    terminal_cost = weight_scale * (tracking_cost + esdf_cost + contouring_cost)
+    
+    # --- 初始阶段 ---
+    ocp.cost.cost_type_0 = 'EXTERNAL'
+    ocp.model.cost_expr_ext_cost_0 = stage_cost
+    
+    # --- 中间阶段 ---
+    ocp.cost.cost_type = 'EXTERNAL'
+    ocp.model.cost_expr_ext_cost = stage_cost
+    
+    # --- 终端阶段 ---
+    ocp.cost.cost_type_e = 'EXTERNAL'
+    ocp.model.cost_expr_ext_cost_e = terminal_cost
+    
+    # ========== 运行时参数默认值 ==========
+    # p = [xref(7个), d_esdf=10.0, weight_scale=1.0]
+    ocp.parameter_values = np.array([
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # 参考
+        10.0,  # d_esdf 远离障碍物
+        1.0    # weight_scale
+    ])
     
     # ========== 约束 ==========
     x_min, x_max, u_min, u_max = model_obj.get_constraints()
@@ -74,7 +115,7 @@ def export_nmpc_solver():
     ocp.constraints.x0 = np.zeros(nx)
     
     # 状态约束 (路径约束) - 只约束速度
-    ocp.constraints.idxbx = np.array([3, 4])  # 索引: [v, omega]
+    ocp.constraints.idxbx = np.array([3, 4])  # [v, omega]
     ocp.constraints.lbx = np.array([-model_obj.max_v, -model_obj.max_omega])
     ocp.constraints.ubx = np.array([model_obj.max_v, model_obj.max_omega])
     
@@ -84,15 +125,15 @@ def export_nmpc_solver():
     ocp.constraints.ubu = u_max
     
     # ========== 求解器选项 (性能关键) ==========
-    ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'  # 最快
-    ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'        # 避免二阶导数
-    ocp.solver_options.integrator_type = 'ERK'                 # 显式 Runge-Kutta
-    ocp.solver_options.nlp_solver_type = 'SQP_RTI'            # 实时迭代 (单次迭代)
-    ocp.solver_options.nlp_solver_max_iter = 1                # 强制实时性
+    ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
+    ocp.solver_options.hessian_approx = 'EXACT'
+    ocp.solver_options.integrator_type = 'ERK'
+    ocp.solver_options.nlp_solver_type = 'SQP_RTI'
+    ocp.solver_options.nlp_solver_max_iter = 1
     
     # QP 求解器设置
     ocp.solver_options.qp_solver_iter_max = 50
-    ocp.solver_options.qp_solver_cond_N = N // 2  # 部分凝聚
+    ocp.solver_options.qp_solver_cond_N = N // 2
     
     # 数值稳定性
     ocp.solver_options.levenberg_marquardt = 1e-4
@@ -105,6 +146,11 @@ def export_nmpc_solver():
     
     # 生成求解器
     print(f"正在生成 NMPC solver 到 {output_dir}...")
+    print(f"  状态维度: nx={nx}, 控制维度: nu={nu}")
+    print(f"  参数维度: np={np_} (xref[7] + d_esdf + weight_scale)")
+    print(f"  成本类型: EXTERNAL (tracking + ESDF + control)")
+    print(f"  预测步数: N={N}, 时域: T={T_horizon}s, dt={T_horizon/N}s")
+    
     solver = AcadosOcpSolver(ocp, json_file='acados_ocp.json')
     print("✓ 求解器生成成功!")
     

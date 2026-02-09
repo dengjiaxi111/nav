@@ -27,38 +27,103 @@ using GoalHandle = rclcpp_action::ServerGoalHandle<Navigate>;
 class NavServer : public rclcpp::Node {
 public:
     NavServer() : Node("nav_server"), fsm_(get_logger()) {
-        control_rate_ = declare_parameter("control_rate", 20.0);
-        goal_timeout_ = declare_parameter("goal_timeout", 60.0);
-        goal_tolerance_ = declare_parameter("goal_tolerance", 0.1);
-        yaw_tolerance_ = declare_parameter("yaw_tolerance", 0.1);
-        controller_timeout_ = declare_parameter("controller_timeout", 10.0);  // 控制超时 10秒
-        controller_progress_threshold_ = declare_parameter("controller_progress_threshold", 0.15);  // 进展阈值 0.15米
+        // === 核心控制参数 ===
+        declare_parameter("control_rate", 20.0);
+        declare_parameter("goal_timeout", 60.0);
+        declare_parameter("goal_tolerance", 0.1);
+        declare_parameter("yaw_tolerance", 0.1);
+        declare_parameter("controller_timeout", 10.0);
+        declare_parameter("controller_progress_threshold", 0.15);
         
-        // 周期性路径检查参数
-        path_check_period_ = declare_parameter("path_check_period", 2.0);  // 路径检查周期(秒)
-        path_lateral_tolerance_ = declare_parameter("path_lateral_tolerance", 0.5);  // 横向偏离容忍度(米)
+        control_rate_ = get_parameter("control_rate").as_double();
+        goal_timeout_ = get_parameter("goal_timeout").as_double();
+        goal_tolerance_ = get_parameter("goal_tolerance").as_double();
+        yaw_tolerance_ = get_parameter("yaw_tolerance").as_double();
+        controller_timeout_ = get_parameter("controller_timeout").as_double();
+        controller_progress_threshold_ = get_parameter("controller_progress_threshold").as_double();
         
-        map_file_ = declare_parameter("map_file", "");
-        map_frame_ = declare_parameter("map_frame", "map");
-        base_frame_ = declare_parameter("base_frame", "base_link");
-        odom_frame_ = declare_parameter("odom_frame", "odom");
-        enable_esdf_ = declare_parameter("enable_esdf", false);
-        esdf_vis_max_dist_ = declare_parameter("esdf_vis_max_dist", 2.0);
+        // === 路径检查参数 ===
+        declare_parameter("path_check_period", 2.0);
+        declare_parameter("path_lateral_tolerance", 0.5);
         
-        // 性能日志开关
-        bool enable_performance_logging = declare_parameter("enable_performance_logging", false);
+        path_check_period_ = get_parameter("path_check_period").as_double();
+        path_lateral_tolerance_ = get_parameter("path_lateral_tolerance").as_double();
+        
+        // === 脱困系统参数 ===
+        declare_parameter("escape.trigger_costmap_threshold", 99);
+        declare_parameter("escape.target_safe_esdf", 0.3);
+        declare_parameter("escape.search_radius", 5.0);
+        declare_parameter("escape.rotation_speed", 0.3);
+        declare_parameter("escape.forward_speed", 0.15);
+        declare_parameter("escape.yaw_tolerance", 0.1);
+        declare_parameter("escape.position_tolerance", 0.15);
+        declare_parameter("escape.timeout", 10.0);
+        
+        escape_trigger_costmap_threshold_ = get_parameter("escape.trigger_costmap_threshold").as_int();
+        escape_target_safe_esdf_ = get_parameter("escape.target_safe_esdf").as_double();
+        escape_search_radius_ = get_parameter("escape.search_radius").as_double();
+        escape_rotation_speed_ = get_parameter("escape.rotation_speed").as_double();
+        escape_forward_speed_ = get_parameter("escape.forward_speed").as_double();
+        escape_yaw_tolerance_ = get_parameter("escape.yaw_tolerance").as_double();
+        escape_position_tolerance_ = get_parameter("escape.position_tolerance").as_double();
+        escape_timeout_ = get_parameter("escape.timeout").as_double();
+        
+        // === 坐标系配置 ===
+        declare_parameter("map_file", "");
+        declare_parameter("map_frame", "map");
+        declare_parameter("base_frame", "base_link");
+        declare_parameter("odom_frame", "odom");
+        
+        map_file_ = get_parameter("map_file").as_string();
+        map_frame_ = get_parameter("map_frame").as_string();
+        base_frame_ = get_parameter("base_frame").as_string();
+        odom_frame_ = get_parameter("odom_frame").as_string();
+        
+        // === ESDF 配置 ===
+        declare_parameter("enable_esdf", false);
+        declare_parameter("esdf_vis_max_dist", 2.0);
+        
+        enable_esdf_ = get_parameter("enable_esdf").as_bool();
+        esdf_vis_max_dist_ = get_parameter("esdf_vis_max_dist").as_double();
+        
+        // === 性能日志 ===
+        declare_parameter("enable_performance_logging", false);
+        bool enable_performance_logging = get_parameter("enable_performance_logging").as_bool();
+        
+        // === 参数诊断日志 ===
+        RCLCPP_INFO(get_logger(), "========== NavServer 参数诊断 ==========");
+        RCLCPP_INFO(get_logger(), "control_rate: %.1f Hz", control_rate_);
+        RCLCPP_INFO(get_logger(), "controller_timeout: %.1f s", controller_timeout_);
+        RCLCPP_INFO(get_logger(), "controller_progress_threshold: %.2f m", controller_progress_threshold_);
+        RCLCPP_INFO(get_logger(), "path_check_period: %.2f s", path_check_period_);
+        RCLCPP_INFO(get_logger(), "path_lateral_tolerance: %.3f m ⚠️", path_lateral_tolerance_);
+        RCLCPP_INFO(get_logger(), "escape.trigger_costmap_threshold: %d", escape_trigger_costmap_threshold_);
+        RCLCPP_INFO(get_logger(), "escape.target_safe_esdf: %.2f m", escape_target_safe_esdf_);
+        RCLCPP_INFO(get_logger(), "escape.search_radius: %.1f m", escape_search_radius_);
+        RCLCPP_INFO(get_logger(), "escape.rotation_speed: %.2f rad/s", escape_rotation_speed_);
+        RCLCPP_INFO(get_logger(), "escape.forward_speed: %.2f m/s", escape_forward_speed_);
+        RCLCPP_INFO(get_logger(), "========================================");
         
         // 分层地图配置
-        enable_static_layer_ = declare_parameter("enable_static_layer", true);
-        enable_dynamic_layer_ = declare_parameter("enable_dynamic_layer", false);
-        dynamic_layer_topic_ = declare_parameter("dynamic_layer_topic", "/rog_map/map_2d");
+        declare_parameter("enable_static_layer", true);
+        declare_parameter("enable_dynamic_layer", false);
+        declare_parameter("dynamic_layer_topic", "/rog_map/map_2d");
+        
+        enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
+        enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();
+        dynamic_layer_topic_ = get_parameter("dynamic_layer_topic").as_string();
         
         // 膨胀参数
+        declare_parameter("inflation.radius", 0.5);
+        declare_parameter("inflation.inscribed_radius", 0.2);
+        declare_parameter("inflation.cost_scaling", 3.0);
+        declare_parameter("inflation.decay_type", "exponential");
+        
         nav_components::InflationParams inflation_params;
-        inflation_params.inflation_radius = declare_parameter("inflation.radius", 0.5);
-        inflation_params.inscribed_radius = declare_parameter("inflation.inscribed_radius", 0.2);
-        inflation_params.cost_scaling = declare_parameter("inflation.cost_scaling", 3.0);
-        std::string decay_str = declare_parameter("inflation.decay_type", "exponential");
+        inflation_params.inflation_radius = get_parameter("inflation.radius").as_double();
+        inflation_params.inscribed_radius = get_parameter("inflation.inscribed_radius").as_double();
+        inflation_params.cost_scaling = get_parameter("inflation.cost_scaling").as_double();
+        std::string decay_str = get_parameter("inflation.decay_type").as_string();
         inflation_params.decay_type = (decay_str == "linear") ? 
             nav_components::DecayType::LINEAR : nav_components::DecayType::EXPONENTIAL;
         inflation_params_ = inflation_params;
@@ -116,7 +181,7 @@ public:
             map_manager_->createBlankStaticMap(50.0, 50.0, 0.05, inflation_params);
             planner_.setMap(map_manager_);
             startMapPublisher();
-            RCLCPP_WARN(get_logger(), "静态层已禁用，使用50x50m空白地图框架（纯动态SLAM模式）");
+            RCLCPP_WARN(get_logger(), "静态层已禁用");
         }
         
         // 订阅动态障碍物层（来自rog_map）
@@ -210,6 +275,11 @@ private:
         planner_.initialize(this);
         controller_.initialize(this);
         controller_.setTolerance(goal_tolerance_, yaw_tolerance_);
+        
+        // 将地图接口传递给控制器（用于 ESDF 障碍物代价）
+        if (map_manager_) {
+            controller_.setMap(map_manager_);
+        }
         
         auto vel_pub = [this](const geometry_msgs::msg::Twist& cmd) {
             cmd_vel_pub_->publish(cmd);
@@ -325,16 +395,35 @@ private:
             return;
         }
         
+        // 在规划前检查起点是否在障碍物中（仅用 Costmap）
+        auto costmap = map_manager_->getCostmap();
+        if (costmap) {
+            int mx, my;
+            double resolution = costmap->info.resolution;
+            double origin_x = costmap->info.origin.position.x;
+            double origin_y = costmap->info.origin.position.y;
+            mx = static_cast<int>((current_pose_.pose.position.x - origin_x) / resolution);
+            my = static_cast<int>((current_pose_.pose.position.y - origin_y) / resolution);
+            
+            if (mx >= 0 && mx < costmap->info.width && my >= 0 && my < costmap->info.height) {
+                int idx = my * costmap->info.width + mx;
+                int8_t cost = costmap->data[idx];
+                if (cost >= escape_trigger_costmap_threshold_) {
+                    RCLCPP_WARN(get_logger(), 
+                        "⚠️ 起点在障碍物中: costmap=%d >= %d，进入脱困模式", 
+                        cost, escape_trigger_costmap_threshold_);
+                    fsm_.transitionTo(nav_core::NavState::ESCAPING);
+                    escape_start_time_ = std::chrono::steady_clock::now();
+                    escape_target_x_ = -1.0;
+                    escape_phase_ = 0;
+                    return;
+                }
+            }
+        }
+        
+        // 起点安全，正常规划
         nav_msgs::msg::Path path;
         if (planner_.plan(current_pose_, goal_, path)) {
-            // 检查是否需要脱困
-            if (planner_.needsEscape()) {
-                RCLCPP_WARN(get_logger(), "规划器检测到起点在障碍物中，进入脱困模式");
-                fsm_.transitionTo(nav_core::NavState::ESCAPING);
-                escape_start_time_ = std::chrono::steady_clock::now();
-                return;
-            }
-            
             current_path_ = path;
             controller_.setPath(path);
             path_pub_->publish(path);
@@ -346,33 +435,43 @@ private:
             
             fsm_.transitionTo(nav_core::NavState::CONTROLLING);
         } else {
-            // 规划失败，检查是否因为脱困失败
-            if (planner_.needsEscape()) {
-                RCLCPP_ERROR(get_logger(), "脱困失败：无法找到附近的可通行点");
-                fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
-            } else {
-                fsm_.triggerRecovery(nav_core::RecoveryTrigger::PLANNING_FAILED);
-            }
+            RCLCPP_ERROR(get_logger(), "规划失败：A*无法找到路径");
+            fsm_.triggerRecovery(nav_core::RecoveryTrigger::PLANNING_FAILED);
         }
     }
     
     void doEscaping() {
-        // 脱困模式：强制发送低速指令远离障碍物
-        // 策略：后退 + 轻微转向，持续最多5秒
-        const double escape_duration = 5.0;  // 最多脱困5秒
+        // 脱困模式：搜索最近的安全点，原地转向后直线前往
+        // 策略：BFS 搜索 ESDF > target_safe_esdf 的格子，差速底盘先转向再前进
+        
         double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - escape_start_time_).count();
         
-        if (elapsed > escape_duration) {
-            RCLCPP_WARN(get_logger(), "脱困超时(%g秒)，重新尝试规划", escape_duration);
-            fsm_.transitionTo(nav_core::NavState::PLANNING);
+        if (elapsed > escape_timeout_) {
+            RCLCPP_ERROR(get_logger(), "⏱️ 脱困超时(%.1fs)，进入恢复模式", escape_timeout_);
+            stopRobot();
+            escape_target_x_ = -1.0;  // 重置标记
+            fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
             return;
         }
         
-        // 计算脱困方向：朝向目标的反方向后退
-        double dx = goal_.pose.position.x - current_pose_.pose.position.x;
-        double dy = goal_.pose.position.y - current_pose_.pose.position.y;
-        double target_yaw = std::atan2(dy, dx);
+        // 首次进入：搜索安全目标点（只执行一次）
+        if (escape_target_x_ < -0.5) {  // 使用 -1.0 作为"未初始化"标记
+            // BFS 搜索最近的安全点
+            if (!findSafeEscapeTarget()) {
+                RCLCPP_ERROR(get_logger(), "❌ 无法找到安全脱困点，进入恢复模式");
+                stopRobot();
+                escape_target_x_ = -1.0;  // 重置标记
+                fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
+                return;
+            }
+            escape_phase_ = 0;  // 阶段0: 转向
+            RCLCPP_WARN(get_logger(), 
+                "🎯 脱困目标: (%.2f, %.2f), 距离=%.2fm", 
+                escape_target_x_, escape_target_y_,
+                std::hypot(escape_target_x_ - current_pose_.pose.position.x,
+                          escape_target_y_ - current_pose_.pose.position.y));
+        }
         
         // 获取当前朝向
         tf2::Quaternion q;
@@ -380,36 +479,175 @@ private:
         double roll, pitch, yaw;
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
         
-        // 强制发送脱困速度指令
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = -0.1;  // 低速后退 0.1 m/s
+        // 计算到目标的方向和距离
+        double dx = escape_target_x_ - current_pose_.pose.position.x;
+        double dy = escape_target_y_ - current_pose_.pose.position.y;
+        double target_yaw = std::atan2(dy, dx);
+        double dist_to_target = std::hypot(dx, dy);
         
-        // 轻微转向对齐目标反方向
+        // 归一化角度差
         double yaw_error = target_yaw - yaw;
         while (yaw_error > M_PI) yaw_error -= 2 * M_PI;
         while (yaw_error < -M_PI) yaw_error += 2 * M_PI;
-        cmd.angular.z = -std::copysign(0.2, yaw_error);  // 反向转向
         
-        cmd_vel_pub_->publish(cmd);
+        geometry_msgs::msg::Twist cmd;
         
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-            "脱困中: 后退速度=%.2f, 转向=%.2f, 已用时%.1f秒", 
-            cmd.linear.x, cmd.angular.z, elapsed);
+        // 阶段0: 原地旋转对齐目标
+        if (escape_phase_ == 0) {
+            if (std::abs(yaw_error) > escape_yaw_tolerance_) {
+                cmd.angular.z = std::copysign(escape_rotation_speed_, yaw_error);
+                cmd_vel_pub_->publish(cmd);
+                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
+                    "🔄 阶段0: 旋转对齐, yaw_error=%.2f°", yaw_error * 180.0 / M_PI);
+            } else {
+                RCLCPP_INFO(get_logger(), "✅ 旋转完成，开始前进");
+                escape_phase_ = 1;
+            }
+            return;
+        }
         
-        // 每0.5秒检查一次是否脱困成功
-        if (static_cast<int>(elapsed * 2) % 10 == 0) {  // 0.5s检查一次
-            int mx, my;
-            if (planner_.worldToMap(current_pose_.pose.position.x, 
-                                   current_pose_.pose.position.y, mx, my) &&
-                planner_.isValid(mx, my)) {
-                RCLCPP_INFO(get_logger(), "脱困成功！重新规划路径");
-                // 停止运动
-                geometry_msgs::msg::Twist stop_cmd;
-                cmd_vel_pub_->publish(stop_cmd);
+        // 阶段1: 直线前进到目标
+        if (escape_phase_ == 1) {
+            // 检查是否到达目标
+            if (dist_to_target < escape_position_tolerance_) {
+                RCLCPP_INFO(get_logger(), "✅ 脱困成功！到达安全点，重新规划");
+                stopRobot();
+                escape_target_x_ = -1.0;  // 重置目标
                 fsm_.transitionTo(nav_core::NavState::PLANNING);
                 return;
             }
+            
+            // 检查是否已经进入安全区域（提前退出）
+            if (map_manager_ && map_manager_->hasEsdf()) {
+                double gx, gy;  // 梯度（不使用）
+                double esdf_dist = map_manager_->getEsdfDistanceWithGradient(
+                    current_pose_.pose.position.x, current_pose_.pose.position.y,
+                    &gx, &gy);
+                if (esdf_dist > escape_target_safe_esdf_) {
+                    RCLCPP_INFO(get_logger(), 
+                        "✅ 已进入安全区域(ESDF=%.2fm > %.2fm)，重新规划", 
+                        esdf_dist, escape_target_safe_esdf_);
+                    stopRobot();
+                    escape_target_x_ = -1.0;
+                    fsm_.transitionTo(nav_core::NavState::PLANNING);
+                    return;
+                }
+            }
+            
+            // 前进时保持方向修正（轻微转向）
+            if (std::abs(yaw_error) > escape_yaw_tolerance_ * 2) {
+                // 角度偏离过大，停止前进，重新进入旋转阶段
+                RCLCPP_WARN(get_logger(), "⚠️ 方向偏离过大(%.1f°)，重新旋转", 
+                    yaw_error * 180.0 / M_PI);
+                escape_phase_ = 0;
+                return;
+            }
+            
+            cmd.linear.x = escape_forward_speed_;
+            cmd.angular.z = std::copysign(std::min(0.1, std::abs(yaw_error)), yaw_error);  // 轻微修正
+            cmd_vel_pub_->publish(cmd);
+            
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
+                "➡️  阶段1: 前进中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs", 
+                dist_to_target, yaw_error * 180.0 / M_PI, elapsed);
         }
+    }
+    
+    // 搜索安全脱困点（BFS 螺旋搜索 ESDF > threshold 的格子）
+    bool findSafeEscapeTarget() {
+        if (!map_manager_ || !map_manager_->hasEsdf()) {
+            RCLCPP_ERROR(get_logger(), "ESDF 地图不可用，无法搜索安全点");
+            return false;
+        }
+        
+        auto costmap = map_manager_->getCostmap();
+        if (!costmap) {
+            RCLCPP_ERROR(get_logger(), "Costmap 不可用");
+            return false;
+        }
+        
+        double resolution = costmap->info.resolution;
+        double origin_x = costmap->info.origin.position.x;
+        double origin_y = costmap->info.origin.position.y;
+        int width = costmap->info.width;
+        int height = costmap->info.height;
+        
+        // 当前位置转地图坐标
+        int cx = static_cast<int>((current_pose_.pose.position.x - origin_x) / resolution);
+        int cy = static_cast<int>((current_pose_.pose.position.y - origin_y) / resolution);
+        
+        RCLCPP_INFO(get_logger(), 
+            "🔍 开始BFS搜索: 当前位置(%.2f, %.2f) -> 地图坐标(%d, %d), 地图尺寸=%dx%d, 分辨率=%.2fm",
+            current_pose_.pose.position.x, current_pose_.pose.position.y,
+            cx, cy, width, height, resolution);
+        
+        // BFS 螺旋搜索，使用配置的最大半径
+        int max_radius = static_cast<int>(escape_search_radius_ / resolution);
+        RCLCPP_INFO(get_logger(), 
+            "🔍 搜索参数: 半径=%.2fm(%d格), 目标ESDF>%.2fm, cost<99",
+            escape_search_radius_, max_radius, escape_target_safe_esdf_);
+        
+        int checked_cells = 0;
+        int valid_cells = 0;
+        double max_esdf_found = -1.0;
+        
+        for (int r = 1; r <= max_radius; ++r) {
+            for (int dx = -r; dx <= r; ++dx) {
+                for (int dy = -r; dy <= r; ++dy) {
+                    // 只搜索外环
+                    if (std::abs(dx) != r && std::abs(dy) != r) continue;
+                    
+                    int mx = cx + dx;
+                    int my = cy + dy;
+                    
+                    // 边界检查
+                    if (mx < 0 || mx >= width || my < 0 || my >= height) continue;
+                    
+                    checked_cells++;
+                    
+                    // 转世界坐标
+                    double wx = origin_x + (mx + 0.5) * resolution;
+                    double wy = origin_y + (my + 0.5) * resolution;
+                    
+                    // 检查 ESDF
+                    double gx, gy;  // 梯度（不使用）
+                    double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
+                    
+                    // 检查 costmap（必须可通行）
+                    int idx = my * width + mx;
+                    int8_t cost = costmap->data[idx];
+                    
+                    // 记录最大ESDF值（用于调试）
+                    if (cost < 99 && esdf_dist > max_esdf_found) {
+                        max_esdf_found = esdf_dist;
+                    }
+                    
+                    // 每10个格子输出一次样本调试信息
+                    if (checked_cells % 50 == 0) {
+                        RCLCPP_DEBUG(get_logger(), 
+                            "  样本[%d]: (%.2f,%.2f) ESDF=%.3fm, cost=%d, r=%d",
+                            checked_cells, wx, wy, esdf_dist, cost, r);
+                    }
+                    
+                    if (esdf_dist > escape_target_safe_esdf_ && cost < 99) {
+                        valid_cells++;
+                        escape_target_x_ = wx;
+                        escape_target_y_ = wy;
+                        double search_dist = r * resolution;
+                        RCLCPP_INFO(get_logger(), 
+                            "✅ 找到安全点: (%.2f, %.2f), ESDF=%.3fm > %.2fm, cost=%d < 99, 搜索距离=%.2fm (检查%d格)", 
+                            wx, wy, esdf_dist, escape_target_safe_esdf_, cost, search_dist, checked_cells);
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        RCLCPP_ERROR(get_logger(), 
+            "❌ 搜索失败: 检查了%d个格子, 无满足条件的点 (最大ESDF=%.3fm < %.2fm或cost>=99)",
+            checked_cells, max_esdf_found, escape_target_safe_esdf_);
+        
+        return false;
     }
     
     void doControlling() {
@@ -455,6 +693,7 @@ private:
                     RCLCPP_WARN(get_logger(), 
                         "⚠️  横向偏离路径过远 (%.2f m > %.2f m, 最近点索引: %zu/%zu), 触发重新规划", 
                         min_dist, path_lateral_tolerance_, closest_idx, current_path_.poses.size());
+                    planner_.clearCache();  // 强制下一次规划不复用旧路径
                     stopRobot();
                     fsm_.transitionTo(nav_core::NavState::PLANNING);
                     return;
@@ -529,6 +768,8 @@ private:
     }
     
     void finishSuccess() {
+        stopRobot();  
+        
         double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - start_time_).count();
         
@@ -546,7 +787,7 @@ private:
     }
     
     void finishFailure() {
-        stopRobot();
+        stopRobot();  // 🚨 安全第一：立即停止机器人
         
         if (goal_handle_) {
             auto result = std::make_shared<Navigate::Result>();
@@ -617,7 +858,7 @@ private:
     double control_rate_, goal_timeout_, goal_tolerance_, yaw_tolerance_;
     double controller_timeout_;  // 控制器无进展超时阈值(秒)
     double controller_progress_threshold_;  // 进展检测距离阈值(米)
-    double map_update_rate_, esdf_vis_max_dist_;
+    double esdf_vis_max_dist_;
     bool enable_esdf_;
     bool enable_static_layer_;   // 是否启用静态地图层
     bool enable_dynamic_layer_;  // 是否启用动态障碍物层
@@ -629,11 +870,26 @@ private:
     double path_lateral_tolerance_ = 0.5;  // 横向偏离路径容忍度(米)
     std::chrono::steady_clock::time_point last_path_check_wall_time_;  // 使用wall clock
     
+    // 脱困系统参数
+    int escape_trigger_costmap_threshold_;  // Costmap 触发阈值
+    double escape_target_safe_esdf_;        // 目标 ESDF 距离
+    double escape_search_radius_;           // BFS 搜索半径
+    double escape_rotation_speed_;          // 旋转速度
+    double escape_forward_speed_;           // 前进速度
+    double escape_yaw_tolerance_;           // 角度容差
+    double escape_position_tolerance_;      // 位置容差
+    double escape_timeout_;                 // 超时时长
+    
     std::chrono::steady_clock::time_point start_time_;           // 导航开始时间(wall clock)
     std::chrono::steady_clock::time_point last_progress_time_;   // 上次有进展的时间(wall clock)
     std::chrono::steady_clock::time_point escape_start_time_;    // 脱困开始时间(wall clock)
     geometry_msgs::msg::PoseStamped last_progress_pose_;  // 上次有进展的位置
     int control_count_ = 0;  // 控制循环计数器（用于调试日志）
+    
+    // 脱困相关状态
+    double escape_target_x_ = -1.0;  // 脱困目标点 X（-1表示未设置）
+    double escape_target_y_ = -1.0;  // 脱困目标点 Y
+    int escape_phase_ = 0;  // 脱困阶段：0=旋转, 1=前进
 };
 
 int main(int argc, char** argv) {

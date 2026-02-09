@@ -40,12 +40,22 @@ MODEL_SRC=
 MODEL_SRC+= wheelleg_nmpc_model/wheelleg_nmpc_expl_ode_fun.c
 MODEL_SRC+= wheelleg_nmpc_model/wheelleg_nmpc_expl_vde_forw.c
 MODEL_SRC+= wheelleg_nmpc_model/wheelleg_nmpc_expl_vde_adj.c
+MODEL_SRC+= wheelleg_nmpc_model/wheelleg_nmpc_expl_ode_hess.c
 
 MODEL_OBJ := $(MODEL_SRC:.c=.o)
 # optimal control problem - mostly CasADi exports
 OCP_SRC=
 
 
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_0_fun.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_0_fun_jac_hess.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_0_fun_jac.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_fun.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_fun_jac_hess.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_fun_jac.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_e_fun.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_e_fun_jac_hess.c
+OCP_SRC+= wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_e_fun_jac.c
 
 OCP_SRC+= acados_solver_wheelleg_nmpc.c
 
@@ -144,7 +154,7 @@ ocp_cython_o: ocp_cython_c
 	-I $(INCLUDE_PATH)/blasfeo/include/ \
 	-I $(INCLUDE_PATH)/hpipm/include/ \
 	-I $(INCLUDE_PATH) \
-	-I /home/lehan/navigation2026/venv_acados/lib/python3.10/site-packages/numpy/_core/include \
+	-I /usr/lib/python3/dist-packages/numpy/core/include \
 	-I /usr/include/python3.10 \
 	acados_ocp_solver_pyx.c \
 
@@ -173,7 +183,7 @@ sim_cython_o: sim_cython_c
 	-I $(INCLUDE_PATH)/blasfeo/include/ \
 	-I $(INCLUDE_PATH)/hpipm/include/ \
 	-I $(INCLUDE_PATH) \
-	-I /home/lehan/navigation2026/venv_acados/lib/python3.10/site-packages/numpy/_core/include \
+	-I /usr/lib/python3/dist-packages/numpy/core/include \
 	-I /usr/include/python3.10 \
 	acados_sim_solver_pyx.c \
 

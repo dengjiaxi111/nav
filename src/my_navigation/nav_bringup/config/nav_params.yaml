@@ -4,7 +4,6 @@ nav_server:
   ros__parameters:
     # map_file 由 launch 文件设置
     control_rate: 50.0
-    map_update_rate: 20.0  # 地图更新频率(Hz)
     goal_timeout: 60.0
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
@@ -20,21 +19,21 @@ nav_server:
     
     # 周期性路径检查 (动态障碍物应对，默认启用)
     path_check_period: 0.1  # 路径检查周期(秒) - 降低以快速响应动态障碍物
-    path_lateral_tolerance: 0.5  # 横向偏离路径容忍度(米)，超过则重规划
+    path_lateral_tolerance: 0.25  # 横向偏离路径容忍度(米)，超过则重规划
     # 说明: 系统每隔 path_check_period 秒检查机器人到路径的最短距离
     # 如果横向偏离超过 path_lateral_tolerance，会停止并重新规划
     # path_check_period 越小响应越快，但会增加 CPU 负载（建议 0.2-1.0 秒）
     
     # ============ 分层地图系统 ============
     # 静态层: 从yaml/pgm文件加载的全局地图
-    enable_static_layer: false   # 启用静态层（默认启用）
+    enable_static_layer: true   # 启用静态层（默认启用）
     # 说明: 
     #   - 启用时: 从map_file加载pgm/yaml静态地图
     #   - 禁用时: 自动创建50x50m空白地图框架（纯动态SLAM模式）
     # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
     
     # 动态层: 来自rog_map的局部障碍物
-    enable_dynamic_layer: true  # 启用动态层融合
+    enable_dynamic_layer: false  # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
     
@@ -49,7 +48,7 @@ nav_server:
     # Costmap 膨胀
     inflation:
       radius: 0.8              # 膨胀半径(m)
-      inscribed_radius: 0.15    # 内切圆半径(m)，致命代价区
+      inscribed_radius: 0.2    # 内切圆半径(m)，致命代价区
       cost_scaling: 1.8        # 指数衰减因子
       decay_type: exponential  # linear 或 exponential
     
@@ -66,14 +65,12 @@ nav_server:
       enable_auto_prune: true         # 启用自动剪枝已驶过部分
       goal_tolerance: 0.2             # 目标变化阈值(米), 小于此值则认为目标未变化
       obstacle_check_threshold: 99    # 障碍物检查阈值, 路径上代价值 >= 此值视为障碍物
-      # 说明: Costmap值范围: 0=自由, 1-98=膨胀区, 99=inscribed_radius内, 100=障碍物
-      # 设为99表示只有真正危险的区域才会导致路径失效，膨胀区域允许通过
-      prune_distance: 0.5             # 剪枝保留距离(米), 保留当前位置前方此距离内的点
+      prune_distance: 1.0            # 剪枝保留距离(米), 保留当前位置前方此距离内的点
       
       # B样条优化（基于 Fast-Planner）
       enable_optimization: true    # 启用轨迹优化
       opt_lambda_smooth: 5.0      # 平滑项权重（弹性带）
-      opt_lambda_collision: 10.0    # 障碍物项权重（ESDF 排斥）- 增大以远离墙壁
+      opt_lambda_collision: 20.0    # 障碍物项权重（ESDF 排斥）- 增大以远离墙壁
       opt_safe_dist: 0.8           # 安全距离阈值 (m)
       opt_max_iter: 50             # 最大迭代次数
       opt_curvature_adaptive: true # 曲率自适应（转角处更远离障碍物）
@@ -93,39 +90,49 @@ nav_server:
       max_linear_vel: 0.5
       max_angular_vel: 1.0
     
-    # NMPC 控制器 (非线性模型预测控制)
+    # NMPC 控制器
     nmpc:
-      # === 运动约束 (物理限制) ===
-      max_linear_vel: 2.0       # 最大线速度 (m/s)
-      max_angular_vel: 2.5      # 最大角速度 (rad/s)
-      max_linear_accel: 3.0     # 最大线加速度 (m/s²) - 提高以增强敏捷性
-      max_angular_accel: 4.0    # 最大角加速度 (rad/s²) - 提高以快速转弯
-      allow_reverse: false      # 禁止倒车
+      # === 求解器维度 (必须与 export_ocp.py 一致!) ===
+      N_horizon: 50              # 预测步数 N (与生成的 solver 保持一致)
+      T_horizon: 1.5             # 预测时域 T (秒), dt = T/N = 0.05s
+      
+      # === 运动约束 ===
+      max_linear_vel: 2.5        # 最大线速度 (m/s) - 降低以匹配实际执行能力
+      max_angular_vel: 3.0       # 最大角速度 (rad/s) - 降低以防止失控旋转
+      max_linear_accel: 5.0      # 最大线加速度 (m/s²) - 收紧以模拟真实惯性
+      max_angular_accel: 4.0     # 最大角加速度 (rad/s²) - 关键！防止角速度过冲
+      allow_reverse: false       # 倒车
       
       # === 局部参考轨迹提取 ===
-      horizon_length: 5.0       # 前向提取距离 (米) - 应匹配预测时域
-      desired_velocity: 1.5     # 期望跟踪速度 (m/s) - 提高以更快行进
+      horizon_length: 4.5        # 前向提取距离 (米) - 缩短以增强近端跟踪
+      desired_velocity: 2.0      # 期望跟踪速度 (m/s) - 降低以更稳定
+      lateral_error_threshold: 0.15  # 横向误差阈值 (m)，超过时启用速度缩减策略
       
-      # === 代价函数权重 (越大越重视) ===
-      Q_position: 20.0          # 位置 (x,y) 跟踪权重
-      Q_orientation: 15.0        # 航向角 (theta) 跟踪权重
-      Q_velocity: 5.0           # 速度 (v,omega) 跟踪权重 - 提高以更快达到期望速度
-      R_linear: 0.1             # 线加速度平滑性权重 - 降低以允许更激进的加减速
-      R_angular: 0.15            # 角加速度平滑性权重 - 降低以允许更快转向
-      terminal_multiplier: 5.0  # 终端代价倍数 (最后一步加权)
+      # === 代价函数权重 ===
+      Q_position: 50.0           # 位置 (x,y) 跟踪权重 - 降低以减少激进追踪
+      Q_orientation: 30.0        # 航向角 (theta) 跟踪权重
+      Q_velocity: 0.0            # 速度 (v,omega) 跟踪权重 - 降低以避免速度过冲
+      R_linear: 0.0              # 线加速度平滑性权重 - 增大以抑制激进加速
+      R_angular: 0.0             # 角加速度平滑性权重 - 显著增大以防止角速度过冲
+      terminal_multiplier: 0.0   
+      
+      # === ESDF 障碍物代价 (新增) ===
+      esdf_weight: 200.0         # ESDF 违反代价权重 (显著增大以防止切角)
+      esdf_safe_dist: 0.8        # 安全距离 (m)，增大以提前排斥
+      enable_esdf_cost: false     # ✅ 启用 ESDF 障碍物代价
+      near_weight_multiplier: 2.0  # 近端权重倍增，强化近距离避障
       
       # === 容差参数 ===
       xy_tolerance: 0.15        # 位置到达容差 (米) - 增大以减少过冲
-      yaw_tolerance: 0.15       # 航向到达容差 (弧度) - 增大以减少旋转过冲
+      # yaw_tolerance: 3.14       # 航向到达容差 (弧度) - 增大以减少旋转过冲 以弃用
       
       # === 可视化选项 ===
-      publish_predicted_path: true   # 发布 NMPC 预测轨迹 (/nmpc_predicted_path)
-      publish_debug_markers: false   # 发布调试标记 (减少通信负载)
+      publish_predicted_path: true   # 发布 NMPC 预测轨迹 (/nmpc/predicted_path)
+      publish_debug_markers: true   # 发布调试标记
       
       # === 求解器参数 (高级选项) ===
       # 注意: N_horizon 和 T_horizon 在编译时固定 (model_ocp/export_ocp.py)
-      # 当前设置: N=20, T=2.0s, dt=0.1s
-      # 建议重新导出求解器时增加预测时域: T=3.0s 或 N=30
+      # 当前设置: N=50, T=1.0s, dt=0.02s
       qp_solver_max_iter: 50    # QP 子问题最大迭代次数
       levenberg_marquardt: 1e-4 # 数值稳定性阻尼因子
     
@@ -136,3 +143,21 @@ nav_server:
       backup_vel: -0.2
       spin_angle: 3.14
       spin_vel: 0.5
+    
+    # 脱困系统 (ESCAPING 状态)
+    escape:
+      # 触发条件
+      trigger_costmap_threshold: 98   # Costmap 触发阈值，起点 cost >= 此值时触发脱困
+      target_safe_esdf: 0.3           # 目标 ESDF 距离 (m)，搜索大于此值的安全点
+      
+      # 搜索参数
+      search_radius: 5.0              # BFS 最大搜索半径 (m)
+      
+      # 控制参数
+      rotation_speed: 1.0             # 旋转角速度 (rad/s)
+      forward_speed: 0.5             # 前进线速度 (m/s)
+      yaw_tolerance: 0.1              # 角度对齐容差 (rad, ~6度)
+      position_tolerance: 0.1        # 到达位置容差 (m)
+      
+      # 超时保护
+      timeout: 10.0                   # 脱困最大时长 (秒)，超时进入 RECOVERY

@@ -29,13 +29,11 @@ public:
     // 公开接口：路径验证（供 nav_server 周期性检查使用）
     bool validatePath(const nav_msgs::msg::Path& path);
     
-    // 公开接口：检查是否需要脱困（起点在障碍物中）
-    bool needsEscape() const { return needs_escape_; }
-    
-    // 公开接口：供脱困模式检查当前位置是否可通行
+    // 公开接口：供外部检查位置和地图坐标转换
     bool worldToMap(double wx, double wy, int& mx, int& my);
     void mapToWorld(int mx, int my, double& wx, double& wy);
     bool isValid(int x, int y);
+    void clearCache();  // 清空缓存路径（强制重规划时使用）
 
 private:
     // A*节点
@@ -88,9 +86,6 @@ private:
     bool enable_path_cache_ = true;  // 启用路径缓存
     bool enable_auto_prune_ = true;  // 启用自动剪枝
     double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
-    
-    // 脱困标志
-    bool needs_escape_ = false;  // 标记本次规划是否使用了脱困模式
     
     // 调试可视化
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr ctrl_pts_pub_;

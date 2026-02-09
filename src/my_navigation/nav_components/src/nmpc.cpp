@@ -2,6 +2,7 @@
 // 集成 acados 生成的 solver 到 ROS2 导航框架
 
 #include "nav_components/nmpc.hpp"
+#include "nav_components/layered_map_manager.hpp"
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>  // 提供 tf2::fromMsg
 #include <tf2/utils.h>
 #include <cmath>
@@ -37,9 +38,14 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.max_angular_accel", params_.max_angular_accel);
     node_->declare_parameter("nmpc.allow_reverse", params_.allow_reverse);
     
+    // 求解器参数 (必须与 export_ocp.py 一致!)
+    node_->declare_parameter("nmpc.N_horizon", N_horizon_);
+    node_->declare_parameter("nmpc.T_horizon", T_horizon_);
+    
     // 局部参考提取
     node_->declare_parameter("nmpc.horizon_length", params_.horizon_length);
     node_->declare_parameter("nmpc.desired_velocity", params_.desired_velocity);
+    node_->declare_parameter("nmpc.lateral_error_threshold", params_.lateral_error_threshold);
     
     // 代价权重
     node_->declare_parameter("nmpc.Q_position", params_.Q_position);
@@ -48,6 +54,12 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.R_linear", params_.R_linear);
     node_->declare_parameter("nmpc.R_angular", params_.R_angular);
     node_->declare_parameter("nmpc.terminal_multiplier", params_.terminal_multiplier);
+    
+    // ESDF 障碍物代价参数
+    node_->declare_parameter("nmpc.esdf_weight", params_.esdf_weight);
+    node_->declare_parameter("nmpc.esdf_safe_dist", params_.esdf_safe_dist);
+    node_->declare_parameter("nmpc.enable_esdf_cost", params_.enable_esdf_cost);
+    node_->declare_parameter("nmpc.near_weight_multiplier", params_.near_weight_multiplier);
     
     // 容差参数
     node_->declare_parameter("nmpc.xy_tolerance", 0.1);
@@ -64,8 +76,12 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.max_angular_accel = node_->get_parameter("nmpc.max_angular_accel").as_double();
     params_.allow_reverse = node_->get_parameter("nmpc.allow_reverse").as_bool();
     
+    N_horizon_ = node_->get_parameter("nmpc.N_horizon").as_int();
+    T_horizon_ = node_->get_parameter("nmpc.T_horizon").as_double();
+    
     params_.horizon_length = node_->get_parameter("nmpc.horizon_length").as_double();
     params_.desired_velocity = node_->get_parameter("nmpc.desired_velocity").as_double();
+    params_.lateral_error_threshold = node_->get_parameter("nmpc.lateral_error_threshold").as_double();
     
     params_.Q_position = node_->get_parameter("nmpc.Q_position").as_double();
     params_.Q_orientation = node_->get_parameter("nmpc.Q_orientation").as_double();
@@ -73,6 +89,11 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.R_linear = node_->get_parameter("nmpc.R_linear").as_double();
     params_.R_angular = node_->get_parameter("nmpc.R_angular").as_double();
     params_.terminal_multiplier = node_->get_parameter("nmpc.terminal_multiplier").as_double();
+    
+    params_.esdf_weight = node_->get_parameter("nmpc.esdf_weight").as_double();
+    params_.esdf_safe_dist = node_->get_parameter("nmpc.esdf_safe_dist").as_double();
+    params_.enable_esdf_cost = node_->get_parameter("nmpc.enable_esdf_cost").as_bool();
+    params_.near_weight_multiplier = node_->get_parameter("nmpc.near_weight_multiplier").as_double();
     
     xy_tolerance_ = node_->get_parameter("nmpc.xy_tolerance").as_double();
     yaw_tolerance_ = node_->get_parameter("nmpc.yaw_tolerance").as_double();
@@ -131,6 +152,19 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
         "NMPC: 接收新路径, %zu 个点", path.poses.size());
 }
 
+void NMPC::setMap(nav_core::MapInterface::Ptr map) {
+    map_ = map;
+    // 尝试向下转型为 LayeredMapManager 以获取 ESDF 查询接口
+    map_manager_ = std::dynamic_pointer_cast<LayeredMapManager>(map);
+    if (map_manager_) {
+        RCLCPP_INFO(node_->get_logger(), 
+            "NMPC: ESDF 地图已连接 (hasEsdf=%d)", map_manager_->hasEsdf());
+    } else {
+        RCLCPP_WARN(node_->get_logger(), 
+            "NMPC: 地图接口不是 LayeredMapManager，ESDF 代价将禁用");
+    }
+}
+
 nav_core::ControlResult NMPC::computeVelocity(
     const geometry_msgs::msg::PoseStamped& current_pose,
     geometry_msgs::msg::Twist& cmd_vel) 
@@ -174,21 +208,16 @@ nav_core::ControlResult NMPC::computeVelocity(
         }
     }
     
-    // 2. 检查是否到达目标
+    // 2. 检查是否到达目标（仅检查 xy 距离，不要求 yaw 对齐）
     const auto& goal = global_path_.poses.back().pose;
     double dx = goal.position.x - x0[0];
     double dy = goal.position.y - x0[1];
     double dist = std::hypot(dx, dy);
-    // 归一化 yaw 误差到 [-π, π]
-    double yaw_diff = tf2::getYaw(goal.orientation) - x0[2];
-    while (yaw_diff > M_PI) yaw_diff -= 2.0 * M_PI;
-    while (yaw_diff < -M_PI) yaw_diff += 2.0 * M_PI;
-    double yaw_err = std::abs(yaw_diff);
     
-    if (dist < xy_tolerance_ && yaw_err < yaw_tolerance_) {
+    if (dist < xy_tolerance_) {
         cmd_vel.linear.x = 0.0;
         cmd_vel.angular.z = 0.0;
-        RCLCPP_INFO(node_->get_logger(), "NMPC: 到达目标");
+        RCLCPP_INFO(node_->get_logger(), "NMPC: 到达目标 (xy距离=%.3fm)", dist);
         return nav_core::ControlResult::SUCCEEDED;
     }
     
@@ -265,10 +294,15 @@ nav_core::ControlResult NMPC::computeVelocity(
     // 求解成功，重置失败计数
     stats_.consecutive_failures = 0;
     
-    // 5. 应用控制
+    // 5. 提取并发布预测轨迹（如果启用）
+    if (predicted_path_pub_) {
+        publishPredictedPath(current_pose.header, x0);
+    }
+    
+    // 6. 应用控制
     // u_opt = [a_lin, alpha_ang] (加速度)
-    // 积分得到速度 (简化: 假设控制周期 dt = 0.05s)
-    double dt = 0.05;
+    // 积分得到速度: v += a * dt
+    double dt = T_horizon_ / N_horizon_;  // 与 solver 步长一致
     double v_cmd = x0[3] + u_opt[0] * dt;
     double omega_cmd = x0[4] + u_opt[1] * dt;
     
@@ -341,21 +375,29 @@ int NMPC::solveNMPC(
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "lbx", x0_array);
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "ubx", x0_array);
     
-    // 设置参考轨迹
-    for (int i = 0; i < N_horizon_ && i < static_cast<int>(yref.size()); ++i) {
-        double yref_i[7] = {
-            yref[i][0], yref[i][1], yref[i][2], yref[i][3], yref[i][4],
-            0.0, 0.0  // 控制参考 (期望为0)
-        };
-        ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, i, "yref", yref_i);
-    }
+    // ========== 角度连续化 ==========
+    // 关键修复：相对于前一个点逐步连续化，避免轨迹内部的 ±π 跳变
+    // 这样可以保证整个参考轨迹在 solver 看来是平滑的
+    std::vector<double> theta_adjusted(yref.size());
     
-    // 终端参考
     if (!yref.empty()) {
-        double yref_e[5] = {yref.back()[0], yref.back()[1], yref.back()[2], 
-                            yref.back()[3], yref.back()[4]};
-        ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, N_horizon_, "yref", yref_e);
+        // 第一个点相对当前状态 wrap
+        double diff = yref[0][2] - x0[2];
+        while (diff > M_PI) diff -= 2.0 * M_PI;
+        while (diff < -M_PI) diff += 2.0 * M_PI;
+        theta_adjusted[0] = x0[2] + diff;
+        
+        // 后续点相对前一个 adjusted 点连续化
+        for (size_t i = 1; i < yref.size(); ++i) {
+            double diff_to_prev = yref[i][2] - yref[i-1][2];
+            while (diff_to_prev > M_PI) diff_to_prev -= 2.0 * M_PI;
+            while (diff_to_prev < -M_PI) diff_to_prev += 2.0 * M_PI;
+            theta_adjusted[i] = theta_adjusted[i-1] + diff_to_prev;
+        }
     }
+
+    // 注入参考与 ESDF 参数（external cost）
+    injectEsdfParameters(yref, theta_adjusted);
     
     // 求解
     int status = wheelleg_nmpc_acados_solve(acados_ocp_capsule_);
@@ -397,7 +439,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         total_dist_to_goal += std::hypot(p2.x - p1.x, p2.y - p1.y);
     }
     
-    // ✅ FIX: 记住上一个找到的索引，确保参考轨迹单调递增
+    // 记住上一个找到的索引，确保参考轨迹单调递增
     int last_found_idx = nearest_idx_;
     double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
     
@@ -419,7 +461,18 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 double ratio = (forward_dist - dist) / seg_dist;
                 double x = p1.x + ratio * (p2.x - p1.x);
                 double y = p1.y + ratio * (p2.y - p1.y);
-                double theta = tf2::getYaw(global_path_.poses[idx + 1].pose.orientation);
+                
+                // ========== 角度插值：保证连续性 ==========
+                double theta1 = tf2::getYaw(global_path_.poses[idx].pose.orientation);
+                double theta2 = tf2::getYaw(global_path_.poses[idx + 1].pose.orientation);
+                
+                // 计算最短角度差
+                double theta_diff = theta2 - theta1;
+                while (theta_diff > M_PI) theta_diff -= 2.0 * M_PI;
+                while (theta_diff < -M_PI) theta_diff += 2.0 * M_PI;
+                
+                // 线性插值角度
+                double theta = theta1 + ratio * theta_diff;
                 
                 // 渐进减速逻辑：根据到终点的距离调整期望速度
                 double remaining_dist = total_dist_to_goal - dist;
@@ -431,6 +484,56 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 if (remaining_dist < decel_start_dist) {
                     desired_v = min_speed + 
                         (params_.desired_velocity - min_speed) * (remaining_dist / decel_start_dist);
+                }
+                
+                // ========== 横向误差自适应速度缩减 (首次规划 i=0 时) ==========
+                // 根据图片策略：当 e_cross 较大时，通过速度夹角 α 降低纵向速度
+                if (i == 0) {
+                    // 计算当前位置到参考点的横向误差 e_cross
+                    double dx_robot_ref = x - current_pose.position.x;
+                    double dy_robot_ref = y - current_pose.position.y;
+                    double e_cross = std::abs(
+                        -std::sin(theta) * dx_robot_ref + std::cos(theta) * dy_robot_ref
+                    );
+                    
+                    // 获取当前机器人速度（body frame）
+                    double v_robot_x = last_state_[3];  // 前向速度
+                    double v_robot_y = 0.0;             // 差速模型侧向速度为0
+                    
+                    // 参考点速度（沿轨迹切线方向）
+                    double v_ref_x = desired_v * std::cos(theta);
+                    double v_ref_y = desired_v * std::sin(theta);
+                    
+                    // 计算速度夹角 α (在全局坐标系下)
+                    double robot_theta = tf2::getYaw(current_pose.orientation);
+                    double v_robot_global_x = v_robot_x * std::cos(robot_theta);
+                    double v_robot_global_y = v_robot_x * std::sin(robot_theta);
+                    
+                    double v_prim_norm = std::hypot(v_robot_global_x, v_robot_global_y);
+                    double v_ref_norm = std::hypot(v_ref_x, v_ref_y);
+                    
+                    double alpha = 0.0;
+                    if (v_prim_norm > 0.01 && v_ref_norm > 0.01) {
+                        double dot_product = v_robot_global_x * v_ref_x + v_robot_global_y * v_ref_y;
+                        double cross_product = v_robot_global_x * v_ref_y - v_robot_global_y * v_ref_x;
+                        alpha = std::max(0.0, std::atan2(std::abs(cross_product), dot_product));
+                    }
+                    
+                    // 速度缩减系数：当 e_cross 较大时，通过 α 降低纵向速度
+                    if (e_cross > params_.lateral_error_threshold) {
+                        double shrink_ratio = std::max(0.0, 
+                            (v_prim_norm * std::cos(alpha)) / (v_ref_norm + 1e-6)
+                        );
+                        shrink_ratio = std::clamp(shrink_ratio, 0.3, 1.0);  // 限制最低 30% 速度
+                        desired_v *= shrink_ratio;
+                        
+                        if (stats_.solve_count % 20 == 0) {
+                            RCLCPP_INFO(node_->get_logger(),
+                                "NMPC: 横向误差=%.2fm > %.2f, α=%.1f°, 速度缩减至%.2f (%.0f%%)",
+                                e_cross, params_.lateral_error_threshold,
+                                alpha * 180.0 / M_PI, desired_v, shrink_ratio * 100.0);
+                        }
+                    }
                 }
                 
                 yref.push_back({x, y, theta, desired_v, 0.0});
@@ -539,10 +642,8 @@ void NMPC::updateNMPCParameters() {
     ocp_nlp_out* nlp_out = wheelleg_nmpc_acados_get_nlp_out(acados_ocp_capsule_);
     
     // ========== 1. 更新状态约束 (速度限制) ==========
-    // 状态约束作用于所有 shooting nodes (1 到 N-1)
     double v_lower = params_.allow_reverse ? -params_.max_linear_vel : 0.0;
     for (int i = 1; i < N_horizon_; ++i) {
-        // idxbx = [3, 4] 对应 [v, omega]
         double lbx[2] = {v_lower, -params_.max_angular_vel};
         double ubx[2] = {params_.max_linear_vel, params_.max_angular_vel};
         
@@ -551,7 +652,6 @@ void NMPC::updateNMPCParameters() {
     }
     
     // ========== 2. 更新控制约束 (加速度限制) ==========
-    // 控制约束作用于所有控制输入 (0 到 N-1)
     for (int i = 0; i < N_horizon_; ++i) {
         double lbu[2] = {-params_.max_linear_accel, -params_.max_angular_accel};
         double ubu[2] = {params_.max_linear_accel, params_.max_angular_accel};
@@ -560,49 +660,111 @@ void NMPC::updateNMPCParameters() {
         ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, i, "ubu", ubu);
     }
     
-    // ========== 3. 更新代价权重矩阵 ==========
-    // 构造 Q 矩阵 (状态权重)
-    double Q_diag[5] = {
-        params_.Q_position,    // x
-        params_.Q_position,    // y
-        params_.Q_orientation, // theta
-        params_.Q_velocity,    // v
-        params_.Q_velocity     // omega
-    };
-    
-    // 构造 R 矩阵 (控制权重)
-    double R_diag[2] = {
-        params_.R_linear,      // a_lin
-        params_.R_angular      // alpha_ang
-    };
-    
-    // LINEAR_LS 代价需要设置 W 矩阵 (7x7 对角阵 = [Q, R])
-    double W[49] = {0};  // 7x7 矩阵
-    for (int i = 0; i < 5; ++i) {
-        W[i * 7 + i] = Q_diag[i];  // 对角线元素 Q
-    }
-    for (int i = 0; i < 2; ++i) {
-        W[(5 + i) * 7 + (5 + i)] = R_diag[i];  // 对角线元素 R
-    }
-    
-    // 初始阶段代价 (stage 0)
-    ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, 0, "W", W);
-    
-    // 中间阶段代价 (stage 1 到 N-1)
-    for (int i = 1; i < N_horizon_; ++i) {
-        ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, i, "W", W);
-    }
-    
-    // 终端代价 (stage N) - 只有状态权重,乘以 terminal_multiplier
-    double W_e[25] = {0};  // 5x5 矩阵
-    for (int i = 0; i < 5; ++i) {
-        W_e[i * 5 + i] = Q_diag[i] * params_.terminal_multiplier;
-    }
-    ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, N_horizon_, "W", W_e);
-    
     RCLCPP_INFO(node_->get_logger(), 
-        "✓ NMPC 参数已更新: v_max=%.1f, ω_max=%.1f, Q_pos=%.1f, R_lin=%.2f",
-        params_.max_linear_vel, params_.max_angular_vel, params_.Q_position, params_.R_linear);
+        "✓ NMPC 参数已更新: v_max=%.1f, ω_max=%.1f, Q_pos=%.1f, R_lin=%.2f, esdf_w=%.1f",
+        params_.max_linear_vel, params_.max_angular_vel, params_.Q_position, 
+        params_.R_linear, params_.esdf_weight);
+}
+
+void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
+                              const std::vector<double>& theta_adjusted) {
+    if (!acados_ocp_capsule_) return;
+
+    // 参数布局: [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref, d_esdf, weight_scale]
+    double p_default[NP_PARAM] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 1.0};
+
+    bool has_esdf = params_.enable_esdf_cost && map_manager_ && map_manager_->hasEsdf();
+    auto esdf = has_esdf ? map_manager_->getEsdf() : nullptr;
+
+    // 近端权重递增: 前 1/4 时域内乘以 near_weight_multiplier
+    int near_end = std::max(1, N_horizon_ / 4);
+
+    // 获取 solver 上一轮的预测轨迹用于查询点混合
+    ocp_nlp_config* nlp_config = wheelleg_nmpc_acados_get_nlp_config(acados_ocp_capsule_);
+    ocp_nlp_dims* nlp_dims = wheelleg_nmpc_acados_get_nlp_dims(acados_ocp_capsule_);
+    ocp_nlp_out* nlp_out = wheelleg_nmpc_acados_get_nlp_out(acados_ocp_capsule_);
+
+    for (int i = 0; i <= N_horizon_; ++i) {
+        double p_values[NP_PARAM];
+        std::copy(p_default, p_default + NP_PARAM, p_values);
+
+        int idx = std::min(i, static_cast<int>(yref.size()) - 1);
+
+        // 参考注入
+        p_values[0] = yref[idx][0];
+        p_values[1] = yref[idx][1];
+        p_values[2] = theta_adjusted[idx];
+        p_values[3] = yref[idx][3];
+        p_values[4] = yref[idx][4];
+        p_values[5] = 0.0;  // 控制参考恒为 0 (希望减小加速度)
+        p_values[6] = 0.0;
+
+        // 近端/终端权重缩放
+        double weight_scale = 1.0;
+        if (i < near_end) {
+            double ratio = static_cast<double>(near_end - i) / near_end;
+            weight_scale = 1.0 + (params_.near_weight_multiplier - 1.0) * ratio;
+        }
+        if (i == N_horizon_) {
+            weight_scale = params_.terminal_multiplier;
+        }
+        p_values[8] = weight_scale;
+
+        // ESDF 查询 (仅距离)
+        double dist = 10.0;
+        if (has_esdf && esdf) {
+            double x_pred[5] = {0};
+            ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, i, "x", x_pred);
+
+            double alpha = (stats_.solve_count == 0) ? 1.0 : 0.7;
+            double qx = alpha * yref[idx][0] + (1.0 - alpha) * x_pred[0];
+            double qy = alpha * yref[idx][1] + (1.0 - alpha) * x_pred[1];
+
+            double gx = 0.0, gy = 0.0;
+            if (esdf->getDistanceAndGradient(qx, qy, dist, gx, gy)) {
+                // dist 已填充
+            }
+        }
+        p_values[7] = dist;
+
+        wheelleg_nmpc_acados_update_params(acados_ocp_capsule_, i, p_values, NP_PARAM);
+    }
+}
+
+void NMPC::publishPredictedPath(const std_msgs::msg::Header& header, const std::vector<double>& x0) {
+    if (!predicted_path_pub_ || !acados_ocp_capsule_) {
+        return;
+    }
+    
+    ocp_nlp_config* nlp_config = wheelleg_nmpc_acados_get_nlp_config(acados_ocp_capsule_);
+    ocp_nlp_dims* nlp_dims = wheelleg_nmpc_acados_get_nlp_dims(acados_ocp_capsule_);
+    ocp_nlp_out* nlp_out = wheelleg_nmpc_acados_get_nlp_out(acados_ocp_capsule_);
+    
+    nav_msgs::msg::Path predicted_path;
+    predicted_path.header = header;
+    predicted_path.header.frame_id = "map";
+    
+    // 提取预测状态 x = [x, y, theta, v, omega]
+    std::vector<double> x_pred(5);
+    
+    for (int i = 0; i <= N_horizon_; ++i) {
+        ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, i, "x", x_pred.data());
+        
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = predicted_path.header;
+        pose.pose.position.x = x_pred[0];
+        pose.pose.position.y = x_pred[1];
+        pose.pose.position.z = 0.0;
+        
+        // theta 转四元数
+        tf2::Quaternion q;
+        q.setRPY(0, 0, x_pred[2]);
+        pose.pose.orientation = tf2::toMsg(q);
+        
+        predicted_path.poses.push_back(pose);
+    }
+    
+    predicted_path_pub_->publish(predicted_path);
 }
 
 }  // namespace nav_components

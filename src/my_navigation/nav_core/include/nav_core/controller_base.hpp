@@ -6,6 +6,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include "nav_core/map_interface.hpp"
 
 namespace nav_core {
 
@@ -22,6 +23,9 @@ public:
     
     virtual void initialize(rclcpp::Node* node) = 0;
     
+    // 设置地图接口（用于障碍物查询）
+    virtual void setMap(MapInterface::Ptr map) { map_ = map; }
+    
     // 设置要跟踪的路径
     virtual void setPath(const nav_msgs::msg::Path& path) = 0;
     
@@ -35,6 +39,9 @@ public:
     
     // 重置状态
     virtual void reset() = 0;
+
+protected:
+    MapInterface::Ptr map_;
 };
 
 }  // namespace nav_core

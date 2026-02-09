@@ -39,7 +39,7 @@
 #define WHEELLEG_NMPC_NX     5
 #define WHEELLEG_NMPC_NZ     0
 #define WHEELLEG_NMPC_NU     2
-#define WHEELLEG_NMPC_NP     0
+#define WHEELLEG_NMPC_NP     9
 #define WHEELLEG_NMPC_NP_GLOBAL     0
 #define WHEELLEG_NMPC_NBX    2
 #define WHEELLEG_NMPC_NBX0   5
@@ -61,10 +61,10 @@
 #define WHEELLEG_NMPC_NG     0
 #define WHEELLEG_NMPC_NBXN   0
 #define WHEELLEG_NMPC_NGN    0
-#define WHEELLEG_NMPC_NY0    7
-#define WHEELLEG_NMPC_NY     7
-#define WHEELLEG_NMPC_NYN    5
-#define WHEELLEG_NMPC_N      20
+#define WHEELLEG_NMPC_NY0    0
+#define WHEELLEG_NMPC_NY     0
+#define WHEELLEG_NMPC_NYN    0
+#define WHEELLEG_NMPC_N      50
 #define WHEELLEG_NMPC_NH     0
 #define WHEELLEG_NMPC_NHN    0
 #define WHEELLEG_NMPC_NH0    0
@@ -102,13 +102,30 @@ typedef struct wheelleg_nmpc_solver_capsule
     external_function_external_param_casadi *expl_ode_fun;
     external_function_external_param_casadi *expl_vde_adj;
 
+    external_function_external_param_casadi *expl_ode_hess;
 
 
 
     // cost
 
+    external_function_external_param_casadi *ext_cost_fun;
+    external_function_external_param_casadi *ext_cost_fun_jac;
+    external_function_external_param_casadi *ext_cost_fun_jac_hess;
 
 
+
+
+
+    external_function_external_param_casadi ext_cost_0_fun;
+    external_function_external_param_casadi ext_cost_0_fun_jac;
+    external_function_external_param_casadi ext_cost_0_fun_jac_hess;
+
+
+
+
+    external_function_external_param_casadi ext_cost_e_fun;
+    external_function_external_param_casadi ext_cost_e_fun_jac;
+    external_function_external_param_casadi ext_cost_e_fun_jac_hess;
 
 
 
