@@ -2,10 +2,13 @@
 // 分层地图管理器实现
 
 #include "nav_components/layered_map_manager.hpp"
+#include "nav_components/map_image_io.hpp"
 #include <tf2/utils.h>
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <limits>
+#include <unordered_set>
 
 namespace nav_components {
 
@@ -28,6 +31,188 @@ void LayeredMapManager::initialize(rclcpp::Node* node,
     RCLCPP_INFO(logger_, "LayeredMapManager initialized (map: %s, odom: %s, perf_log: %s)",
                 map_frame_.c_str(), odom_frame_.c_str(), 
                 enable_performance_logging_ ? "enabled" : "disabled");
+}
+
+void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    stair_layer_cfg_ = cfg;
+
+    if (!stair_layer_cfg_.enable) {
+        stair_clear_indices_.clear();
+        stair_mask_loaded_ = false;
+        return;
+    }
+
+    if (stair_layer_cfg_.clear_perp_dist_m <= 0.0) {
+        RCLCPP_WARN(logger_, "stair_layer clear_perp_dist_m<=0, 自动修正为0.1m");
+        stair_layer_cfg_.clear_perp_dist_m = 0.1;
+    }
+
+    rebuildStairLayerCache();
+}
+
+bool LayeredMapManager::loadStairMaskFromYaml(const std::string& yaml_path) {
+    MapImageData mask_data;
+    if (!MapImageIO::loadYamlAndPGM(yaml_path, mask_data, logger_)) {
+        return false;
+    }
+
+    stair_mask_width_ = mask_data.width;
+    stair_mask_height_ = mask_data.height;
+    stair_mask_max_val_ = mask_data.max_val;
+    stair_mask_resolution_ = mask_data.resolution;
+    stair_mask_origin_x_ = mask_data.origin_x;
+    stair_mask_origin_y_ = mask_data.origin_y;
+    stair_mask_pixels_ = std::move(mask_data.pixels);
+    stair_mask_loaded_ = true;
+    loaded_stair_mask_yaml_ = yaml_path;
+
+    RCLCPP_INFO(logger_, "stair mask 加载成功: %dx%d @ %.3f (%s)",
+                stair_mask_width_, stair_mask_height_, stair_mask_resolution_,
+                mask_data.image_path.c_str());
+    return true;
+}
+
+bool LayeredMapManager::worldToGlobalIndex(double wx, double wy, int& idx) const {
+    if (width_ <= 0 || height_ <= 0 || resolution_ <= 0.0) {
+        return false;
+    }
+    int gx = static_cast<int>((wx - origin_x_) / resolution_);
+    int gy = static_cast<int>((wy - origin_y_) / resolution_);
+    if (gx < 0 || gx >= width_ || gy < 0 || gy >= height_) {
+        return false;
+    }
+    idx = gy * width_ + gx;
+    return true;
+}
+
+void LayeredMapManager::rebuildStairLayerCache() {
+    stair_clear_indices_.clear();
+
+    if (!stair_layer_cfg_.enable || stair_layer_cfg_.mask_yaml_path.empty()) {
+        return;
+    }
+
+    if (!static_map_) {
+        return;
+    }
+
+    if (!stair_mask_loaded_ || loaded_stair_mask_yaml_ != stair_layer_cfg_.mask_yaml_path) {
+        if (!loadStairMaskFromYaml(stair_layer_cfg_.mask_yaml_path)) {
+            RCLCPP_WARN(logger_, "stair_layer 已启用但 mask 加载失败，跳过覆盖");
+            return;
+        }
+    }
+
+    if (stair_mask_width_ <= 0 || stair_mask_height_ <= 0 || stair_mask_pixels_.empty()) {
+        return;
+    }
+
+    std::vector<uint8_t> class_map(static_cast<size_t>(stair_mask_width_ * stair_mask_height_), 0);
+    std::vector<std::pair<int, int>> black_cells;
+    black_cells.reserve(1024);
+
+    for (int my = 0; my < stair_mask_height_; ++my) {
+        for (int mx = 0; mx < stair_mask_width_; ++mx) {
+            int pgm_idx = (stair_mask_height_ - 1 - my) * stair_mask_width_ + mx;
+            int mask_idx = my * stair_mask_width_ + mx;
+            int v = stair_mask_pixels_[pgm_idx];
+
+            if (v >= stair_layer_cfg_.black_min && v <= stair_layer_cfg_.black_max) {
+                class_map[mask_idx] = 1;
+                black_cells.emplace_back(mx, my);
+            } else if (v >= stair_layer_cfg_.gray_min && v <= stair_layer_cfg_.gray_max) {
+                class_map[mask_idx] = 2;
+            }
+        }
+    }
+
+    if (black_cells.empty()) {
+        RCLCPP_WARN(logger_, "stair_layer: mask 中未找到黑线像素");
+        return;
+    }
+
+    std::unordered_set<int> clear_idx_set;
+    clear_idx_set.reserve(black_cells.size() * 4);
+
+    const int search_r = std::max(1, stair_layer_cfg_.pair_search_radius_cells);
+    const int clear_steps = std::max(1, static_cast<int>(std::ceil(stair_layer_cfg_.clear_perp_dist_m / resolution_)));
+
+    for (size_t i = 0; i < black_cells.size(); ++i) {
+        int bx = black_cells[i].first;
+        int by = black_cells[i].second;
+
+        double best_dist2 = std::numeric_limits<double>::max();
+        int gx_best = -1;
+        int gy_best = -1;
+
+        for (int dy = -search_r; dy <= search_r; ++dy) {
+            for (int dx = -search_r; dx <= search_r; ++dx) {
+                int gx = bx + dx;
+                int gy = by + dy;
+                if (gx < 0 || gx >= stair_mask_width_ || gy < 0 || gy >= stair_mask_height_) {
+                    continue;
+                }
+                int idx = gy * stair_mask_width_ + gx;
+                if (class_map[idx] != 2) {
+                    continue;
+                }
+                double d2 = static_cast<double>(dx * dx + dy * dy);
+                if (d2 < best_dist2) {
+                    best_dist2 = d2;
+                    gx_best = gx;
+                    gy_best = gy;
+                }
+            }
+        }
+
+        if (gx_best < 0 || gy_best < 0) {
+            continue;
+        }
+
+        double bwx = stair_mask_origin_x_ + (bx + 0.5) * stair_mask_resolution_;
+        double bwy = stair_mask_origin_y_ + (by + 0.5) * stair_mask_resolution_;
+        double gwx = stair_mask_origin_x_ + (gx_best + 0.5) * stair_mask_resolution_;
+        double gwy = stair_mask_origin_y_ + (gy_best + 0.5) * stair_mask_resolution_;
+
+        double nx = bwx - gwx;
+        double ny = bwy - gwy;
+        double norm = std::hypot(nx, ny);
+        if (norm < 1e-5) {
+            continue;
+        }
+        nx /= norm;
+        ny /= norm;
+
+        for (int s = 0; s <= clear_steps; ++s) {
+            double wx = bwx + nx * (s * resolution_);
+            double wy = bwy + ny * (s * resolution_);
+            int global_idx = -1;
+            if (worldToGlobalIndex(wx, wy, global_idx)) {
+                clear_idx_set.insert(global_idx);
+            }
+        }
+
+    }
+
+    stair_clear_indices_.assign(clear_idx_set.begin(), clear_idx_set.end());
+
+    RCLCPP_INFO(logger_, "stair_layer: 黑线=%zu, 清除栅格=%zu",
+                black_cells.size(), stair_clear_indices_.size());
+}
+
+void LayeredMapManager::applyStairLayerPolicy() {
+    if (!stair_layer_cfg_.enable || stair_clear_indices_.empty()) {
+        return;
+    }
+
+    if (fused_map_) {
+        for (int idx : stair_clear_indices_) {
+            if (idx >= 0 && idx < static_cast<int>(fused_map_->data.size())) {
+                fused_map_->data[idx] = 0;
+            }
+        }
+    }
 }
 
 bool LayeredMapManager::loadStaticMap(const std::string& yaml_path,
@@ -53,6 +238,9 @@ bool LayeredMapManager::loadStaticMap(const std::string& yaml_path,
     // 初始化融合地图（与静态地图相同大小）
     fused_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
     *fused_map_ = *static_map_;  // 初始时等于静态地图
+
+    rebuildStairLayerCache();
+    applyStairLayerPolicy();
     
     // 构建costmap
     rebuildCostmap();
@@ -83,6 +271,9 @@ void LayeredMapManager::setStaticMap(nav_msgs::msg::OccupancyGrid::SharedPtr map
     // 初始化融合地图
     fused_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
     *fused_map_ = *static_map_;
+
+    rebuildStairLayerCache();
+    applyStairLayerPolicy();
     
     rebuildCostmap();
     if (esdf_enabled_) {
@@ -134,6 +325,9 @@ void LayeredMapManager::createBlankStaticMap(double width_m, double height_m,
     // 初始化融合地图
     fused_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
     *fused_map_ = *static_map_;
+
+    rebuildStairLayerCache();
+    applyStairLayerPolicy();
     
     // 设置膨胀参数并构建Costmap
     inflation_params_ = params;
@@ -292,6 +486,8 @@ void LayeredMapManager::updateDynamicLayer(
     
     // 更新边界记录
     last_dynamic_bounds_ = new_bounds;
+
+    applyStairLayerPolicy();
     
     // 7. 共享EDT计算优化：ESDF和Costmap复用同一次距离场计算
     auto t_start = std::chrono::high_resolution_clock::now();

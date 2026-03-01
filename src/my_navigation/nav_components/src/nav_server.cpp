@@ -108,10 +108,32 @@ public:
         declare_parameter("enable_static_layer", true);
         declare_parameter("enable_dynamic_layer", false);
         declare_parameter("dynamic_layer_topic", "/rog_map/map_2d");
+
+        // 特殊地形层（stair layer）配置
+        declare_parameter("special_terrain.enable_stair_layer", false);
+        declare_parameter("special_terrain.stair_mask_yaml", "");
+        declare_parameter("special_terrain.stair_clear_perp_dist_m", 0.4);
+        declare_parameter("special_terrain.black_min", 0);
+        declare_parameter("special_terrain.black_max", 40);
+        declare_parameter("special_terrain.gray_min", 90);
+        declare_parameter("special_terrain.gray_max", 170);
+        declare_parameter("special_terrain.pair_search_radius_cells", 4);
         
         enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
         enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();
         dynamic_layer_topic_ = get_parameter("dynamic_layer_topic").as_string();
+
+        nav_components::LayeredMapManager::StairLayerConfig stair_layer_cfg;
+        stair_layer_cfg.enable = get_parameter("special_terrain.enable_stair_layer").as_bool();
+        stair_layer_cfg.mask_yaml_path = get_parameter("special_terrain.stair_mask_yaml").as_string();
+        stair_layer_cfg.clear_perp_dist_m =
+            get_parameter("special_terrain.stair_clear_perp_dist_m").as_double();
+        stair_layer_cfg.black_min = get_parameter("special_terrain.black_min").as_int();
+        stair_layer_cfg.black_max = get_parameter("special_terrain.black_max").as_int();
+        stair_layer_cfg.gray_min = get_parameter("special_terrain.gray_min").as_int();
+        stair_layer_cfg.gray_max = get_parameter("special_terrain.gray_max").as_int();
+        stair_layer_cfg.pair_search_radius_cells =
+            get_parameter("special_terrain.pair_search_radius_cells").as_int();
         
         // 膨胀参数
         declare_parameter("inflation.radius", 0.5);
@@ -153,6 +175,14 @@ public:
         map_manager_->setEsdfVisMaxDist(esdf_vis_max_dist_);
         map_manager_->setEnablePerformanceLogging(enable_performance_logging);
         map_manager_->setStaticLayerEnabled(enable_static_layer_);  // 设置静态层开关
+        map_manager_->setStairLayerConfig(stair_layer_cfg);
+
+        if (stair_layer_cfg.enable) {
+            RCLCPP_INFO(get_logger(),
+                        "stair_layer 启用: mask=%s, clear_perp=%.2fm",
+                        stair_layer_cfg.mask_yaml_path.c_str(),
+                        stair_layer_cfg.clear_perp_dist_m);
+        }
         
         initComponents();
         
@@ -166,15 +196,11 @@ public:
                     RCLCPP_INFO(get_logger(), "静态地图加载完成");
                 }
             } else {
-                // 订阅外部静态地图
-                static_map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
-                    "map", rclcpp::QoS(1).transient_local(),
-                    [this](nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-                        map_manager_->setInflationParams(inflation_params_);
-                        map_manager_->setStaticMap(msg);
-                        planner_.setMap(map_manager_);
-                        RCLCPP_INFO(get_logger(), "静态地图更新: %dx%d", msg->info.width, msg->info.height);
-                    });
+                RCLCPP_ERROR(get_logger(),
+                             "enable_static_layer=true 但 map_file 为空，回退为创建空白静态地图");
+                map_manager_->createBlankStaticMap(50.0, 50.0, 0.05, inflation_params);
+                planner_.setMap(map_manager_);
+                startMapPublisher();
             }
         } else {
             // 静态层禁用时，创建空白地图框架（50m x 50m @ 0.05m/cell）
@@ -838,7 +864,6 @@ private:
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr fused_map_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr esdf_pub_;
-    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr static_map_sub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr dynamic_layer_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
     

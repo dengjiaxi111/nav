@@ -15,6 +15,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <string>
 
 namespace nav_components {
 
@@ -122,6 +123,19 @@ public:
      */
     void setStaticLayerEnabled(bool enabled) { static_layer_enabled_ = enabled; }
 
+    struct StairLayerConfig {
+        bool enable{false};
+        std::string mask_yaml_path{};
+        double clear_perp_dist_m{0.4};
+        int black_min{0};
+        int black_max{40};
+        int gray_min{90};
+        int gray_max{170};
+        int pair_search_radius_cells{4};
+    };
+
+    void setStairLayerConfig(const StairLayerConfig& cfg);
+
     // ============ MapInterface实现 ============
 
     nav_core::MapType type() const override { return nav_core::MapType::COSTMAP; }
@@ -172,6 +186,11 @@ private:
      */
     bool transformOdomToMap(double ox, double oy, double& mx, double& my) const;
 
+    bool loadStairMaskFromYaml(const std::string& yaml_path);
+    void rebuildStairLayerCache();
+    void applyStairLayerPolicy();
+    bool worldToGlobalIndex(double wx, double wy, int& idx) const;
+
     // ============ 成员变量 ============
 
     rclcpp::Node* node_ = nullptr;
@@ -216,6 +235,21 @@ private:
         int min_y = 0, max_y = 0;
         bool valid = false;
     } last_dynamic_bounds_;
+
+    // 特殊地形层（stair layer）配置
+    StairLayerConfig stair_layer_cfg_{};
+    bool stair_mask_loaded_{false};
+    std::string loaded_stair_mask_yaml_{};
+
+    int stair_mask_width_{0};
+    int stair_mask_height_{0};
+    int stair_mask_max_val_{255};
+    double stair_mask_resolution_{0.05};
+    double stair_mask_origin_x_{0.0};
+    double stair_mask_origin_y_{0.0};
+    std::vector<uint8_t> stair_mask_pixels_{};
+
+    std::vector<int> stair_clear_indices_{};
 };
 
 }  // namespace nav_components

@@ -36,6 +36,17 @@ nav_server:
     enable_dynamic_layer: false  # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
+
+    # ============ 特殊地形层（stair layer）============
+    special_terrain:
+      enable_stair_layer: false
+      stair_mask_yaml: ""   # 例如: /abs/path/to/stair_mask.yaml
+      stair_clear_perp_dist_m: 0.4
+      black_min: 0
+      black_max: 40
+      gray_min: 90
+      gray_max: 170
+      pair_search_radius_cells: 4
     
     # ============ 地图更新性能日志 ============
     enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)
