@@ -69,20 +69,25 @@ namespace small_point_lio {
 
     // Batch点云观测结果结构（参考BATCH_LIWO论文公式3.48）
     struct batch_point_measurement_result {
-        bool valid;
-        int num_valid_points;  // 有效点数量
+        bool valid = false;
+        int num_valid_points = 0;  // 有效点数量
+        int capacity_points = 0;   // 预分配容量
         Eigen::Matrix<state::value_type, Eigen::Dynamic, 1> z;  // 残差向量 [z0, z1, ..., zN]
         Eigen::Matrix<state::value_type, Eigen::Dynamic, 12> H;  // 雅可比矩阵 [H0; H1; ...; HN]
-        Eigen::Matrix<state::value_type, Eigen::Dynamic, Eigen::Dynamic> R;  // 测量噪声协方差矩阵（对角阵）
+        Eigen::Matrix<state::value_type, Eigen::Dynamic, 1> R_diag;  // 测量噪声协方差对角线
         
-        batch_point_measurement_result() : valid(false), num_valid_points(0) {}
-        
-        void resize(int n) {
-            num_valid_points = n;
-            z.resize(n);
-            H.resize(n, 12);
-            R.resize(n, n);
-            R.setZero();
+        void ensure_capacity(int n) {
+            if (n <= capacity_points) {
+                return;
+            }
+            capacity_points = n;
+            z.resize(capacity_points);
+            H.resize(capacity_points, 12);
+            R_diag.resize(capacity_points);
+        }
+
+        void reserve_capacity(int n) {
+            ensure_capacity(n);
         }
     };
 
@@ -101,9 +106,34 @@ namespace small_point_lio {
         measurement_model_point h_point;
         measurement_model_imu h_imu;
         measurement_model_point_batch h_point_batch;
+        batch_point_measurement_result batch_measurement_result;
+        int batch_workspace_capacity = 0;
+        Eigen::Matrix<state::value_type, state::DIM, Eigen::Dynamic> batch_PHT;
+        Eigen::Matrix<state::value_type, Eigen::Dynamic, Eigen::Dynamic> batch_HPHT;
+        Eigen::Matrix<state::value_type, state::DIM, Eigen::Dynamic> batch_K;
+        Eigen::Matrix<state::value_type, Eigen::Dynamic, state::DIM> batch_HP;
+
+        inline void ensure_batch_workspace(int n) {
+            if (n <= batch_workspace_capacity) {
+                return;
+            }
+            batch_workspace_capacity = n;
+            batch_PHT.resize(state::DIM, batch_workspace_capacity);
+            batch_HPHT.resize(batch_workspace_capacity, batch_workspace_capacity);
+            batch_K.resize(state::DIM, batch_workspace_capacity);
+            batch_HP.resize(batch_workspace_capacity, state::DIM);
+        }
 
     public:
         eskf() = default;
+
+        inline void reserve_batch_buffers(int max_points) {
+            if (max_points <= 0) {
+                return;
+            }
+            batch_measurement_result.reserve_capacity(max_points);
+            ensure_batch_workspace(max_points);
+        }
 
         inline void init(const measurement_model_point &h_point, const measurement_model_imu &h_imu) {
             this->h_point = h_point;
@@ -201,40 +231,48 @@ namespace small_point_lio {
 
         // Batch点云更新（参考BATCH_LIWO论文公式3.62-3.66）
         inline bool update_point_batch() {
-            batch_point_measurement_result measurement_result;
-            h_point_batch(x, measurement_result);
+            h_point_batch(x, batch_measurement_result);
             
-            if (!measurement_result.valid || measurement_result.num_valid_points == 0) {
+            if (!batch_measurement_result.valid || batch_measurement_result.num_valid_points == 0) {
                 return false;
             }
             
-            int N = measurement_result.num_valid_points;
+            int N = batch_measurement_result.num_valid_points;
+            if (N > batch_workspace_capacity) [[unlikely]] {
+                ensure_batch_workspace(N);
+            }
+
+            auto PHT = batch_PHT.leftCols(N);
+            auto HPHT = batch_HPHT.topLeftCorner(N, N);
+            auto K = batch_K.leftCols(N);
+            auto HP = batch_HP.topRows(N);
+            const auto H = batch_measurement_result.H.topRows(N);
+            const auto z = batch_measurement_result.z.head(N);
+            const auto R_diag = batch_measurement_result.R_diag.head(N);
             
             // 计算 P*H^T （DIM x N）
-            Eigen::Matrix<state::value_type, state::DIM, Eigen::Dynamic> PHT(state::DIM, N);
-            PHT = P.template block<state::DIM, 12>(0, 0) * measurement_result.H.transpose();
+            PHT.noalias() = P.template block<state::DIM, 12>(0, 0) * H.transpose();
             
             // 计算 H*P*H^T + R （N x N）
-            Eigen::Matrix<state::value_type, Eigen::Dynamic, Eigen::Dynamic> HPHT(N, N);
-            HPHT = measurement_result.H * PHT.topRows(12) + measurement_result.R;
+            HPHT.noalias() = H * PHT.topRows(12);
+            HPHT.diagonal() += R_diag;
             
             // 使用LDLT分解求解 K = P*H^T * (H*P*H^T + R)^(-1)
-            Eigen::LDLT<Eigen::Matrix<state::value_type, Eigen::Dynamic, Eigen::Dynamic>> ldlt(HPHT);
+            Eigen::LDLT<Eigen::Matrix<state::value_type, Eigen::Dynamic, Eigen::Dynamic>> ldlt;
+            ldlt.compute(HPHT);
             if (ldlt.info() != Eigen::Success) [[unlikely]] {
                 return false;
             }
             
             // 计算卡尔曼增益 K （DIM x N）
-            Eigen::Matrix<state::value_type, state::DIM, Eigen::Dynamic> K(state::DIM, N);
-            K = PHT * ldlt.solve(Eigen::Matrix<state::value_type, Eigen::Dynamic, Eigen::Dynamic>::Identity(N, N));
+            K = ldlt.solve(PHT.transpose()).transpose();
             
             // 状态更新：x = x ⊞ K*z
-            Eigen::Matrix<state::value_type, state::DIM, 1> dx = K * measurement_result.z;
+            Eigen::Matrix<state::value_type, state::DIM, 1> dx = K * z;
             x.plus(dx);
             
             // 协方差更新：P = P - K*H*P
-            Eigen::Matrix<state::value_type, Eigen::Dynamic, state::DIM> HP(N, state::DIM);
-            HP = measurement_result.H * P.template block<12, state::DIM>(0, 0);
+            HP.noalias() = H * P.template block<12, state::DIM>(0, 0);
             P = P - K * HP;
             
             return true;
