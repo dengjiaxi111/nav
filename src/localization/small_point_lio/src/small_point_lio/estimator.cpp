@@ -30,6 +30,14 @@ namespace small_point_lio {
         kf.P.block<3, 3>(state::gravity_index, state::gravity_index).diagonal().fill(0.0001);
         kf.P.block<3, 3>(state::bg_index, state::bg_index).diagonal().fill(0.001);
         kf.P.block<3, 3>(state::ba_index, state::ba_index).diagonal().fill(0.001);
+
+        if (parameters->use_batch_update && parameters->batch_max_points > 0) {
+            kf.reserve_batch_buffers(parameters->batch_max_points);
+            batch_points_lidar_frame.reserve(parameters->batch_max_points);
+            batch_points_timestamps.reserve(parameters->batch_max_points);
+            batch_points_undistorted.reserve(parameters->batch_max_points);
+            batch_points_odom_frame.reserve(parameters->batch_max_points);
+        }
     }
 
     [[nodiscard]] Eigen::Matrix<state::value_type, state::DIM, state::DIM> Estimator::process_noise_cov() const {
@@ -174,6 +182,7 @@ namespace small_point_lio {
     // Batch点云观测模型（参考BATCH_LIWO公式3.48）
     void Estimator::h_point_batch(const state &s, batch_point_measurement_result &measurement_result) {
         measurement_result.valid = false;
+        measurement_result.num_valid_points = 0;
         
         int num_points = static_cast<int>(batch_points_lidar_frame.size());
         if (num_points == 0) {
@@ -192,14 +201,9 @@ namespace small_point_lio {
         batch_points_undistorted.reserve(num_points);
         batch_points_odom_frame.clear();
         batch_points_odom_frame.reserve(num_points);
-        
-        std::vector<state::value_type> residuals;
-        std::vector<Eigen::Matrix<state::value_type, 1, 12>> jacobians;
-        std::vector<state::value_type> covariances;
-        
-        residuals.reserve(num_points);
-        jacobians.reserve(num_points);
-        covariances.reserve(num_points);
+
+        measurement_result.ensure_capacity(num_points);
+        int num_valid = 0;
         
         // 遍历Batch中的每个点
         for (int i = 0; i < num_points; ++i) {
@@ -283,23 +287,18 @@ namespace small_point_lio {
                 H << normal0.transpose(), A.transpose(), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
             }
             
-            residuals.push_back(-point_distance);
-            jacobians.push_back(H);
-            covariances.push_back(static_cast<state::value_type>(parameters->laser_point_cov));
+            measurement_result.z(num_valid) = -point_distance;
+            measurement_result.H.row(num_valid) = H;
+            measurement_result.R_diag(num_valid) = static_cast<state::value_type>(parameters->laser_point_cov);
+            ++num_valid;
         }
-        
+
         // 8. 组装Batch观测结果（公式3.48）
-        int num_valid = static_cast<int>(residuals.size());
         if (num_valid == 0) {
             return;
         }
-        
-        measurement_result.resize(num_valid);
-        for (int i = 0; i < num_valid; ++i) {
-            measurement_result.z(i) = residuals[i];
-            measurement_result.H.row(i) = jacobians[i];
-            measurement_result.R(i, i) = covariances[i];
-        }
+
+        measurement_result.num_valid_points = num_valid;
         
         measurement_result.valid = true;
     }
