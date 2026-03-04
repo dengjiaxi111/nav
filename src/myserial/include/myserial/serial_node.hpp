@@ -7,6 +7,8 @@
 #include <deque>
 #include <functional>
 #include <chrono>
+#include <array>
+#include <random>
 
 #include "myprotocol.hpp"
 #include <tf2/utils.h>
@@ -14,7 +16,7 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/transform_broadcaster.h"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "std_msgs/msg/u_int8.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -140,7 +142,14 @@ public:
                 continue;
             }
             RCLCPP_INFO(this->get_logger(),"打开串口成功！");
-            player_ = std::make_shared<AsyncAudioPlayer>(music_package_path_ + "/music/Windows_logon.wav");
+
+            
+
+            const std::array<std::string, 3> music_files = {"曼波.mp3", "欧耶.mp3", "wow.mp3"};
+            static thread_local std::mt19937 rng{std::random_device{}()};
+            std::uniform_int_distribution<size_t> dist(0, music_files.size()-1 );
+            player_ = std::make_shared<AsyncAudioPlayer>(
+                music_package_path_ + "/music/" + music_files[dist(rng)]);
             open_failed_cnt_ = 0;
             break;
         }

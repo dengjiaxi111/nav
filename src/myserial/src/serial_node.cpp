@@ -1,4 +1,6 @@
 #include<iostream>
+#include<sstream>
+#include<iomanip>
 #include "myserial/serial_node.hpp"
 
 namespace rm
@@ -80,13 +82,31 @@ void SerialNode::parse_buffer()
 
     while (buffer_.size() >= WHOLE_GET_LEN) 
     {
+        if (debug_flag_ && !buffer_.empty()) {
+            static auto last_buffer_log_time = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_buffer_log_time >= std::chrono::milliseconds(500)) {
+                std::ostringstream oss;
+                oss << "Buffer[" << buffer_.size() << "]:";
+                for (size_t i = 0; i < buffer_.size(); ++i) {
+                    oss << ' '
+                        << std::uppercase << std::hex
+                        << std::setw(2) << std::setfill('0')
+                        << static_cast<int>(buffer_[i]);
+                }
+                RCLCPP_INFO(this->get_logger(), "%s", oss.str().c_str());
+                last_buffer_log_time = now;
+            }
+        }
         while(!buffer_.empty() && buffer_[0] != HEADER){
+            if(debug_flag_) RCLCPP_WARN(this->get_logger(), "Discarding non-header: 0x%02X", buffer_[0]);
             buffer_.pop_front();
         }
 
         if (buffer_.size() < WHOLE_GET_LEN) return;
 
         if (buffer_[WHOLE_GET_LEN - 1] != TAIL) {
+            // if(debug_flag_) RCLCPP_WARN(this->get_logger(), "Invalid Tail: 0x%02X at index %d", buffer_[WHOLE_GET_LEN-1], WHOLE_GET_LEN-1);
             if (enable_improved_framing_) {
                 // 改进的帧解析：只删除当前错误的帧头，继续搜索下一个帧头
                 buffer_.pop_front();
@@ -102,13 +122,16 @@ void SerialNode::parse_buffer()
 
         buffer_.erase(buffer_.begin(), buffer_.begin()+WHOLE_GET_LEN);
 
+        if(debug_flag_) 
+            RCLCPP_INFO(this->get_logger(), "Successfully parsed a frame! Header=0x%02X, Tail=0x%02X", HEADER, TAIL);
+
         if (callback_) {
             my_logger_->info("[RX] {}", _get_frame_.to_string());
-            if(debug_flag_){
-                _get_frame_.print();
-                RCLCPP_INFO(this->get_logger(), "成功接收一帧数据");
-                RCLCPP_INFO(this->get_logger(), "当前时间：%.6f 秒", this->now().seconds());
-            }
+            // if(debug_flag_){
+            //     _get_frame_.print();
+            //     RCLCPP_INFO(this->get_logger(), "成功接收一帧数据");
+            //     RCLCPP_INFO(this->get_logger(), "当前时间：%.6f 秒", this->now().seconds());
+            // }
             callback_(_get_frame_);
         }
     }
@@ -117,6 +140,7 @@ void SerialNode::parse_buffer()
 // 在ROS中发布收到的消息
 void SerialNode::msg_callback(const WholeGetFrame& msg)
 {
+    std::cout<< "Received a frame in msg_callback!" << std::endl;
     // RTT 测量：检查是否收到回传的时间戳
     if (enable_rtt_measure_) {
         // STM32 应该将收到的 _buff_yaw_diff_angle 值转为 float 放到 _target_position_x 回传
@@ -326,9 +350,9 @@ void SerialNode::send_msg()
         memcpy(packet.data(), &_send_frame_, WHOLE_SEND_LEN);
 
         my_logger_->info("[TX] {}", _send_frame_.to_string());
-        if(debug_flag_){
-            _send_frame_.print();
-        }
+        // if(debug_flag_){
+        //     _send_frame_.print();
+        // }
         asio::async_write(port_, asio::buffer(packet),
             asio::bind_executor(strand_,
                 [this](const boost::system::error_code& ec, size_t) {
