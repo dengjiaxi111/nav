@@ -18,7 +18,22 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     enable_auto_prune_ = node_->declare_parameter("planner.enable_auto_prune", true);
     goal_tolerance_ = node_->declare_parameter("planner.goal_tolerance", 0.2);
     obstacle_check_threshold_ = node_->declare_parameter("planner.obstacle_check_threshold", 95);
+    esdf_warn_min_safe_dist_ = node_->declare_parameter("planner.esdf_warn_min_safe_dist", 0.12);
+    start_deviation_threshold_ = node_->declare_parameter("planner.start_deviation_threshold", 1.0);
+    astar_max_attempts_ = node_->declare_parameter("planner.astar_max_attempts", 2);
+    astar_threshold_step_ = node_->declare_parameter("planner.astar_threshold_step", 10);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
+
+    if (astar_max_attempts_ < 1) {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.astar_max_attempts=%d 非法，自动修正为 1", astar_max_attempts_);
+        astar_max_attempts_ = 1;
+    }
+    if (astar_threshold_step_ < 0) {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.astar_threshold_step=%d 非法，自动修正为 0", astar_threshold_step_);
+        astar_threshold_step_ = 0;
+    }
     
     SmoothParams smooth_params;
     smooth_params.resample_interval = node_->declare_parameter("planner.resample_interval", 0.3);
@@ -42,6 +57,9 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     smooth_params.align_entry_points = node_->declare_parameter("planner.align_entry_points", 2);
     smooth_params.narrow_min_consecutive = node_->declare_parameter("planner.narrow_min_consecutive", 3);
     
+    // TODO: 地形跨越垂直修正参数
+
+
     smoother_.setParams(smooth_params);
     
     // 创建调试可视化发布器
@@ -58,17 +76,7 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
         return;
     }
     
-    // COSTMAP 和 OCCUPANCY_GRID 格式兼容
-    auto map_type = map->type();
-    if (map_type != nav_core::MapType::OCCUPANCY_GRID && 
-        map_type != nav_core::MapType::COSTMAP) {
-        RCLCPP_ERROR(node_->get_logger(), 
-            "SimplePlanner 仅支持 OccupancyGrid/Costmap 地图");
-        grid_map_ = nullptr;
-        return;
-    }
-    
-    // 从 LayeredMapManager 获取 costmap（膨胀后的地图）
+    // 统一使用 LayeredMapManager 提供的 costmap（膨胀后的地图）
     map_manager_ = std::dynamic_pointer_cast<LayeredMapManager>(map);
     if (map_manager_ && map_manager_->getCostmap()) {
         grid_map_ = map_manager_->getCostmap();
@@ -87,7 +95,7 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
         }
     } else {
         RCLCPP_ERROR(node_->get_logger(), 
-            "SimplePlanner: 无法转换为 LayeredMapManager 或获取 costmap");
+            "SimplePlanner: 需要 LayeredMapManager 且 costmap 可用");
         grid_map_ = nullptr;
     }
 }
@@ -174,7 +182,7 @@ bool SimplePlanner::plan(
     }
     
     if (!grid_map_) {
-        RCLCPP_ERROR(node_->get_logger(), "地图未设置或类型不兼容");
+        RCLCPP_ERROR(node_->get_logger(), "地图未设置或 costmap 不可用");
         return false;
     }
     
@@ -189,31 +197,25 @@ bool SimplePlanner::plan(
                 min_dist_to_path = std::min(min_dist_to_path, dist);
             }
             
-            // 起点偏离阈值：1.0米（可调参数）
-            const double start_deviation_threshold = 1.0;
-            if (min_dist_to_path > start_deviation_threshold) {
+            if (min_dist_to_path > start_deviation_threshold_) {
                 RCLCPP_WARN(node_->get_logger(), 
                     "规划器: 起点偏离缓存路径过远 (%.2f m > %.2f m)，重新规划",
-                    min_dist_to_path, start_deviation_threshold);
+                    min_dist_to_path, start_deviation_threshold_);
                 // 清空缓存，强制重新规划
                 cached_path_ = nav_msgs::msg::Path();
-            } else if (validatePath(cached_path_)) {
+            } 
+            else if (validatePath(cached_path_)) {
                 // 起点在路径附近且路径无障碍物，复用缓存
-                RCLCPP_INFO(node_->get_logger(), 
-                    "规划器: 目标未变化且缓存路径有效，复用缓存 (%zu 点)", 
-                    cached_path_.poses.size());
                 
                 if (enable_auto_prune_) {
                     path = prunePath(cached_path_, start);
-                    RCLCPP_INFO(node_->get_logger(), 
-                        "规划器: 剪枝后路径 %zu → %zu 点", 
-                        cached_path_.poses.size(), path.poses.size());
                 } else {
                     path = cached_path_;
                 }
                 return true;
             } else {
-                RCLCPP_WARN(node_->get_logger(), "规划器: 缓存路径与障碍物重合，重新规划");
+                // 清空缓存，强制重新规划
+                cached_path_ = nav_msgs::msg::Path();
             }
         }
     }
@@ -225,7 +227,7 @@ bool SimplePlanner::plan(
         return false;
     }
     
-    // 起点终点有效性检查（纯粹检查，不做脱困处理）
+    // 起点终点有效性检查
     if (!isValid(sx, sy)) {
         RCLCPP_ERROR(node_->get_logger(), "起点(%d,%d)在障碍物中", sx, sy);
         return false;
@@ -249,13 +251,15 @@ bool SimplePlanner::plan(
         }
     }
     
-    const int max_attempts = 2;
-    const int threshold_step = 10;
+    const int max_attempts = astar_max_attempts_;
+    const int threshold_step = astar_threshold_step_;
+    const int original_threshold = obstacle_threshold_;
+    int attempts_done = 0;
     
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
-        int current_threshold = obstacle_threshold_ - attempt * threshold_step;
+        attempts_done++;
+        int current_threshold = std::clamp(original_threshold - attempt * threshold_step, 1, 100);
         
-        int original_threshold = obstacle_threshold_;
         obstacle_threshold_ = current_threshold;
         
         nav_msgs::msg::Path raw_path;
@@ -279,7 +283,7 @@ bool SimplePlanner::plan(
                     double min_dist = 1e9;
                     geometry_msgs::msg::PoseStamped worst_pose;
                     int unsafe_count = 0;
-                    const double min_safe_dist = 0.12;
+                    const double min_safe_dist = esdf_warn_min_safe_dist_;
                     
                     for (const auto& pose : smoothed_path.poses) {
                         double grad_x = 0, grad_y = 0;
@@ -324,9 +328,15 @@ bool SimplePlanner::plan(
             RCLCPP_DEBUG(node_->get_logger(), 
                 "路径验证失败 (阈值=%d)，尝试降低阈值", current_threshold);
         }
+
+        if (threshold_step == 0) {
+            break;
+        }
     }
     
-    RCLCPP_ERROR(node_->get_logger(), "规划失败: 尝试了 %d 次，均未成功", max_attempts);
+    RCLCPP_ERROR(node_->get_logger(),
+        "规划失败: 尝试了 %d 次，均未成功 (step=%d)",
+        attempts_done, threshold_step);
     return false;
 }
 

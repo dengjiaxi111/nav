@@ -197,7 +197,7 @@ public:
                 }
             } else {
                 RCLCPP_ERROR(get_logger(),
-                             "enable_static_layer=true 但 map_file 为空，回退为创建空白静态地图");
+                             "enable_static_layer=true 但 map_file 为空，创建空白静态地图");
                 map_manager_->createBlankStaticMap(50.0, 50.0, 0.05, inflation_params);
                 planner_.setMap(map_manager_);
                 startMapPublisher();
@@ -228,10 +228,6 @@ public:
         control_timer_ = create_wall_timer(
             std::chrono::duration<double>(1.0 / control_rate_),
             std::bind(&NavServer::controlLoop, this));
-        
-        RCLCPP_INFO(get_logger(), "导航服务器启动 (静态层: %s, 动态层: %s)", 
-                    enable_static_layer_ ? "启用" : "禁用",
-                    enable_dynamic_layer_ ? "启用" : "禁用");
     }
 
 private:
@@ -421,7 +417,7 @@ private:
             return;
         }
         
-        // 在规划前检查起点是否在障碍物中（仅用 Costmap）
+        // 在规划前检查起点是否在障碍物中
         auto costmap = map_manager_->getCostmap();
         if (costmap) {
             int mx, my;
@@ -436,7 +432,7 @@ private:
                 int8_t cost = costmap->data[idx];
                 if (cost >= escape_trigger_costmap_threshold_) {
                     RCLCPP_WARN(get_logger(), 
-                        "⚠️ 起点在障碍物中: costmap=%d >= %d，进入脱困模式", 
+                        "⚠️ 起点在障碍物中: costmap=%d >= %d", 
                         cost, escape_trigger_costmap_threshold_);
                     fsm_.transitionTo(nav_core::NavState::ESCAPING);
                     escape_start_time_ = std::chrono::steady_clock::now();
@@ -474,7 +470,7 @@ private:
             std::chrono::steady_clock::now() - escape_start_time_).count();
         
         if (elapsed > escape_timeout_) {
-            RCLCPP_ERROR(get_logger(), "⏱️ 脱困超时(%.1fs)，进入恢复模式", escape_timeout_);
+            RCLCPP_ERROR(get_logger(), "脱困超时(%.1fs)，进入恢复模式", escape_timeout_);
             stopRobot();
             escape_target_x_ = -1.0;  // 重置标记
             fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
@@ -485,7 +481,7 @@ private:
         if (escape_target_x_ < -0.5) {  // 使用 -1.0 作为"未初始化"标记
             // BFS 搜索最近的安全点
             if (!findSafeEscapeTarget()) {
-                RCLCPP_ERROR(get_logger(), "❌ 无法找到安全脱困点，进入恢复模式");
+                RCLCPP_ERROR(get_logger(), "无法找到安全脱困点，进入恢复模式");
                 stopRobot();
                 escape_target_x_ = -1.0;  // 重置标记
                 fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
@@ -493,7 +489,7 @@ private:
             }
             escape_phase_ = 0;  // 阶段0: 转向
             RCLCPP_WARN(get_logger(), 
-                "🎯 脱困目标: (%.2f, %.2f), 距离=%.2fm", 
+                "脱困目标: (%.2f, %.2f), 距离=%.2fm", 
                 escape_target_x_, escape_target_y_,
                 std::hypot(escape_target_x_ - current_pose_.pose.position.x,
                           escape_target_y_ - current_pose_.pose.position.y));
@@ -524,9 +520,8 @@ private:
                 cmd.angular.z = std::copysign(escape_rotation_speed_, yaw_error);
                 cmd_vel_pub_->publish(cmd);
                 RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-                    "🔄 阶段0: 旋转对齐, yaw_error=%.2f°", yaw_error * 180.0 / M_PI);
+                    "阶段0: 旋转对齐, yaw_error=%.2f°", yaw_error * 180.0 / M_PI);
             } else {
-                RCLCPP_INFO(get_logger(), "✅ 旋转完成，开始前进");
                 escape_phase_ = 1;
             }
             return;
@@ -536,7 +531,7 @@ private:
         if (escape_phase_ == 1) {
             // 检查是否到达目标
             if (dist_to_target < escape_position_tolerance_) {
-                RCLCPP_INFO(get_logger(), "✅ 脱困成功！到达安全点，重新规划");
+                RCLCPP_INFO(get_logger(), "脱困成功");
                 stopRobot();
                 escape_target_x_ = -1.0;  // 重置目标
                 fsm_.transitionTo(nav_core::NavState::PLANNING);
@@ -550,9 +545,6 @@ private:
                     current_pose_.pose.position.x, current_pose_.pose.position.y,
                     &gx, &gy);
                 if (esdf_dist > escape_target_safe_esdf_) {
-                    RCLCPP_INFO(get_logger(), 
-                        "✅ 已进入安全区域(ESDF=%.2fm > %.2fm)，重新规划", 
-                        esdf_dist, escape_target_safe_esdf_);
                     stopRobot();
                     escape_target_x_ = -1.0;
                     fsm_.transitionTo(nav_core::NavState::PLANNING);
@@ -574,7 +566,7 @@ private:
             cmd_vel_pub_->publish(cmd);
             
             RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-                "➡️  阶段1: 前进中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs", 
+                "阶段1: 前进中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs", 
                 dist_to_target, yaw_error * 180.0 / M_PI, elapsed);
         }
     }
@@ -602,16 +594,8 @@ private:
         int cx = static_cast<int>((current_pose_.pose.position.x - origin_x) / resolution);
         int cy = static_cast<int>((current_pose_.pose.position.y - origin_y) / resolution);
         
-        RCLCPP_INFO(get_logger(), 
-            "🔍 开始BFS搜索: 当前位置(%.2f, %.2f) -> 地图坐标(%d, %d), 地图尺寸=%dx%d, 分辨率=%.2fm",
-            current_pose_.pose.position.x, current_pose_.pose.position.y,
-            cx, cy, width, height, resolution);
-        
         // BFS 螺旋搜索，使用配置的最大半径
         int max_radius = static_cast<int>(escape_search_radius_ / resolution);
-        RCLCPP_INFO(get_logger(), 
-            "🔍 搜索参数: 半径=%.2fm(%d格), 目标ESDF>%.2fm, cost<99",
-            escape_search_radius_, max_radius, escape_target_safe_esdf_);
         
         int checked_cells = 0;
         int valid_cells = 0;
@@ -678,9 +662,6 @@ private:
     
     void doControlling() {
         control_count_++;
-        if (control_count_ == 1) {
-            RCLCPP_INFO(get_logger(), "🎮 Controller: 开始控制循环");
-        }
         
         auto wall_now = std::chrono::steady_clock::now();
         double time_since_check = std::chrono::duration<double>(
@@ -690,7 +671,7 @@ private:
             
             if (!current_path_.poses.empty() && !planner_.validatePath(current_path_)) {
                 RCLCPP_WARN(get_logger(), 
-                    "⚠️  路径验证失败: 检测到动态障碍物，触发重新规划");
+                    "检测到动态障碍物，触发重新规划");
                 stopRobot();
                 fsm_.transitionTo(nav_core::NavState::PLANNING);
                 return;
@@ -733,7 +714,7 @@ private:
         
         if (time_since_progress > controller_timeout_) {
             RCLCPP_ERROR(get_logger(), 
-                "❌ Controller: 控制超时 (%.1f秒无进展 > %.1f秒阈值)", 
+                "Controller: 控制超时 (%.1f秒无进展 > %.1f秒阈值)", 
                 time_since_progress, controller_timeout_);
             stopRobot();
             fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
@@ -754,22 +735,17 @@ private:
         geometry_msgs::msg::Twist cmd;
         auto result = controller_.computeVelocity(current_pose_, cmd);
         
-        if (control_count_ % 20 == 0) {
-            RCLCPP_INFO(get_logger(), "🎮 Controller: result=%d, v=%.2f, ω=%.2f, no_progress=%.1fs",
-                static_cast<int>(result), cmd.linear.x, cmd.angular.z, time_since_progress);
-        }
-        
         switch (result) {
             case nav_core::ControlResult::RUNNING:
                 cmd_vel_pub_->publish(cmd);
                 break;
             case nav_core::ControlResult::SUCCEEDED:
                 stopRobot();
-                RCLCPP_INFO(get_logger(), "✅ Controller: 到达目标!");
+                RCLCPP_INFO(get_logger(), "Controller: SUCCEEDED!");
                 fsm_.transitionTo(nav_core::NavState::SUCCEEDED);
                 break;
             case nav_core::ControlResult::FAILED:
-                RCLCPP_WARN(get_logger(), "❌ Controller: 控制失败");
+                RCLCPP_WARN(get_logger(), "Controller: CONTROL_FAILED");
                 fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
                 break;
         }
@@ -813,7 +789,7 @@ private:
     }
     
     void finishFailure() {
-        stopRobot();  // 🚨 安全第一：立即停止机器人
+        stopRobot();  
         
         if (goal_handle_) {
             auto result = std::make_shared<Navigate::Result>();
@@ -849,7 +825,7 @@ private:
     
     nav_core::NavFSM fsm_;
     nav_components::SimplePlanner planner_;
-    nav_components::NMPC controller_;  // 控制器: NMPC (可替换为 PurePursuit)
+    nav_components::NMPC controller_;  
     nav_components::RecoveryManager recovery_mgr_;
     
     rclcpp_action::Server<Navigate>::SharedPtr action_server_;
@@ -871,7 +847,7 @@ private:
     rclcpp::TimerBase::SharedPtr control_timer_;      // 控制循环
     rclcpp::TimerBase::SharedPtr map_pub_timer_;      // 地图发布（可视化）
     
-    // 分层地图管理器：管理静态层、动态层、融合地图、ESDF
+    // 分层地图管理器
     std::shared_ptr<nav_components::LayeredMapManager> map_manager_;
     
     geometry_msgs::msg::PoseStamped current_pose_;

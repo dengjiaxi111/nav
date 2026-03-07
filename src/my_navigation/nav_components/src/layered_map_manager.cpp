@@ -21,7 +21,7 @@ void LayeredMapManager::initialize(rclcpp::Node* node,
     tf_buffer_ = tf_buffer;
     logger_ = node_->get_logger();
     
-    // 读取坐标系参数（使用 get_parameter_or 更稳健，避免依赖参数声明顺序）
+    // 读取坐标系参数
     node_->get_parameter_or<std::string>("map_frame", map_frame_, map_frame_);
     node_->get_parameter_or<std::string>("odom_frame", odom_frame_, odom_frame_);
 
