@@ -18,7 +18,7 @@ class SimplePlanner : public nav_core::PlannerBase {
 public:
     void initialize(rclcpp::Node* node) override;
     
-    // 重写 setMap，检查地图类型
+    // 重写 setMap，接入 LayeredMapManager（统一从 costmap 取栅格）
     void setMap(nav_core::MapInterface::Ptr map) override;
     
     bool plan(
@@ -83,6 +83,10 @@ private:
     geometry_msgs::msg::PoseStamped cached_goal_;  // 缓存的目标
     double goal_tolerance_ = 0.2;  // 目标变化阈值(米)
     double obstacle_check_threshold_ = 95;  // 障碍物检查阈值
+    double esdf_warn_min_safe_dist_ = 0.12;  // 平滑后ESDF预警最小安全距离(米)
+    double start_deviation_threshold_ = 1.0;  // 起点偏离缓存路径阈值(米)
+    int astar_max_attempts_ = 2;  // A* 重试次数
+    int astar_threshold_step_ = 10;  // A* 每次重试降低的障碍物阈值步长
     bool enable_path_cache_ = true;  // 启用路径缓存
     bool enable_auto_prune_ = true;  // 启用自动剪枝
     double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
