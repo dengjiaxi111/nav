@@ -2,6 +2,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <boost/asio.hpp>
+#include <termios.h>
 #include <thread>
 #include <vector>
 #include <deque>
@@ -89,12 +90,16 @@ public:
         package_path_ = ament_index_cpp::get_package_share_directory("myserial");
         music_package_path_ = ament_index_cpp::get_package_share_directory("play_music");
 
-        chassis_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel_gimbal", 5, std::bind(&SerialNode::chas_cmd_callback, this, std::placeholders::_1));
+        chassis_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel", 5, std::bind(&SerialNode::chas_cmd_callback, this, std::placeholders::_1));
         path_sub_ = this->create_subscription<nav_msgs::msg::Path>("mypath", 5, std::bind(&SerialNode::path_callback, this, std::placeholders::_1));
         mode_sub_ = this->create_subscription<robots_msgs::msg::ModeCmd>("ModeCmd", 5, std::bind(&SerialNode::modecmd_callback, this, std::placeholders::_1));
         priority_sub_ = this->create_subscription<std_msgs::msg::UInt8>("/enemy_priority", 10,
             [this](const std_msgs::msg::UInt8::SharedPtr msg) {
                 enemy_priority_ = msg->data;
+            });
+        stair_mode_sub_ = this->create_subscription<std_msgs::msg::UInt8>("stair_mode", 10,
+            [this](const std_msgs::msg::UInt8::SharedPtr msg) {
+                _send_frame_._stair_mode = msg->data;
             });
         buff_yaw_diff_sub_ = this->create_subscription<std_msgs::msg::Float64>("/yaw_diff", 10,
             [this](const std_msgs::msg::Float64::SharedPtr msg) {
@@ -130,6 +135,19 @@ public:
             try {
                 //https://blog.csdn.net/m0_51152048/article/details/141321116 使用udev rules 固定名称
                 port_.open("/dev/mystm32");
+                
+                // 获取原生句柄并设置为 RAW 模式
+                int fd = port_.native_handle();
+                struct termios tty;
+                if (tcgetattr(fd, &tty) != 0) {
+                    RCLCPP_ERROR(this->get_logger(), "tcgetattr error");
+                } else {
+                    cfmakeraw(&tty);
+                    if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+                        RCLCPP_ERROR(this->get_logger(), "tcsetattr error");
+                    }
+                }
+
                 port_.set_option(serial_port::baud_rate(460800)); // 波特率
                 port_.set_option(serial_port::character_size(8));   // 数据位
                 port_.set_option(serial_port::parity(serial_port::parity::none)); //无校验
@@ -242,6 +260,7 @@ private:
     std::shared_ptr<tf2_ros::TransformBroadcaster> enemy_tf_pub_;
 
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr priority_sub_;
+    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr stair_mode_sub_;
     std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::Twist>> chassis_sub_;
     std::shared_ptr<rclcpp::Subscription<nav_msgs::msg::Path>> path_sub_;
     std::shared_ptr<rclcpp::Subscription<robots_msgs::msg::ModeCmd>> mode_sub_;

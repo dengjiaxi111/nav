@@ -25,7 +25,7 @@ namespace rm
     /**
      * @brief: 整体的发送通信结构体
      */
-    // 41B
+    // 42B
     struct __attribute__((__packed__)) WholeSendFrame
     {
         // 设置字段值
@@ -73,13 +73,14 @@ namespace rm
         /**
          * @brief: 路径点
          */
-        //23 Byte
+        //24 Byte
         uint8_t _intention = 0;
         uint16_t _start_x = 0;
         uint16_t _start_y = 0;
         int8_t _delta_x[9] = {0};
         int8_t _delta_y[9] = {0};
         int16_t _buff_yaw_diff_angle = 0;
+        uint8_t _stair_mode = 0;  
 
         uint8_t _eof = TAIL;
 
@@ -115,6 +116,7 @@ namespace rm
             cout << endl;
 
             cout << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
+            cout << "  Stair Mode: " << static_cast<int>(_stair_mode) << endl;
 
             cout << "===========================================================" << endl;
         }
@@ -153,6 +155,7 @@ namespace rm
             oss << std::endl;
 
             oss << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
+                oss << "  Stair Mode: " << static_cast<int>(_stair_mode) << std::endl;
 
             oss << "===========================================================" << std::endl;
             return oss.str();
@@ -162,7 +165,7 @@ namespace rm
     /**
      * @brief: slh: 整体的接收通信结构体
      */
-    //  95 Byte
+    //  96 Byte
     struct __attribute__((__packed__)) WholeGetFrame
     {
         uint8_t _sof = HEADER;
@@ -262,7 +265,10 @@ namespace rm
         // 8B 0x0303
         float _target_position_x = 0;
         float _target_position_y = 0;
-
+        
+        // 1B 底盘状态
+        uint8_t _chassis_status = 0; 
+        
         uint8_t _eof = TAIL;
 
         void print(void)

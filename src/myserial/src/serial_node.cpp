@@ -140,7 +140,7 @@ void SerialNode::parse_buffer()
 // 在ROS中发布收到的消息
 void SerialNode::msg_callback(const WholeGetFrame& msg)
 {
-    std::cout<< "Received a frame in msg_callback!" << std::endl;
+    //std::cout<< "Received a frame in msg_callback!" << std::endl;
     // RTT 测量：检查是否收到回传的时间戳
     if (enable_rtt_measure_) {
         // STM32 应该将收到的 _buff_yaw_diff_angle 值转为 float 放到 _target_position_x 回传
@@ -329,6 +329,7 @@ void SerialNode::send_msg()
             // 认为已超时
             _send_frame_._speed_x = 0;
             _send_frame_._speed_y = 0;
+            _send_frame_._speed_w = 0;
         }
         
         // RTT 测量：在发送帧中嵌入当前时间戳
