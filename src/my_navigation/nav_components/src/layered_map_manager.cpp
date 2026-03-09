@@ -40,6 +40,9 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
     if (!stair_layer_cfg_.enable) {
         stair_clear_indices_.clear();
         stair_forbidden_transitions_.clear();
+        stair_normal_x_.clear();
+        stair_normal_y_.clear();
+        stair_normal_valid_.clear();
         stair_mask_loaded_ = false;
         return;
     }
@@ -178,9 +181,42 @@ void LayeredMapManager::getForbiddenTransitionSegments(
     }
 }
 
+bool LayeredMapManager::getStairTraverseNormal(double wx, double wy, double& nx, double& ny) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (!stair_layer_cfg_.enable || stair_normal_valid_.empty()) {
+        return false;
+    }
+
+    int idx = -1;
+    if (!worldToGlobalIndex(wx, wy, idx)) {
+        return false;
+    }
+
+    if (idx < 0 || idx >= static_cast<int>(stair_normal_valid_.size()) ||
+        stair_normal_valid_[idx] == 0) {
+        return false;
+    }
+
+    nx = stair_normal_x_[idx];
+    ny = stair_normal_y_[idx];
+    return true;
+}
+
 void LayeredMapManager::rebuildStairLayerCache() {
     stair_clear_indices_.clear();
     stair_forbidden_transitions_.clear();
+
+    if (width_ > 0 && height_ > 0) {
+        const size_t n = static_cast<size_t>(width_ * height_);
+        stair_normal_x_.assign(n, 0.0f);
+        stair_normal_y_.assign(n, 0.0f);
+        stair_normal_valid_.assign(n, 0);
+    } else {
+        stair_normal_x_.clear();
+        stair_normal_y_.clear();
+        stair_normal_valid_.clear();
+    }
 
     if (!stair_layer_cfg_.enable || stair_layer_cfg_.mask_yaml_path.empty()) {
         return;
@@ -298,6 +334,12 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 int global_idx = -1;
                 if (worldToGlobalIndex(wx, wy, global_idx)) {
                     clear_idx_set.insert(global_idx);
+                    if (global_idx >= 0 &&
+                        global_idx < static_cast<int>(stair_normal_valid_.size())) {
+                        stair_normal_x_[global_idx] += static_cast<float>(nx);
+                        stair_normal_y_[global_idx] += static_cast<float>(ny);
+                        stair_normal_valid_[global_idx] = 1;
+                    }
                 }
             }
 
@@ -315,6 +357,26 @@ void LayeredMapManager::rebuildStairLayerCache() {
     process_stair_type(bidir_black_cells, 2, false);
     if (stair_layer_cfg_.enable_oneway_stair_down) {
         process_stair_type(oneway_black_cells, 4, true);
+    }
+
+    for (int idx : clear_idx_set) {
+        if (idx < 0 || idx >= static_cast<int>(stair_normal_valid_.size()) ||
+            stair_normal_valid_[idx] == 0) {
+            continue;
+        }
+
+        double nx = stair_normal_x_[idx];
+        double ny = stair_normal_y_[idx];
+        double norm = std::hypot(nx, ny);
+        if (norm < 1e-6) {
+            stair_normal_valid_[idx] = 0;
+            stair_normal_x_[idx] = 0.0f;
+            stair_normal_y_[idx] = 0.0f;
+            continue;
+        }
+
+        stair_normal_x_[idx] = static_cast<float>(nx / norm);
+        stair_normal_y_[idx] = static_cast<float>(ny / norm);
     }
 
     stair_clear_indices_.assign(clear_idx_set.begin(), clear_idx_set.end());

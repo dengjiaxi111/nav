@@ -47,6 +47,12 @@
 - `special_terrain.publish_stair_debug_markers`
 - `special_terrain.debug_marker_max_segments`
 
+与台阶段方向局部优化相关（`planner`）
+
+- `planner.stair_segment_align`
+- `planner.opt_lambda_stair_align`
+- `planner.stair_align_expand_points`：以命中台阶的控制点为中心，前后各扩展 `n` 个控制点参与方向优化。
+
 ## 使用步骤
 
 1. 准备 `stair_mask.pgm` + 对应 `stair_mask.yaml`（含 `image/resolution/origin`）。

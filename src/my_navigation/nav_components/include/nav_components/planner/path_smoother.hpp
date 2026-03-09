@@ -37,6 +37,11 @@ struct SmoothParams {
     double lambda_align = 3.0;          // 中心吸引权重
     int align_entry_points = 2;         // 入口/出口各优化几个点 (1-3)
     int narrow_min_consecutive = 3;     // 最少连续几个点才算窄通道
+
+    // 台阶段方向约束
+    bool stair_segment_align = true;
+    double lambda_stair_align = 6.0;
+    int stair_align_expand_points = 2;
 };
 
 class PathSmoother {
@@ -53,6 +58,10 @@ public:
     
     void setESDFCallback(ESDFCallback cb) { 
         optimizer_.setESDFCallback(cb); 
+    }
+
+    void setStairNormalCallback(StairNormalCallback cb) {
+        optimizer_.setStairNormalCallback(cb);
     }
     
     // 平滑路径
@@ -193,6 +202,9 @@ private:
         opt_params.lambda_align = params_.lambda_align;
         opt_params.align_entry_points = params_.align_entry_points;
         opt_params.narrow_min_consecutive = params_.narrow_min_consecutive;
+        opt_params.stair_segment_align = params_.stair_segment_align;
+        opt_params.lambda_stair_align = params_.lambda_stair_align;
+        opt_params.stair_expand_points = params_.stair_align_expand_points;
         optimizer_.setParams(opt_params);
     }
     

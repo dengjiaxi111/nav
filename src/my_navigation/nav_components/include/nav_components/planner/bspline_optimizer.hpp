@@ -31,6 +31,11 @@ struct BSplineOptParams {
     double lambda_align = 3.0;          // 中心吸引权重
     int align_entry_points = 2;         // 入口/出口各优化几个点 (1-3)
     int narrow_min_consecutive = 3;     // 最少连续几个点才算窄通道（防止单点误判）
+
+    // 台阶段方向约束（路径切向尽量与台阶法向一致）
+    bool stair_segment_align = true;
+    double lambda_stair_align = 6.0;
+    int stair_expand_points = 2;
     
     // 优化器参数
     int max_iterations = 100;       // 最大迭代次数
@@ -45,6 +50,7 @@ struct BSplineOptParams {
 // 输出: 距离值 (正=自由空间, 负=障碍物内部)
 // 可选输出: 梯度 (指向远离障碍物的方向)
 using ESDFCallback = std::function<double(double x, double y, double* grad_x, double* grad_y)>;
+using StairNormalCallback = std::function<bool(double x, double y, double* nx, double* ny)>;
 
 class BSplineOptimizer {
 public:
@@ -53,6 +59,7 @@ public:
     
     void setParams(const BSplineOptParams& params) { params_ = params; }
     void setESDFCallback(ESDFCallback cb) { esdf_callback_ = cb; }
+    void setStairNormalCallback(StairNormalCallback cb) { stair_normal_callback_ = cb; }
     
     /**
      * 优化 B样条控制点
@@ -182,13 +189,14 @@ public:
         double cost_reduction = (initial_cost > 0) ? 
             (initial_cost - last_cost_) / initial_cost * 100.0 : 0.0;
         
-        // 根据是否启用航向对齐选择输出格式
-        if (params_.narrow_passage_align && last_align_cost_ > 0.01) {
+        // 根据是否启用附加约束选择输出格式
+        if ((params_.narrow_passage_align && last_align_cost_ > 0.01) ||
+            (params_.stair_segment_align && last_stair_align_cost_ > 0.01)) {
             RCLCPP_INFO(rclcpp::get_logger("bspline_opt"),
                 "优化完成: %d次迭代, %.2fms | 代价: %.4f -> %.4f (降低%.1f%%) | "
-                "平滑=%.3f, 碰撞=%.3f, 对齐=%.3f",
+                "平滑=%.3f, 碰撞=%.3f, 窄通道=%.3f, 台阶=%.3f",
                 final_iter + 1, last_opt_time_ms_, initial_cost, last_cost_, cost_reduction,
-                last_smooth_cost_, last_collision_cost_, last_align_cost_);
+                last_smooth_cost_, last_collision_cost_, last_align_cost_, last_stair_align_cost_);
         } else {
             RCLCPP_INFO(rclcpp::get_logger("bspline_opt"),
                 "优化完成: %d次迭代, %.2fms | 代价: %.4f -> %.4f (降低%.1f%%) | "
@@ -205,6 +213,7 @@ public:
     double getLastSmoothCost() const { return last_smooth_cost_; }
     double getLastCollisionCost() const { return last_collision_cost_; }
     double getLastAlignCost() const { return last_align_cost_; }
+    double getLastStairAlignCost() const { return last_stair_align_cost_; }
     double getLastOptTimeMs() const { return last_opt_time_ms_; }
 
 private:
@@ -217,6 +226,7 @@ private:
         double cost_smooth = 0.0;
         double cost_collision = 0.0;
         double cost_align = 0.0;
+        double cost_stair_align = 0.0;
         
         grad.setZero();
         
@@ -231,16 +241,23 @@ private:
         if (params_.narrow_passage_align && esdf_callback_) {
             computeAlignCostAndGrad(ctrl_pts, grad, cost_align);
         }
+
+        // ===== 4. 台阶段方向约束项 =====
+        if (params_.stair_segment_align && stair_normal_callback_) {
+            computeStairAlignCostAndGrad(ctrl_pts, grad, cost_stair_align);
+        }
         
         // 总代价
         double total_cost = params_.lambda_smooth * cost_smooth 
                          + params_.lambda_collision * cost_collision
-                         + params_.lambda_align * cost_align;
+                         + params_.lambda_align * cost_align
+                         + params_.lambda_stair_align * cost_stair_align;
         
         last_cost_ = total_cost;
         last_smooth_cost_ = cost_smooth;
         last_collision_cost_ = cost_collision;
         last_align_cost_ = cost_align;
+        last_stair_align_cost_ = cost_stair_align;
         
         return total_cost;
     }
@@ -619,9 +636,91 @@ private:
             }
         }
     }
+
+    void computeStairAlignCostAndGrad(const Eigen::MatrixXd& ctrl_pts,
+                                      Eigen::MatrixXd& grad,
+                                      double& cost) {
+        cost = 0.0;
+        if (!stair_normal_callback_) {
+            return;
+        }
+
+        std::vector<int> stair_indices;
+        std::vector<Eigen::Vector2d> stair_normals;
+        stair_indices.reserve(n_ctrl_);
+        stair_normals.reserve(n_ctrl_);
+
+        for (int i = 1; i < n_ctrl_ - 1; ++i) {
+            double nx = 0.0;
+            double ny = 0.0;
+            if (!stair_normal_callback_(ctrl_pts(i, 0), ctrl_pts(i, 1), &nx, &ny)) {
+                continue;
+            }
+
+            Eigen::Vector2d normal(nx, ny);
+            double normal_norm = normal.norm();
+            if (normal_norm < 1e-6) {
+                continue;
+            }
+            normal /= normal_norm;
+            stair_indices.push_back(i);
+            stair_normals.push_back(normal);
+        }
+
+        if (stair_indices.empty()) {
+            return;
+        }
+
+        const int expand_points = std::max(0, params_.stair_expand_points);
+        std::vector<int> nearest_stair_index(n_ctrl_, -1);
+        std::vector<Eigen::Vector2d> nearest_stair_normal(n_ctrl_, Eigen::Vector2d::Zero());
+
+        for (size_t k = 0; k < stair_indices.size(); ++k) {
+            int stair_idx = stair_indices[k];
+            int window_start = std::max(1, stair_idx - expand_points);
+            int window_end = std::min(n_ctrl_ - 2, stair_idx + expand_points);
+
+            for (int idx = window_start; idx <= window_end; ++idx) {
+                if (nearest_stair_index[idx] < 0 ||
+                    std::abs(idx - stair_idx) < std::abs(idx - nearest_stair_index[idx])) {
+                    nearest_stair_index[idx] = stair_idx;
+                    nearest_stair_normal[idx] = stair_normals[k];
+                }
+            }
+        }
+
+        for (int i = 1; i < n_ctrl_ - 1; ++i) {
+            if (nearest_stair_index[i] < 0) {
+                continue;
+            }
+
+            const Eigen::Vector2d& normal = nearest_stair_normal[i];
+
+            Eigen::Vector2d p_prev = ctrl_pts.row(i - 1).head<2>();
+            Eigen::Vector2d p_next = ctrl_pts.row(i + 1).head<2>();
+            Eigen::Vector2d tangent = p_next - p_prev;
+            if (tangent.norm() < 1e-6) {
+                continue;
+            }
+
+            Eigen::Vector2d tangent_perp = tangent - tangent.dot(normal) * normal;
+            cost += tangent_perp.squaredNorm();
+
+            Eigen::Vector2d grad_tangent = 2.0 * tangent_perp;
+            if (i + 1 >= opt_start_ && i + 1 < opt_end_) {
+                grad.row(i + 1 - opt_start_) +=
+                    (params_.lambda_stair_align * grad_tangent).transpose();
+            }
+            if (i - 1 >= opt_start_ && i - 1 < opt_end_) {
+                grad.row(i - 1 - opt_start_) -=
+                    (params_.lambda_stair_align * grad_tangent).transpose();
+            }
+        }
+    }
     
     BSplineOptParams params_;
     ESDFCallback esdf_callback_;
+    StairNormalCallback stair_normal_callback_;
 
     
     int order_ = 3;
@@ -634,6 +733,7 @@ private:
     double last_smooth_cost_ = 0;
     double last_collision_cost_ = 0;
     double last_align_cost_ = 0;
+    double last_stair_align_cost_ = 0;
     double last_opt_time_ms_ = 0;
 };
 

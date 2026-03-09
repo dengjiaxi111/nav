@@ -146,6 +146,7 @@ public:
 
     bool isTransitionAllowed(int from_x, int from_y, int to_x, int to_y) const;
     void getForbiddenTransitionSegments(std::vector<std::array<double, 4>>& segments) const;
+    bool getStairTraverseNormal(double wx, double wy, double& nx, double& ny) const;
 
     // ============ MapInterface实现 ============
 
@@ -265,6 +266,9 @@ private:
 
     std::vector<int> stair_clear_indices_{};
     std::unordered_set<uint64_t> stair_forbidden_transitions_{};
+    std::vector<float> stair_normal_x_{};
+    std::vector<float> stair_normal_y_{};
+    std::vector<uint8_t> stair_normal_valid_{};
 };
 
 }  // namespace nav_components

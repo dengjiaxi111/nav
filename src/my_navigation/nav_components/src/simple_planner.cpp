@@ -56,9 +56,13 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     smooth_params.lambda_align = node_->declare_parameter("planner.opt_lambda_align", 3.0);
     smooth_params.align_entry_points = node_->declare_parameter("planner.align_entry_points", 2);
     smooth_params.narrow_min_consecutive = node_->declare_parameter("planner.narrow_min_consecutive", 3);
-    
-    // TODO: 地形跨越垂直修正参数
 
+    // 台阶段局部方向优化（通过台阶时尽量垂直边沿）
+    // stair_align_expand_points: 以台阶命中控制点为中心，前后各扩展 n 个点参与该项优化
+    smooth_params.stair_segment_align = node_->declare_parameter("planner.stair_segment_align", true);
+    smooth_params.lambda_stair_align = node_->declare_parameter("planner.opt_lambda_stair_align", 6.0);
+    smooth_params.stair_align_expand_points =
+        node_->declare_parameter("planner.stair_align_expand_points", 2);
 
     smoother_.setParams(smooth_params);
     
@@ -93,6 +97,26 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
                 });
             RCLCPP_INFO(node_->get_logger(), "B样条优化: ESDF 回调已设置");
         }
+
+        smoother_.setStairNormalCallback(
+            [this](double x, double y, double* nx, double* ny) -> bool {
+                if (!map_manager_) {
+                    return false;
+                }
+                double local_nx = 0.0;
+                double local_ny = 0.0;
+                if (!map_manager_->getStairTraverseNormal(x, y, local_nx, local_ny)) {
+                    return false;
+                }
+                if (nx) {
+                    *nx = local_nx;
+                }
+                if (ny) {
+                    *ny = local_ny;
+                }
+                return true;
+            });
+        RCLCPP_INFO(node_->get_logger(), "B样条优化: 台阶法向回调已设置");
     } else {
         RCLCPP_ERROR(node_->get_logger(), 
             "SimplePlanner: 需要 LayeredMapManager 且 costmap 可用");
