@@ -1,8 +1,8 @@
-# Navigation2026 - AI Coding Agent Instructions
+# Navigation2026 - Copilot Instructions
 
-ROS2 navigation system with LiDAR-inertial SLAM and probabilistic occupancy mapping.
+适用范围：`/home/lehan/navigation2026` 整仓（ROS2 Humble）。
 
-## Core Values (八荣八耻)
+## 核心原则（必须遵守）
 
 - 以瞎猜接口为耻，以认真查询为荣（Read before assuming）
 - 以模糊执行为耻，以寻求确认为荣（Seek confirmation）
@@ -13,138 +13,144 @@ ROS2 navigation system with LiDAR-inertial SLAM and probabilistic occupancy mapp
 - 以假装理解为耻，以诚实无知为荣（Admit uncertainty）
 - 以盲目修改为耻，以谨慎重构为荣（Refactor carefully）
 
-## Architecture & Data Flow
+## AI 执行规范（保留旧 instructions 精华）
 
-```
+- 修改前必须先读源码核实接口：先 `.hpp`/声明，再 `.cpp`/实现。
+- 不猜测：优先确认函数签名、命名空间、参数名、默认值、话题名、frame。
+- 先给根因，再做最小改动，不做与需求无关的大面积重构。
+- 改动后必须给可执行验证路径（至少构建或话题/节点检查命令）。
+- 无法确认时必须明确不确定点，并向人类提出精确问题。
+
+## ROS2 工程规范（CMake/package）
+
+- 新增依赖时必须同时更新：`package.xml` + `find_package()` + `ament_target_dependencies()`。
+- 优先使用 `ament_target_dependencies()` 管理 ROS 依赖，避免新增硬编码库路径。
+- 若遇到历史遗留硬编码链接（如本仓已有 `acados` 链接方式），默认“最小侵入”，非必要不扩散。
+- 参数统一通过 launch/yaml 管理，YAML 键名必须与 `declare_parameter/get_parameter` 对齐。
+
+## 代码风格规范（Google C++ + ROS2 约定）
+
+- 文件命名：`snake_case.hpp/.cpp`。
+- 类/结构体：`PascalCase`；私有成员：`snake_case_`。
+- 函数：`camelCase`；局部变量和参数：`snake_case`。
+- 缩进：4 空格，使用 Tab；建议行宽 ≤ 100（必要时 ≤ 120）。
+- include 顺序遵循现有文件风格，优先与同目录已有代码保持一致。
+- 注释只写“意图/约束/坑点”，避免解释显然代码；`TODO/FIXME` 要可执行。
+
+## 当前真实工程结构（按代码）
+
+```text
 src/
 ├── localization/
-│   ├── livox_ros_driver2/   # 🔒 Official Livox driver (do not modify)
-│   ├── small_point_lio/     # 🔒 SLAM submodule (read-only)
-│   └── lio_3se/             # ❌ DEPRECATED
+│   ├── livox_ros_driver2/
+│   └── small_point_lio/
 ├── mapping/
-│   ├── rog_map/             # ✅ Core probabilistic mapping library
-│   └── rog_map_ros2_node/   # ✅ ROS2 wrapper
+│   ├── rog_map/
+│   └── rog_map_ros2_node/
+├── my_navigation/
+│   ├── nav_interfaces/
+│   ├── nav_core/
+│   ├── nav_components/
+│   └── nav_bringup/
+├── myserial/
+├── robots_msgs/
+└── tools/play_music/
 ```
 
-**Topic Flow** (verified from source):
-```
-livox_ros_driver2 → /livox/lidar_* + /livox/imu_*
-         ↓
-small_point_lio → /cloud_registered (PointCloud2)
-                → /Odometry (nav_msgs/Odometry)
-         ↓
-rog_map_ros2_node → occupancy grid + frontier points
+## 运行链路（按 launch + 源码核对）
+
+```text
+small_point_lio
+    → /cloud_registered
+    → /Odometry
+
+rog_map_ros2_node (integration_node)
+    ← /cloud_registered + /Odometry
+    → /rog_map/map_2d
+
+nav_components/nav_server
+    ← goal_pose (RViz) / navigate(action) / TF(map->base_link)
+    ← /rog_map/map_2d (enable_dynamic_layer=true时)
+    → cmd_vel / plan / static_map / fused_map / costmap / esdf_map(可选)
+
+myserial/serial_node
+    ← cmd_vel
+    → RobotFeedBack / GameFeedBack / ChassisOdom / EnemyPose
 ```
 
-**Key Principle**: Libraries (`rog_map`) = pure C++; Wrappers (`rog_map_ros2_node`) = ROS2 integration.
-
-## Build & Verification
+## 启动与构建（高频命令）
 
 ```bash
-# Build single package
-colcon build --packages-select <package_name> --symlink-install
+# 1) 最小导航包
+colcon build --packages-select nav_interfaces nav_core nav_components nav_bringup --symlink-install
 
-# Verify success
-colcon build --packages-select <pkg> 2>&1 | grep -E "ERROR|built package"
+# 2) 全链路（定位+建图+导航+串口）
+colcon build --packages-select \
+    small_point_lio rog_map rog_map_ros2_node \
+    nav_interfaces nav_core nav_components nav_bringup \
+    robots_msgs play_music myserial \
+    --symlink-install
 
-# Source and test
 source install/setup.bash
-ros2 run rog_map_ros2_node rog_map_node --ros-args -p config_file:=/path/to/config.yaml
+
+# 3) 主导航链路（small_point_lio + rog_map integration + nav_server + rviz）
+ros2 launch nav_bringup run.launch.py
+
+# 4) 串口节点（单独起）
+ros2 launch myserial myserial.launch.py
 ```
 
-**Required CMake definitions** (in `target_compile_definitions`):
-- `USE_ROS2` - enables ROS2 code paths
-- `ORIGIN_AT_CORNER` - ROG-Map grid coordinate system
-- `ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"` - config file search path
+## 参数真源（改配置先看这里）
 
-## Configuration Pattern
+- `nav_bringup/config/nav_params.yaml` 必须与以下声明严格一致：
+    - `nav_components/src/nav_server.cpp`
+    - `nav_components/src/simple_planner.cpp`
+    - `nav_components/src/nmpc.cpp`
+    - `nav_components/src/pure_pursuit.cpp`
+    - `nav_components/src/backup_recovery.cpp`
+    - `nav_components/src/spin_recovery.cpp`
+- `rog_map_ros2_node/config/*.yaml` 需匹配：
+    - `mapping/rog_map/include/rog_map/rog_map_core/config.hpp`
+    - `mapping/rog_map_ros2_node/src/map_2d_projector.cpp`
+    - `mapping/rog_map_ros2_node/src/stair_detector.cpp`
 
-YAML keys must **exactly match** `loader.LoadParam()` calls in `rog_map/include/rog_map/rog_map_core/config.hpp`:
+## NMPC / acados 约束（关键）
 
-```yaml
-rog_map:
-  resolution: 0.05
-  ros_callback:
-    enable: true
-    cloud_topic: "/cloud_registered"  # From small_point_lio
-    odom_topic: "/Odometry"           # From small_point_lio
-  visualization:
-    enable: true
-    frame_id: "odom"
-```
+- `nav_components` 依赖 `nmpc_solver/libacados_ocp_solver_wheelleg_nmpc.so`。
+- 修改 `model_ocp/model.py`、`model_ocp/export_ocp.py` 或时域维度后，必须重新导出 solver。
+- 生成入口：`nav_components/model_ocp/export_ocp.py`。
+- 不要手改 `nmpc_solver/` 下生成代码，除非明确在做生成产物级调试。
 
-## Integration Launch
+## 代码事实（避免误判）
 
-Use `integration.launch.py` to run full pipeline:
+- `nav_server` 当前控制器实例是 `NMPC`，不是运行时插件切换。
+- `run.launch.py` 中定义了 `lio_3se_launch` 变量，但未加入 `LaunchDescription`。
+- `myserial` 订阅路径话题是 `mypath`；`nav_server` 发布的是 `plan`（两者默认不直连）。
+- `navigation.launch.py` 含临时静态 TF `map -> odom`（测试用途）。
+
+## 修改前检查清单（强制）
+
+1. 先读 `.hpp` 接口，再改 `.cpp`。
+2. 先读 `declare_parameter/get_parameter`，再改 YAML。
+3. 话题名先在源码确认，不硬编码猜测。
+4. 涉及地图/坐标，先确认 frame：`map`、`odom`、`base_link`。
+5. 只改必要文件，不碰 `build/`、`install/`、`log/`。
+
+## 包边界与依赖现实
+
+- 当前 `rog_map` 本身已直接依赖 ROS2（`rclcpp/nav_msgs/...`），不要再按“纯C++无ROS依赖”假设处理。
+- `rog_map_ros2_node` 的多个 target 依赖以下编译定义：
+    - `USE_ROS2`
+    - `ORIGIN_AT_CORNER`
+    - `ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"`
+
+## 建议验证命令
+
 ```bash
-ros2 launch rog_map_ros2_node integration.launch.py
-# Launches: small_point_lio + rog_map_node + RViz
+ros2 topic list | grep -E "Odometry|cloud_registered|rog_map/map_2d|cmd_vel|plan|costmap"
+ros2 action list | grep navigate
+ros2 node list | grep -E "small_point_lio|rog_map|nav_server|serial"
 ```
-
-## Code Style (Google C++ for ROS2)
-
-- Files: `snake_case.cpp/.hpp`
-- Classes: `PascalCase`, private members with `_` suffix
-- Functions: `camelCase`, callbacks: `snake_case`
-- 4 spaces indent, 100 char line limit
-
-## Before Editing - MUST READ
-
-1. **Headers**: Check `.hpp` for interfaces, constructors, namespaces
-2. **Macros**: Search `#ifdef`, `#error` for compile requirements
-3. **Config loading**: Match YAML to `loader.LoadParam()` key paths
-4. **Topic names**: Never hardcode - read from config
-
-## Critical DON'Ts
-
-❌ Modify `small_point_lio/` (submodule) or `livox_ros_driver2/` (official)
-❌ Use `lio_3se/` (deprecated)
-❌ Add ROS deps directly to `rog_map/` (use wrapper)
-❌ Skip `USE_ROS2`/`ORIGIN_AT_CORNER` compile definitions
-❌ Hardcode paths - use `ROOT_DIR` macro or parameters
-❌ Write excessive docs - max ONE summary per feature
-
-## ROS2 Node Pattern Reference
-
-```cpp
-// Modern component-based node pattern (from small_point_lio_node.cpp)
-class MyNode : public rclcpp::Node {
-public:
-    MyNode(const rclcpp::NodeOptions &options) : Node("node_name", options) {
-        // Declare parameters
-        auto param = declare_parameter<std::string>("param_name");
-        
-        // Create publishers/subscribers
-        publisher_ = create_publisher<MsgType>("topic", 10);
-        subscriber_ = create_subscription<MsgType>("topic", rclcpp::SensorDataQoS(),
-            [this](const MsgType &msg) { /* callback */ });
-        
-        // TF2 integration
-        tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
-        tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
-    }
-private:
-    rclcpp::Publisher<MsgType>::SharedPtr publisher_;
-    rclcpp::Subscription<MsgType>::SharedPtr subscriber_;
-};
-
-// Register as composable node
-#include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(namespace::MyNode)
-```
-
-**Two patterns in this project**:
-- `small_point_lio`: Component-based (inherits `rclcpp::Node`, composable)
-- `rog_map_node`: Standalone wrapper (creates node, passes to library class)
-
-## Key File Locations
-
-| Purpose | Path |
-|---------|------|
-| ROG-Map config loader | `rog_map/include/rog_map/rog_map_core/config.hpp` |
-| ROS2 wrapper node | `rog_map_ros2_node/src/rog_map_node.cpp` |
-| Integration launch | `rog_map_ros2_node/launch/integration.launch.py` |
-| YAML config | `rog_map_ros2_node/config/rog_map_config.yaml` |
 
 ---
-**Last updated**: 2025-11-30
+最后校对：2026-03-09（依据当前仓库源码）
