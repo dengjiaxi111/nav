@@ -2,6 +2,8 @@
 // 导航服务器 - 核心状态机
 
 #include <chrono>
+#include <algorithm>
+#include <array>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/buffer.h>
@@ -9,6 +11,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include <nav_core/nav_fsm.hpp>
 #include <nav_core/map_interface.hpp>
@@ -118,6 +121,13 @@ public:
         declare_parameter("special_terrain.gray_min", 90);
         declare_parameter("special_terrain.gray_max", 170);
         declare_parameter("special_terrain.pair_search_radius_cells", 4);
+        declare_parameter("special_terrain.enable_oneway_stair_down", false);
+        declare_parameter("special_terrain.oneway_black_min", 41);
+        declare_parameter("special_terrain.oneway_black_max", 80);
+        declare_parameter("special_terrain.oneway_gray_min", 171);
+        declare_parameter("special_terrain.oneway_gray_max", 230);
+        declare_parameter("special_terrain.publish_stair_debug_markers", true);
+        declare_parameter("special_terrain.debug_marker_max_segments", 1500);
         
         enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
         enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();
@@ -134,6 +144,20 @@ public:
         stair_layer_cfg.gray_max = get_parameter("special_terrain.gray_max").as_int();
         stair_layer_cfg.pair_search_radius_cells =
             get_parameter("special_terrain.pair_search_radius_cells").as_int();
+        stair_layer_cfg.enable_oneway_stair_down =
+            get_parameter("special_terrain.enable_oneway_stair_down").as_bool();
+        stair_layer_cfg.oneway_black_min =
+            get_parameter("special_terrain.oneway_black_min").as_int();
+        stair_layer_cfg.oneway_black_max =
+            get_parameter("special_terrain.oneway_black_max").as_int();
+        stair_layer_cfg.oneway_gray_min =
+            get_parameter("special_terrain.oneway_gray_min").as_int();
+        stair_layer_cfg.oneway_gray_max =
+            get_parameter("special_terrain.oneway_gray_max").as_int();
+        publish_stair_debug_markers_ =
+            get_parameter("special_terrain.publish_stair_debug_markers").as_bool();
+        stair_debug_marker_max_segments_ =
+            get_parameter("special_terrain.debug_marker_max_segments").as_int();
         
         // 膨胀参数
         declare_parameter("inflation.radius", 0.5);
@@ -161,6 +185,10 @@ public:
         costmap_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("costmap", rclcpp::QoS(1).transient_local().reliable());
         if (enable_esdf_) {
             esdf_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("esdf_map", rclcpp::QoS(1).transient_local().reliable());
+        }
+        if (publish_stair_debug_markers_) {
+            stair_debug_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+                "stair_layer/forbidden_transitions", rclcpp::QoS(1).transient_local().reliable());
         }
         
         // RViz 目标订阅
@@ -265,7 +293,79 @@ private:
                         esdf_pub_->publish(*vis);
                     }
                 }
+
+                if (publish_stair_debug_markers_) {
+                    publishStairDebugMarkers();
+                }
             });
+    }
+
+    void publishStairDebugMarkers() {
+        if (!stair_debug_pub_ || !map_manager_) {
+            return;
+        }
+
+        std::vector<std::array<double, 4>> segments;
+        map_manager_->getForbiddenTransitionSegments(segments);
+
+        visualization_msgs::msg::MarkerArray marker_array;
+
+        visualization_msgs::msg::Marker lines;
+        lines.header.frame_id = map_frame_;
+        lines.header.stamp = now();
+        lines.ns = "stair_forbidden_lines";
+        lines.id = 0;
+        lines.type = visualization_msgs::msg::Marker::LINE_LIST;
+        lines.action = visualization_msgs::msg::Marker::ADD;
+        lines.pose.orientation.w = 1.0;
+        lines.scale.x = 0.03;
+        lines.color.r = 1.0;
+        lines.color.g = 0.2;
+        lines.color.b = 0.2;
+        lines.color.a = 0.9;
+
+        visualization_msgs::msg::Marker ends;
+        ends.header.frame_id = map_frame_;
+        ends.header.stamp = now();
+        ends.ns = "stair_forbidden_to";
+        ends.id = 1;
+        ends.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        ends.action = visualization_msgs::msg::Marker::ADD;
+        ends.pose.orientation.w = 1.0;
+        ends.scale.x = 0.06;
+        ends.scale.y = 0.06;
+        ends.scale.z = 0.06;
+        ends.color.r = 1.0;
+        ends.color.g = 1.0;
+        ends.color.b = 0.1;
+        ends.color.a = 0.95;
+
+        int max_segments = std::max(0, stair_debug_marker_max_segments_);
+        int count = 0;
+        for (const auto& seg : segments) {
+            if (max_segments > 0 && count >= max_segments) {
+                break;
+            }
+
+            geometry_msgs::msg::Point p_from;
+            p_from.x = seg[0];
+            p_from.y = seg[1];
+            p_from.z = 0.08;
+
+            geometry_msgs::msg::Point p_to;
+            p_to.x = seg[2];
+            p_to.y = seg[3];
+            p_to.z = 0.08;
+
+            lines.points.push_back(p_from);
+            lines.points.push_back(p_to);
+            ends.points.push_back(p_to);
+            ++count;
+        }
+
+        marker_array.markers.push_back(lines);
+        marker_array.markers.push_back(ends);
+        stair_debug_pub_->publish(marker_array);
     }
     
     // RViz 2D Goal Pose 回调
@@ -840,6 +940,7 @@ private:
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr fused_map_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr esdf_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_debug_pub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr dynamic_layer_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
     
@@ -863,6 +964,8 @@ private:
     bool enable_esdf_;
     bool enable_static_layer_;   // 是否启用静态地图层
     bool enable_dynamic_layer_;  // 是否启用动态障碍物层
+    bool publish_stair_debug_markers_{true};
+    int stair_debug_marker_max_segments_{1500};
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
     

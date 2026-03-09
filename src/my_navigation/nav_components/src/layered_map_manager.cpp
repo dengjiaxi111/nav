@@ -39,6 +39,7 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
 
     if (!stair_layer_cfg_.enable) {
         stair_clear_indices_.clear();
+        stair_forbidden_transitions_.clear();
         stair_mask_loaded_ = false;
         return;
     }
@@ -86,8 +87,100 @@ bool LayeredMapManager::worldToGlobalIndex(double wx, double wy, int& idx) const
     return true;
 }
 
+uint64_t LayeredMapManager::encodeDirectedTransition(int from_idx, int to_idx) {
+    return (static_cast<uint64_t>(static_cast<uint32_t>(from_idx)) << 32) |
+           static_cast<uint32_t>(to_idx);
+}
+
+void LayeredMapManager::addForbiddenDirectedTransitions(
+    int from_idx, int to_idx, std::unordered_set<uint64_t>& out) {
+    if (from_idx < 0 || to_idx < 0 || from_idx == to_idx || width_ <= 0 || height_ <= 0) {
+        return;
+    }
+
+    int from_x = from_idx % width_;
+    int from_y = from_idx / width_;
+    int to_x = to_idx % width_;
+    int to_y = to_idx / width_;
+
+    int dx = to_x - from_x;
+    int dy = to_y - from_y;
+    int steps = std::max(std::abs(dx), std::abs(dy));
+    if (steps <= 0) {
+        return;
+    }
+
+    int prev_idx = from_idx;
+    for (int i = 1; i <= steps; ++i) {
+        double t = static_cast<double>(i) / static_cast<double>(steps);
+        int x = static_cast<int>(std::round(from_x + dx * t));
+        int y = static_cast<int>(std::round(from_y + dy * t));
+        if (x < 0 || x >= width_ || y < 0 || y >= height_) {
+            continue;
+        }
+
+        int cur_idx = y * width_ + x;
+        if (cur_idx != prev_idx) {
+            out.insert(encodeDirectedTransition(prev_idx, cur_idx));
+            prev_idx = cur_idx;
+        }
+    }
+}
+
+bool LayeredMapManager::isTransitionAllowed(int from_x, int from_y, int to_x, int to_y) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (!stair_layer_cfg_.enable || !stair_layer_cfg_.enable_oneway_stair_down ||
+        stair_forbidden_transitions_.empty()) {
+        return true;
+    }
+
+    if (from_x < 0 || from_x >= width_ || from_y < 0 || from_y >= height_ ||
+        to_x < 0 || to_x >= width_ || to_y < 0 || to_y >= height_) {
+        return true;
+    }
+
+    int from_idx = from_y * width_ + from_x;
+    int to_idx = to_y * width_ + to_x;
+    return stair_forbidden_transitions_.find(
+               encodeDirectedTransition(from_idx, to_idx)) == stair_forbidden_transitions_.end();
+}
+
+void LayeredMapManager::getForbiddenTransitionSegments(
+    std::vector<std::array<double, 4>>& segments) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    segments.clear();
+    if (width_ <= 0 || height_ <= 0 || resolution_ <= 0.0 ||
+        stair_forbidden_transitions_.empty()) {
+        return;
+    }
+
+    segments.reserve(stair_forbidden_transitions_.size());
+    for (const auto key : stair_forbidden_transitions_) {
+        int from_idx = static_cast<int>(static_cast<uint32_t>(key >> 32));
+        int to_idx = static_cast<int>(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
+        if (from_idx < 0 || to_idx < 0 || from_idx >= width_ * height_ || to_idx >= width_ * height_) {
+            continue;
+        }
+
+        int from_x = from_idx % width_;
+        int from_y = from_idx / width_;
+        int to_x = to_idx % width_;
+        int to_y = to_idx / width_;
+
+        double from_wx = origin_x_ + (from_x + 0.5) * resolution_;
+        double from_wy = origin_y_ + (from_y + 0.5) * resolution_;
+        double to_wx = origin_x_ + (to_x + 0.5) * resolution_;
+        double to_wy = origin_y_ + (to_y + 0.5) * resolution_;
+
+        segments.push_back({from_wx, from_wy, to_wx, to_wy});
+    }
+}
+
 void LayeredMapManager::rebuildStairLayerCache() {
     stair_clear_indices_.clear();
+    stair_forbidden_transitions_.clear();
 
     if (!stair_layer_cfg_.enable || stair_layer_cfg_.mask_yaml_path.empty()) {
         return;
@@ -109,8 +202,10 @@ void LayeredMapManager::rebuildStairLayerCache() {
     }
 
     std::vector<uint8_t> class_map(static_cast<size_t>(stair_mask_width_ * stair_mask_height_), 0);
-    std::vector<std::pair<int, int>> black_cells;
-    black_cells.reserve(1024);
+    std::vector<std::pair<int, int>> bidir_black_cells;
+    std::vector<std::pair<int, int>> oneway_black_cells;
+    bidir_black_cells.reserve(1024);
+    oneway_black_cells.reserve(1024);
 
     for (int my = 0; my < stair_mask_height_; ++my) {
         for (int mx = 0; mx < stair_mask_width_; ++mx) {
@@ -120,85 +215,116 @@ void LayeredMapManager::rebuildStairLayerCache() {
 
             if (v >= stair_layer_cfg_.black_min && v <= stair_layer_cfg_.black_max) {
                 class_map[mask_idx] = 1;
-                black_cells.emplace_back(mx, my);
+                bidir_black_cells.emplace_back(mx, my);
             } else if (v >= stair_layer_cfg_.gray_min && v <= stair_layer_cfg_.gray_max) {
                 class_map[mask_idx] = 2;
+            } else if (stair_layer_cfg_.enable_oneway_stair_down &&
+                       v >= stair_layer_cfg_.oneway_black_min &&
+                       v <= stair_layer_cfg_.oneway_black_max) {
+                class_map[mask_idx] = 3;
+                oneway_black_cells.emplace_back(mx, my);
+            } else if (stair_layer_cfg_.enable_oneway_stair_down &&
+                       v >= stair_layer_cfg_.oneway_gray_min &&
+                       v <= stair_layer_cfg_.oneway_gray_max) {
+                class_map[mask_idx] = 4;
             }
         }
     }
 
-    if (black_cells.empty()) {
-        RCLCPP_WARN(logger_, "stair_layer: mask 中未找到黑线像素");
+    if (bidir_black_cells.empty() && oneway_black_cells.empty()) {
+        RCLCPP_WARN(logger_, "stair_layer: mask 中未找到任何台阶黑线像素");
         return;
     }
 
     std::unordered_set<int> clear_idx_set;
-    clear_idx_set.reserve(black_cells.size() * 4);
+    clear_idx_set.reserve((bidir_black_cells.size() + oneway_black_cells.size()) * 4);
 
     const int search_r = std::max(1, stair_layer_cfg_.pair_search_radius_cells);
-    const int clear_steps = std::max(1, static_cast<int>(std::ceil(stair_layer_cfg_.clear_perp_dist_m / resolution_)));
+    const int clear_steps =
+        std::max(1, static_cast<int>(std::ceil(stair_layer_cfg_.clear_perp_dist_m / resolution_)));
 
-    for (size_t i = 0; i < black_cells.size(); ++i) {
-        int bx = black_cells[i].first;
-        int by = black_cells[i].second;
+    auto process_stair_type = [&](const std::vector<std::pair<int, int>>& black_cells,
+                                  uint8_t gray_class,
+                                  bool build_oneway_forbidden) {
+        for (size_t i = 0; i < black_cells.size(); ++i) {
+            int bx = black_cells[i].first;
+            int by = black_cells[i].second;
 
-        double best_dist2 = std::numeric_limits<double>::max();
-        int gx_best = -1;
-        int gy_best = -1;
+            double best_dist2 = std::numeric_limits<double>::max();
+            int gx_best = -1;
+            int gy_best = -1;
 
-        for (int dy = -search_r; dy <= search_r; ++dy) {
-            for (int dx = -search_r; dx <= search_r; ++dx) {
-                int gx = bx + dx;
-                int gy = by + dy;
-                if (gx < 0 || gx >= stair_mask_width_ || gy < 0 || gy >= stair_mask_height_) {
-                    continue;
+            for (int dy = -search_r; dy <= search_r; ++dy) {
+                for (int dx = -search_r; dx <= search_r; ++dx) {
+                    int gx = bx + dx;
+                    int gy = by + dy;
+                    if (gx < 0 || gx >= stair_mask_width_ || gy < 0 || gy >= stair_mask_height_) {
+                        continue;
+                    }
+                    int idx = gy * stair_mask_width_ + gx;
+                    if (class_map[idx] != gray_class) {
+                        continue;
+                    }
+                    double d2 = static_cast<double>(dx * dx + dy * dy);
+                    if (d2 < best_dist2) {
+                        best_dist2 = d2;
+                        gx_best = gx;
+                        gy_best = gy;
+                    }
                 }
-                int idx = gy * stair_mask_width_ + gx;
-                if (class_map[idx] != 2) {
-                    continue;
+            }
+
+            if (gx_best < 0 || gy_best < 0) {
+                continue;
+            }
+
+            double bwx = stair_mask_origin_x_ + (bx + 0.5) * stair_mask_resolution_;
+            double bwy = stair_mask_origin_y_ + (by + 0.5) * stair_mask_resolution_;
+            double gwx = stair_mask_origin_x_ + (gx_best + 0.5) * stair_mask_resolution_;
+            double gwy = stair_mask_origin_y_ + (gy_best + 0.5) * stair_mask_resolution_;
+
+            double nx = bwx - gwx;
+            double ny = bwy - gwy;
+            double norm = std::hypot(nx, ny);
+            if (norm < 1e-5) {
+                continue;
+            }
+            nx /= norm;
+            ny /= norm;
+
+            for (int s = 0; s <= clear_steps; ++s) {
+                double wx = bwx + nx * (s * resolution_);
+                double wy = bwy + ny * (s * resolution_);
+                int global_idx = -1;
+                if (worldToGlobalIndex(wx, wy, global_idx)) {
+                    clear_idx_set.insert(global_idx);
                 }
-                double d2 = static_cast<double>(dx * dx + dy * dy);
-                if (d2 < best_dist2) {
-                    best_dist2 = d2;
-                    gx_best = gx;
-                    gy_best = gy;
+            }
+
+            if (build_oneway_forbidden) {
+                int low_idx = -1;
+                int high_idx = -1;
+                if (worldToGlobalIndex(gwx, gwy, low_idx) && worldToGlobalIndex(bwx, bwy, high_idx)) {
+                    addForbiddenDirectedTransitions(
+                        low_idx, high_idx, stair_forbidden_transitions_);
                 }
             }
         }
+    };
 
-        if (gx_best < 0 || gy_best < 0) {
-            continue;
-        }
-
-        double bwx = stair_mask_origin_x_ + (bx + 0.5) * stair_mask_resolution_;
-        double bwy = stair_mask_origin_y_ + (by + 0.5) * stair_mask_resolution_;
-        double gwx = stair_mask_origin_x_ + (gx_best + 0.5) * stair_mask_resolution_;
-        double gwy = stair_mask_origin_y_ + (gy_best + 0.5) * stair_mask_resolution_;
-
-        double nx = bwx - gwx;
-        double ny = bwy - gwy;
-        double norm = std::hypot(nx, ny);
-        if (norm < 1e-5) {
-            continue;
-        }
-        nx /= norm;
-        ny /= norm;
-
-        for (int s = 0; s <= clear_steps; ++s) {
-            double wx = bwx + nx * (s * resolution_);
-            double wy = bwy + ny * (s * resolution_);
-            int global_idx = -1;
-            if (worldToGlobalIndex(wx, wy, global_idx)) {
-                clear_idx_set.insert(global_idx);
-            }
-        }
-
+    process_stair_type(bidir_black_cells, 2, false);
+    if (stair_layer_cfg_.enable_oneway_stair_down) {
+        process_stair_type(oneway_black_cells, 4, true);
     }
 
     stair_clear_indices_.assign(clear_idx_set.begin(), clear_idx_set.end());
 
-    RCLCPP_INFO(logger_, "stair_layer: 黑线=%zu, 清除栅格=%zu",
-                black_cells.size(), stair_clear_indices_.size());
+    RCLCPP_INFO(logger_,
+                "stair_layer: 双向黑线=%zu, 单向黑线=%zu, 清除栅格=%zu, 禁止边=%zu",
+                bidir_black_cells.size(),
+                oneway_black_cells.size(),
+                stair_clear_indices_.size(),
+                stair_forbidden_transitions_.size());
 }
 
 void LayeredMapManager::applyStairLayerPolicy() {

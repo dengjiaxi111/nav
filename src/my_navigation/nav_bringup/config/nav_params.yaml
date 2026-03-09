@@ -2,7 +2,8 @@
 
 nav_server:
   ros__parameters:
-    # map_file 由 launch 文件设置
+    # 地图路径由 navigation.launch.py 注入
+    map_file: ""
     control_rate: 100.0
     goal_timeout: 60.0
     goal_tolerance: 0.1
@@ -39,14 +40,23 @@ nav_server:
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
-      enable_stair_layer: false
-      stair_mask_yaml: ""   # 例如: /abs/path/to/stair_mask.yaml
+      enable_stair_layer: true
+      stair_mask_yaml: ""   # 由 navigation.launch.py 注入
       stair_clear_perp_dist_m: 0.4
-      black_min: 0
-      black_max: 40
-      gray_min: 90
-      gray_max: 170
+      # 双向台阶像素范围（高侧=black，低侧=gray）
+      black_min: 1
+      black_max: 25
+      gray_min: 100
+      gray_max: 140
       pair_search_radius_cells: 4
+      # 单向台阶（仅允许高->低，禁止低->高）
+      enable_oneway_stair_down: false
+      oneway_black_min: 26
+      oneway_black_max: 100
+      oneway_gray_min: 141
+      oneway_gray_max: 230
+      publish_stair_debug_markers: true
+      debug_marker_max_segments: 1500
     
     # ============ 地图更新性能日志 ============
     enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)

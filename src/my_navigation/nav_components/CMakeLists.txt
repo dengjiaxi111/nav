@@ -17,7 +17,7 @@ find_package(nav_core REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 set(DEPS
-  rclcpp rclcpp_action geometry_msgs nav_msgs visualization_msgs tf2 tf2_ros tf2_geometry_msgs nav_interfaces nav_core
+    rclcpp rclcpp_action geometry_msgs nav_msgs visualization_msgs tf2 tf2_ros tf2_geometry_msgs nav_interfaces nav_core
 )
 
 # 头文件目录

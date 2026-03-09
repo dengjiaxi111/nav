@@ -380,6 +380,10 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
         for (int i = 0; i < 8; i++) {
             int nx = curr->x + dx[i];
             int ny = curr->y + dy[i];
+
+            if (map_manager_ && !map_manager_->isTransitionAllowed(curr->x, curr->y, nx, ny)) {
+                continue;
+            }
             
             if (!isValid(nx, ny)) {
                 continue;

@@ -13,10 +13,11 @@ def generate_launch_description():
     
     params_file = LaunchConfiguration('params_file')
     map_file = LaunchConfiguration('map_file')
+    stair_mask_yaml = LaunchConfiguration('stair_mask_yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
-    
-    # 默认地图路径
+
     default_map = os.path.join(pkg_dir, 'maps', 'RMUC_final.yaml')
+    default_stair_mask = os.path.join(pkg_dir, 'maps', 'RMUC_final_stair.yaml')
     
     # 临时静态TF: map -> odom -> base_link (测试用)
     # RMUC地图原点 [-13.4, -23.8], 地图约 46x39m, 设置机器人在地图中部
@@ -45,11 +46,17 @@ def generate_launch_description():
             default_value=os.path.join(pkg_dir, 'config', 'nav_params.yaml'),
             description='导航参数文件'
         ),
-        
+
         DeclareLaunchArgument(
             'map_file',
             default_value=default_map,
-            description='地图yaml文件路径'
+            description='全局静态地图yaml文件路径'
+        ),
+
+        DeclareLaunchArgument(
+            'stair_mask_yaml',
+            default_value=default_stair_mask,
+            description='台阶mask yaml文件路径'
         ),
         
         DeclareLaunchArgument(
@@ -68,6 +75,7 @@ def generate_launch_description():
             parameters=[
                 params_file,
                 {'map_file': map_file},
+                {'special_terrain.stair_mask_yaml': stair_mask_yaml},
                 {'use_sim_time': use_sim_time}
             ],
             output='screen',

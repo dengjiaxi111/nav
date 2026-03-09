@@ -16,6 +16,9 @@
 #include <atomic>
 #include <vector>
 #include <string>
+#include <unordered_set>
+#include <cstdint>
+#include <array>
 
 namespace nav_components {
 
@@ -132,9 +135,17 @@ public:
         int gray_min{90};
         int gray_max{170};
         int pair_search_radius_cells{4};
+        bool enable_oneway_stair_down{false};
+        int oneway_black_min{41};
+        int oneway_black_max{80};
+        int oneway_gray_min{171};
+        int oneway_gray_max{230};
     };
 
     void setStairLayerConfig(const StairLayerConfig& cfg);
+
+    bool isTransitionAllowed(int from_x, int from_y, int to_x, int to_y) const;
+    void getForbiddenTransitionSegments(std::vector<std::array<double, 4>>& segments) const;
 
     // ============ MapInterface实现 ============
 
@@ -190,6 +201,9 @@ private:
     void rebuildStairLayerCache();
     void applyStairLayerPolicy();
     bool worldToGlobalIndex(double wx, double wy, int& idx) const;
+    static uint64_t encodeDirectedTransition(int from_idx, int to_idx);
+    void addForbiddenDirectedTransitions(int from_idx, int to_idx,
+                                         std::unordered_set<uint64_t>& out);
 
     // ============ 成员变量 ============
 
@@ -250,6 +264,7 @@ private:
     std::vector<uint8_t> stair_mask_pixels_{};
 
     std::vector<int> stair_clear_indices_{};
+    std::unordered_set<uint64_t> stair_forbidden_transitions_{};
 };
 
 }  // namespace nav_components

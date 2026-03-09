@@ -350,18 +350,7 @@ namespace small_point_lio {
                                                 (1.0f - VELOCITY_FILTER_ALPHA) * filtered_linear_velocity_;
                     
                     linear_vel_base = filtered_linear_velocity_;
-                    
-                    // DEBUG: 定期打印速度估计
-                    static int vel_debug_counter = 0;
-                    if (vel_debug_counter++ % 50 == 0) {
-                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] dt=%.4f s", dt);
-                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] pos_diff (odom): [%.4f, %.4f, %.4f]",
-                            pos_diff_odom.x(), pos_diff_odom.y(), pos_diff_odom.z());
-                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] instant_linear (base): [%.4f, %.4f, %.4f] m/s",
-                            instant_linear_vel_base.x(), instant_linear_vel_base.y(), instant_linear_vel_base.z());
-                        RCLCPP_INFO(get_logger(), "[VEL_DIFF] filtered_linear (base): [%.4f, %.4f, %.4f] m/s",
-                            filtered_linear_velocity_.x(), filtered_linear_velocity_.y(), filtered_linear_velocity_.z());
-                    }
+                     
                 }
             } else {
                 // 第一帧，初始化
