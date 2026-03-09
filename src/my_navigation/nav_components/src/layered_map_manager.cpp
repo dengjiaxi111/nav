@@ -347,8 +347,35 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 int low_idx = -1;
                 int high_idx = -1;
                 if (worldToGlobalIndex(gwx, gwy, low_idx) && worldToGlobalIndex(bwx, bwy, high_idx)) {
+                    // 注册主路径 low → high（low 格到 high 格逐步禁止）
                     addForbiddenDirectedTransitions(
                         low_idx, high_idx, stair_forbidden_transitions_);
+
+                    // 修复：A* 8方向扩展时，对角移动可以从 low 的相邻格直接跳到
+                    // high_idx，绕过仅注册了 low→high 直线路径的屏障。
+                    // 对策：把 low_idx 3×3 邻域内所有能一步到达 high_idx 的格子
+                    // 也全部注册为禁止出发点，堵住对角入口。
+                    const int hx = high_idx % width_;
+                    const int hy = high_idx / width_;
+                    const int lx = low_idx % width_;
+                    const int ly = low_idx / width_;
+                    for (int ddy = -1; ddy <= 1; ++ddy) {
+                        for (int ddx = -1; ddx <= 1; ++ddx) {
+                            if (ddx == 0 && ddy == 0) {
+                                continue;
+                            }
+                            int nx2 = lx + ddx;
+                            int ny2 = ly + ddy;
+                            if (nx2 < 0 || nx2 >= width_ || ny2 < 0 || ny2 >= height_) {
+                                continue;
+                            }
+                            // 只在该邻居能一步到达 high_idx 时注册（即 Chebyshev 距离 ≤ 1）
+                            if (std::abs(nx2 - hx) <= 1 && std::abs(ny2 - hy) <= 1) {
+                                stair_forbidden_transitions_.insert(
+                                    encodeDirectedTransition(ny2 * width_ + nx2, high_idx));
+                            }
+                        }
+                    }
                 }
             }
         }
