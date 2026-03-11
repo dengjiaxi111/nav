@@ -11,6 +11,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <nav_core/nav_fsm.hpp>
@@ -128,6 +129,12 @@ public:
         declare_parameter("special_terrain.oneway_gray_max", 230);
         declare_parameter("special_terrain.publish_stair_debug_markers", true);
         declare_parameter("special_terrain.debug_marker_max_segments", 1500);
+        declare_parameter("special_terrain.enable_stair_mode_detection", true);
+        declare_parameter("special_terrain.stair_mode_trigger_distance_m", 1.0);
+        declare_parameter("special_terrain.stair_mode_lookahead_dist_m", 3.0);
+        declare_parameter("special_terrain.stair_mode_sample_step_m", 0.10);
+        declare_parameter("special_terrain.stair_mode_uphill_dot_min", 0.1);
+        declare_parameter("special_terrain.stair_mode_release_grace_cycles", 5);
         
         enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
         enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();
@@ -158,6 +165,49 @@ public:
             get_parameter("special_terrain.publish_stair_debug_markers").as_bool();
         stair_debug_marker_max_segments_ =
             get_parameter("special_terrain.debug_marker_max_segments").as_int();
+        enable_stair_mode_detection_ =
+            get_parameter("special_terrain.enable_stair_mode_detection").as_bool();
+        stair_mode_trigger_distance_m_ =
+            get_parameter("special_terrain.stair_mode_trigger_distance_m").as_double();
+        stair_mode_lookahead_dist_m_ =
+            get_parameter("special_terrain.stair_mode_lookahead_dist_m").as_double();
+        stair_mode_sample_step_m_ =
+            get_parameter("special_terrain.stair_mode_sample_step_m").as_double();
+        stair_mode_uphill_dot_min_ =
+            get_parameter("special_terrain.stair_mode_uphill_dot_min").as_double();
+        stair_mode_release_grace_cycles_ =
+            get_parameter("special_terrain.stair_mode_release_grace_cycles").as_int();
+
+        if (stair_mode_trigger_distance_m_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_trigger_distance_m=%.3f 非法，自动修正为0.0",
+                        stair_mode_trigger_distance_m_);
+            stair_mode_trigger_distance_m_ = 0.0;
+        }
+        if (stair_mode_lookahead_dist_m_ <= 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_lookahead_dist_m=%.3f 非法，自动修正为3.0",
+                        stair_mode_lookahead_dist_m_);
+            stair_mode_lookahead_dist_m_ = 3.0;
+        }
+        if (stair_mode_sample_step_m_ <= 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_sample_step_m=%.3f 非法，自动修正为0.1",
+                        stair_mode_sample_step_m_);
+            stair_mode_sample_step_m_ = 0.1;
+        }
+        if (stair_mode_uphill_dot_min_ < -1.0 || stair_mode_uphill_dot_min_ > 1.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_uphill_dot_min=%.3f 超出[-1,1]，自动修正为0.1",
+                        stair_mode_uphill_dot_min_);
+            stair_mode_uphill_dot_min_ = 0.1;
+        }
+        if (stair_mode_release_grace_cycles_ < 0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_release_grace_cycles=%d 非法，自动修正为0",
+                        stair_mode_release_grace_cycles_);
+            stair_mode_release_grace_cycles_ = 0;
+        }
         
         // 膨胀参数
         declare_parameter("inflation.radius", 0.5);
@@ -190,6 +240,7 @@ public:
             stair_debug_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
                 "stair_layer/forbidden_transitions", rclcpp::QoS(1).transient_local().reliable());
         }
+        stair_mode_pub_ = create_publisher<std_msgs::msg::UInt8>("stair_mode", 10);
         
         // RViz 目标订阅
         goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -210,6 +261,15 @@ public:
                         "stair_layer 启用: mask=%s, clear_perp=%.2fm",
                         stair_layer_cfg.mask_yaml_path.c_str(),
                         stair_layer_cfg.clear_perp_dist_m);
+        }
+        if (enable_stair_mode_detection_) {
+            RCLCPP_INFO(get_logger(),
+                        "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill_dot_min=%.2f, grace=%d",
+                        stair_mode_trigger_distance_m_,
+                        stair_mode_lookahead_dist_m_,
+                        stair_mode_sample_step_m_,
+                        stair_mode_uphill_dot_min_,
+                        stair_mode_release_grace_cycles_);
         }
         
         initComponents();
@@ -454,6 +514,7 @@ private:
     void controlLoop() {
         // 支持 Action 和 RViz 两种目标来源
         if (!goal_handle_ && !rviz_goal_active_) {
+            publishStairMode(0, true);
             return;
         }
         
@@ -461,6 +522,7 @@ private:
         if (!updateRobotPose()) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
                 "无法获取 %s -> %s 变换", map_frame_.c_str(), base_frame_.c_str());
+            publishStairMode(0, true);
             return;
         }
         
@@ -473,6 +535,7 @@ private:
             goal_handle_->canceled(result);
             goal_handle_ = nullptr;
             fsm_.transitionTo(nav_core::NavState::IDLE);
+            publishStairMode(0, true);
             return;
         }
         
@@ -489,8 +552,182 @@ private:
             case nav_core::NavState::FAILED:      finishFailure(); break;
             default: break;
         }
+
+        if (fsm_.state() != nav_core::NavState::CONTROLLING) {
+            publishStairMode(0, true);
+        }
         
         publishFeedback();
+    }
+
+    bool detectUpcomingStairDistance(double& dist_to_stair_m) const {
+        dist_to_stair_m = std::numeric_limits<double>::infinity();
+
+        if (!map_manager_ || current_path_.poses.size() < 2) {
+            return false;
+        }
+
+        const auto& poses = current_path_.poses;
+        const double sample_step = std::max(0.02, stair_mode_sample_step_m_);
+        const double lookahead_dist = std::max(0.1, stair_mode_lookahead_dist_m_);
+
+        size_t closest_idx = 0;
+        double min_dist2 = std::numeric_limits<double>::infinity();
+        for (size_t i = 0; i < poses.size(); ++i) {
+            const auto& p = poses[i].pose.position;
+            double dx = current_pose_.pose.position.x - p.x;
+            double dy = current_pose_.pose.position.y - p.y;
+            double d2 = dx * dx + dy * dy;
+            if (d2 < min_dist2) {
+                min_dist2 = d2;
+                closest_idx = i;
+            }
+        }
+
+        double traveled = 0.0;
+        for (size_t i = closest_idx; i + 1 < poses.size() && traveled <= lookahead_dist; ++i) {
+            const auto& p0 = poses[i].pose.position;
+            const auto& p1 = poses[i + 1].pose.position;
+            double seg_dx = p1.x - p0.x;
+            double seg_dy = p1.y - p0.y;
+            double seg_len = std::hypot(seg_dx, seg_dy);
+            if (seg_len < 1e-6) {
+                continue;
+            }
+            const double dir_x = seg_dx / seg_len;
+            const double dir_y = seg_dy / seg_len;
+
+            int sample_count = std::max(1, static_cast<int>(std::ceil(seg_len / sample_step)));
+            for (int s = 0; s <= sample_count; ++s) {
+                double t = static_cast<double>(s) / static_cast<double>(sample_count);
+                double local_dist = seg_len * t;
+                double path_dist = traveled + local_dist;
+                if (path_dist > lookahead_dist) {
+                    break;
+                }
+
+                double wx = p0.x + seg_dx * t;
+                double wy = p0.y + seg_dy * t;
+                double nx = 0.0;
+                double ny = 0.0;
+                if (map_manager_->getStairTraverseNormal(wx, wy, nx, ny)) {
+                    const double dot = dir_x * nx + dir_y * ny;
+                    // 仅在沿台阶法向的低->高方向上触发（高->低不会触发）
+                    if (dot >= stair_mode_uphill_dot_min_) {
+                        dist_to_stair_m = path_dist;
+                        return true;
+                    }
+                }
+            }
+
+            traveled += seg_len;
+        }
+
+        return false;
+    }
+
+    void publishStairMode(uint8_t mode, bool force_publish) {
+        if (!stair_mode_pub_) {
+            return;
+        }
+
+        if (!force_publish && mode == stair_mode_current_) {
+            return;
+        }
+
+        std_msgs::msg::UInt8 msg;
+        msg.data = mode;
+        stair_mode_pub_->publish(msg);
+
+        if (mode != stair_mode_current_) {
+            RCLCPP_INFO(get_logger(), "stair_mode -> %u", static_cast<unsigned>(mode));
+            stair_mode_current_ = mode;
+        }
+    }
+
+    void updateStairModeDetection() {
+        if (!enable_stair_mode_detection_) {
+            publishStairMode(0, true);
+            stair_mode_release_counter_ = 0;
+            return;
+        }
+
+        if (!map_manager_ || current_path_.poses.empty()) {
+            publishStairMode(0, true);
+            stair_mode_release_counter_ = 0;
+            return;
+        }
+
+        bool on_stair_now = false;
+        double curr_nx = 0.0;
+        double curr_ny = 0.0;
+        if (map_manager_->getStairTraverseNormal(
+                current_pose_.pose.position.x,
+                current_pose_.pose.position.y,
+                curr_nx,
+                curr_ny) &&
+            current_path_.poses.size() >= 2) {
+            const auto& poses = current_path_.poses;
+            size_t closest_idx = 0;
+            double min_dist2 = std::numeric_limits<double>::infinity();
+            for (size_t i = 0; i < poses.size(); ++i) {
+                const auto& p = poses[i].pose.position;
+                double dx = current_pose_.pose.position.x - p.x;
+                double dy = current_pose_.pose.position.y - p.y;
+                double d2 = dx * dx + dy * dy;
+                if (d2 < min_dist2) {
+                    min_dist2 = d2;
+                    closest_idx = i;
+                }
+            }
+
+            size_t next_idx = (closest_idx + 1 < poses.size()) ? (closest_idx + 1) : closest_idx;
+            size_t prev_idx = (closest_idx > 0) ? (closest_idx - 1) : closest_idx;
+            double dir_x = 0.0;
+            double dir_y = 0.0;
+            if (next_idx != closest_idx) {
+                dir_x = poses[next_idx].pose.position.x - poses[closest_idx].pose.position.x;
+                dir_y = poses[next_idx].pose.position.y - poses[closest_idx].pose.position.y;
+            } else if (prev_idx != closest_idx) {
+                dir_x = poses[closest_idx].pose.position.x - poses[prev_idx].pose.position.x;
+                dir_y = poses[closest_idx].pose.position.y - poses[prev_idx].pose.position.y;
+            }
+
+            const double dir_norm = std::hypot(dir_x, dir_y);
+            if (dir_norm > 1e-6) {
+                dir_x /= dir_norm;
+                dir_y /= dir_norm;
+                const double dot = dir_x * curr_nx + dir_y * curr_ny;
+                on_stair_now = (dot >= stair_mode_uphill_dot_min_);
+            }
+        }
+
+        double dist_to_stair_m = std::numeric_limits<double>::infinity();
+        bool has_upcoming_stair = detectUpcomingStairDistance(dist_to_stair_m);
+
+        if (stair_mode_current_ == 0) {
+            if (has_upcoming_stair && dist_to_stair_m <= stair_mode_trigger_distance_m_) {
+                stair_mode_release_counter_ = 0;
+                publishStairMode(1, true);
+            } else {
+                publishStairMode(0, true);
+            }
+            return;
+        }
+
+        if (on_stair_now || has_upcoming_stair) {
+            stair_mode_release_counter_ = 0;
+            publishStairMode(1, true);
+            return;
+        }
+
+        ++stair_mode_release_counter_;
+        if (stair_mode_release_counter_ > stair_mode_release_grace_cycles_) {
+            stair_mode_release_counter_ = 0;
+            publishStairMode(0, true);
+        } else {
+            publishStairMode(1, true);
+        }
     }
     
     // 通过 TF 查询机器人位姿
@@ -762,6 +999,8 @@ private:
     
     void doControlling() {
         control_count_++;
+
+        updateStairModeDetection();
         
         auto wall_now = std::chrono::steady_clock::now();
         double time_since_check = std::chrono::duration<double>(
@@ -941,6 +1180,7 @@ private:
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr esdf_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_debug_pub_;
+    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr stair_mode_pub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr dynamic_layer_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
     
@@ -966,6 +1206,14 @@ private:
     bool enable_dynamic_layer_;  // 是否启用动态障碍物层
     bool publish_stair_debug_markers_{true};
     int stair_debug_marker_max_segments_{1500};
+    bool enable_stair_mode_detection_{true};
+    double stair_mode_trigger_distance_m_{1.0};
+    double stair_mode_lookahead_dist_m_{3.0};
+    double stair_mode_sample_step_m_{0.10};
+    double stair_mode_uphill_dot_min_{0.1};
+    int stair_mode_release_grace_cycles_{5};
+    uint8_t stair_mode_current_{0};
+    int stair_mode_release_counter_{0};
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
     
