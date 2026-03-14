@@ -31,6 +31,15 @@
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "play_music/async_audio_player.hpp"
 
+// 决策系统消息（decision_messages）
+#include "robots_msgs/msg/our_robot_state.hpp"
+#include "robots_msgs/msg/enemy_robot_state.hpp"
+#include "robots_msgs/msg/game_state.hpp"
+
+// 决策层目标点桥接
+#include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+
 using namespace std;
 
 using boost::asio::io_context;
@@ -111,6 +120,16 @@ public:
         robot_pub_ = this->create_publisher<robots_msgs::msg::RobotStatus>("RobotFeedBack", 2);  // 发布比赛数据话题
         chassis_odom_pub_ = this->create_publisher<robots_msgs::msg::ChassisOdom>("ChassisOdom", 2);  // 发布电控里程计数据
         enemypose_pub_ = this->create_publisher<robots_msgs::msg::EnemyPose>("EnemyPose", 2);   // 发布自瞄敌人信息
+        // 决策系统消息（整合后直接发布，供决策节点订阅）
+        our_state_pub_   = this->create_publisher<robots_msgs::msg::OurRobotState>("/decision_messages/OurRobotState", 10);
+        enemy_state_pub_ = this->create_publisher<robots_msgs::msg::EnemyRobotState>("/decision_messages/EnemyRobotState", 10);
+        game_state_pub_  = this->create_publisher<robots_msgs::msg::GameState>("/decision_messages/GameState", 10);
+
+        // 决策层目标点桥接：/sentry/target_position (PointStamped) → goal_pose (PoseStamped)
+        target_pos_sub_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
+            "/sentry/target_position", 10,
+            std::bind(&SerialNode::targetPosCallback, this, std::placeholders::_1));
+        goal_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("goal_pose", 10);
         enemy_tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         last_cmd_vel_time_ = this->get_clock()->now();
 
@@ -216,6 +235,7 @@ private:
     void chas_cmd_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg);
+    void targetPosCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg);
 
     bool debug_flag_;
 
@@ -258,6 +278,17 @@ private:
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::ChassisOdom>>   chassis_odom_pub_;
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::EnemyPose>>     enemypose_pub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> enemy_tf_pub_;
+    // 决策系统消息发布者
+    rclcpp::Publisher<robots_msgs::msg::OurRobotState>::SharedPtr   our_state_pub_;
+    rclcpp::Publisher<robots_msgs::msg::EnemyRobotState>::SharedPtr enemy_state_pub_;
+    rclcpp::Publisher<robots_msgs::msg::GameState>::SharedPtr       game_state_pub_;
+    // 决策消息缓存（跨回调聚合：GameStatus 先收到，RobotStatus 后收到，合并后发布）
+    robots_msgs::msg::OurRobotState   our_state_;
+    robots_msgs::msg::EnemyRobotState enemy_state_;
+
+    // 决策层目标点桥接
+    rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr target_pos_sub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr     goal_pose_pub_;
 
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr priority_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr stair_mode_sub_;

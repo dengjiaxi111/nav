@@ -1,7 +1,7 @@
 image: RMUC_final_no_slope1.pgm
 mode: trinary
 resolution: 0.05
-origin: [-4.22,-9.33, 0]
+origin: [-14.474,-8.401, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25

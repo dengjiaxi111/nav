@@ -109,7 +109,7 @@ struct StairDetectorConfig {
     int normal_min_points = 50;                 // 法向量计算最小点数
 
     // === 多平面分割参数 (方案2) ===
-    bool enable_plane_segmentation = true;      // 启用RANSAC平面分割
+    bool enable_plane_segmentation = false;      // 启用RANSAC平面分割
     float ransac_distance_threshold = 0.02f;    // RANSAC内点距离阈值 (m)
     int ransac_max_iterations = 100;            // RANSAC最大迭代次数
     int min_plane_points = 150;                 // 最小平面点数
@@ -117,9 +117,9 @@ struct StairDetectorConfig {
     int max_planes = 3;                         // 最大提取平面数
 
     // === 预筛选（网格竖直占据率）===
-    float cell_size_xy = 0.05f;             // XY 网格大小 (m)
-    int min_cell_points = 8;                // 网格最小点数
-    float min_cell_height = 0.10f;          // 网格最小高度跨度 (m)
+    float cell_size_xy = 0.03f;             // XY 网格大小 (m)
+    int min_cell_points = 10;                // 网格最小点数
+    float min_cell_height = 0.08f;          // 网格最小高度跨度 (m)
     float max_cell_height = 0.45f;          // 网格最大高度跨度 (m)
     float max_cell_top_z = 0.5f;            // 网格最高点上限 (m)
     
@@ -234,8 +234,15 @@ private:
     // Step 2: 多平面分割 (方案2: RANSAC)
     std::vector<PlaneModel> extractMultiplePlanes(const PointCloud::Ptr& cloud_in);
     
-    // Step 2.5: 欧式聚类 (回退方案)
+    // Step 2.5: 聚类方法
     std::vector<PointCloud::Ptr> euclideanClustering(const PointCloud::Ptr& cloud_filtered);
+    std::vector<PointCloud::Ptr> regionGrowingClustering(const PointCloud::Ptr& cloud_filtered);
+    
+    // 辅助函数
+    Vec3f computePointNormal(const PointCloud::Ptr& cloud, 
+                            const pcl::search::KdTree<PointT>::Ptr& tree,
+                            int point_idx, int k_neighbors = 10);
+    std::vector<PointCloud::Ptr> subdivideOversizedCluster(const PointCloud::Ptr& cluster);
     
     // Step 3: 法向量估计与验证 (方案1)
     void computeSurfaceNormals(StairCandidate& candidate);
@@ -259,6 +266,10 @@ private:
     bool validateStairGeometry(const StairCandidate& candidate);
     float computeDistanceToRobot(const Vec3f& point);
     
+    // === 动态参数回调 ===
+    rcl_interfaces::msg::SetParametersResult parametersCallback(
+        const std::vector<rclcpp::Parameter>& parameters);
+    
     // === 可视化 ===
     void publishVisualization();
     void addCandidateMarker(
@@ -273,6 +284,7 @@ private:
     
     // === 发布结果 ===
     void publishStairTarget();
+    void publishPrefilterCloud();  // 发布预筛选点云
     
     // === TF2 辅助 ===
     bool transformPointCloud(
@@ -288,6 +300,7 @@ private:
     rclcpp::TimerBase::SharedPtr update_timer_;  // 定时查询 ROG-Map
     rclcpp::Publisher<rog_map_ros2_node::msg::StairTarget>::SharedPtr target_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr prefilter_cloud_pub_;  // 预筛选点云发布器
     
     // TF2
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -315,6 +328,9 @@ private:
     std::vector<StairCandidate> last_candidates_;
     std::vector<RejectedCandidate> last_rejected_;
     std::vector<PlaneModel> last_planes_;  // 新增：记录提取的平面
+    
+    // 动态参数回调句柄
+    OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 };
 
 } // namespace stair_detector

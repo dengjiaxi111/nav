@@ -487,7 +487,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 }
                 
                 // ========== 横向误差自适应速度缩减 (首次规划 i=0 时) ==========
-                // 根据图片策略：当 e_cross 较大时，通过速度夹角 α 降低纵向速度
+                // 当 e_cross 较大时，通过速度夹角 α 降低纵向速度
                 if (i == 0) {
                     // 计算当前位置到参考点的横向误差 e_cross
                     double dx_robot_ref = x - current_pose.position.x;
@@ -538,7 +538,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 
                 yref.push_back({x, y, theta, desired_v, 0.0});
                 
-                // ✅ 更新索引和累积距离
+                // 更新索引和累积距离
                 last_found_idx = idx;
                 accumulated_dist = dist;
                 break;
@@ -558,7 +558,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 0.0,  // 终点速度为0
                 0.0
             });
-            // ✅ 到达终点后，后续所有参考点都是终点
+            // 到达终点后，后续所有参考点都是终点
             break;
         }
     }
@@ -661,7 +661,7 @@ void NMPC::updateNMPCParameters() {
     }
     
     RCLCPP_INFO(node_->get_logger(), 
-        "✓ NMPC 参数已更新: v_max=%.1f, ω_max=%.1f, Q_pos=%.1f, R_lin=%.2f, esdf_w=%.1f",
+        "NMPC 参数已更新: v_max=%.1f, ω_max=%.1f, Q_pos=%.1f, R_lin=%.2f, esdf_w=%.1f",
         params_.max_linear_vel, params_.max_angular_vel, params_.Q_position, 
         params_.R_linear, params_.esdf_weight);
 }

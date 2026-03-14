@@ -12,7 +12,7 @@ bin-release/
 *.air
 *.ipa
 *.apk
-
+*.pcd
 # py environments
 venv_acados/
 

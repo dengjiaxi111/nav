@@ -25,6 +25,7 @@ sudo make install
 *安装acados（从依赖包里下载）*
 ```
 cd acados
+git submodule update --recursive --init 下载git下对应的依赖
 mkdir build
 cd build
 cmake .. \

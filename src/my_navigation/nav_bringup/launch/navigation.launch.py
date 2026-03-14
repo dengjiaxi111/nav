@@ -19,17 +19,18 @@ def generate_launch_description():
     default_map = os.path.join(pkg_dir, 'maps', 'RMUC_final.yaml')
     default_stair_mask = os.path.join(pkg_dir, 'maps', 'RMUC_final_stair.yaml')
     
-    # 临时静态TF: map -> odom -> base_link (测试用)
-    # RMUC地图原点 [-13.4, -23.8], 地图约 46x39m, 设置机器人在地图中部
-    static_tf_map_odom = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_map_odom',
-        parameters=[{'use_sim_time': use_sim_time}],
-        arguments=['--x', '0', '--y', '0', '--z', '0.1', 
-                   '--roll', '0', '--pitch', '0', '--yaw', '0',
-                   '--frame-id', 'map', '--child-frame-id', 'odom']
-    )
+    # 注意: map → odom TF 现在由 localization_initializer (NDT重定位) 发布
+    # 不再需要临时的 static_tf_map_odom
+    # 如果需要在没有 localization_initializer 的情况下测试，可以取消下方注释:
+    # static_tf_map_odom = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     name='static_tf_map_odom',
+    #     parameters=[{'use_sim_time': use_sim_time}],
+    #     arguments=['--x', '0', '--y', '0', '--z', '0.1',
+    #                '--roll', '0', '--pitch', '0', '--yaw', '0',
+    #                '--frame-id', 'map', '--child-frame-id', 'odom']
+    # )
     
     # static_tf_odom_base = Node(
     #     package='tf2_ros',
@@ -65,8 +66,8 @@ def generate_launch_description():
             description='使用仿真时间'
         ),
         
-        # 静态TF (测试用)
-        static_tf_map_odom,
+        # 静态TF (已由 localization_initializer 接管)
+        # static_tf_map_odom,
         
         Node(
             package='nav_components',

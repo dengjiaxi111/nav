@@ -1,0 +1,27 @@
+Starting >>> livox_ros_driver2
+Finished <<< livox_ros_driver2 [0.47s]
+Starting >>> nav_core
+Finished <<< nav_core [0.10s]
+Starting >>> nav_interfaces
+Finished <<< nav_interfaces [0.44s]
+Starting >>> rog_map
+Finished <<< rog_map [0.20s]
+Starting >>> nav_components
+--- stderr: nav_components
+gmake[2]: *** 没有规则可制作目标“/usr/local/lib/libacados.so”，由“nav_server” 需求。 停止。
+gmake[2]: *** 正在等待未完成的任务....
+In file included from /home/li/navigation2026/src/my_navigation/nav_components/src/nmpc.cpp:13:
+/home/li/navigation2026/src/my_navigation/nav_components/nmpc_solver/acados_solver_wheelleg_nmpc.h:34:10: fatal error: acados/utils/types.h: 没有那个文件或目录
+   34 | #include "acados/utils/types.h"
+      |          ^~~~~~~~~~~~~~~~~~~~~~
+compilation terminated.
+gmake[2]: *** [CMakeFiles/nav_server.dir/build.make:174：CMakeFiles/nav_server.dir/src/nmpc.cpp.o] 错误 1
+gmake[1]: *** [CMakeFiles/Makefile2:137：CMakeFiles/nav_server.dir/all] 错误 2
+gmake: *** [Makefile:146：all] 错误 2
+---
+Failed   <<< nav_components [0.34s, exited with code 2]
+
+Summary: 4 packages finished [1.90s]
+  1 package failed: nav_components
+  1 package had stderr output: nav_components
+  3 packages not processed

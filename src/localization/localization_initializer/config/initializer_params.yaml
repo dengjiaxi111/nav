@@ -1,0 +1,102 @@
+# 定位初始化参数配置 (已清理版本，带有详细注释)
+# 用于 NDT 三阶段配准实现全局定位
+
+/**:
+  ros__parameters:
+    # ==================== 地图与初始位姿 ====================
+    # 官方提供的 PCD 地图文件路径（绝对路径）
+    map_file: "/home/li/navigation2026/2025RMUC_real.pcd"
+
+    # 手动设置初始位姿（如果 auto_initialize=true）
+    initial_x: 0.0
+    initial_y: 0.0
+    initial_z: 0.0
+    initial_yaw: 0.0
+
+    # 是否自动初始化（跳过 RViz '2D Pose Estimate'）
+    # false: 等待用户在 RViz 中手动设置初始位姿
+    # true: 直接使用上面的 initial_x/y/z/yaw 参数
+    auto_initialize: false
+
+    # ==================== 行为控制 ====================
+    # 强制使用最后一次 NDT 配准结果：
+    # - true: 无论 fitness 如何，都采用最后一次 NDT 输出
+    # 注意：如果遇到“初始指得准，但配准后飞掉”的情况，建议结合下方的空间过滤与降采样参数调整！
+    use_last_ndt_result: true
+
+    # 是否在多帧累积并降采样后再应用空间过滤（推荐 true）
+    apply_spatial_filter_after_accumulation: true
+
+    # ==================== Yaw 多假设验证 (Yaw Seed Search) ====================
+    # 在三阶段 NDT 前，以用户给定 yaw 为中心，在 [yaw0-Δ, yaw0+Δ] 范围批量尝试候选朝向，
+    # 用粗分辨率 NDT 少量迭代快速评分，选最优 yaw 作为三阶段 NDT 的初始值。
+    # 🔴 调参提示：step_deg 越小越精确但越慢。Δ=15°/step=2° → 15个候选，约 2~4 秒。
+    yaw_seed_enable: true             # 是否启用 yaw 多假设验证
+    yaw_seed_half_range_deg: 8.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
+    yaw_seed_step_deg: 1.0            # 搜索步长（度），越小越精确
+    yaw_seed_ndt_resolution: 1.20     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）
+    yaw_seed_ndt_max_iter: 10          # 评分用的 NDT 最大迭代次数（少量迭代够了）
+    # 评分置信度阈值：所有候选的 best_score 都高于此值时，说明评分不可信（点云质量差/位置偏差太大）
+    # 此时放弃 yaw-seed 结果，保留用户原始给定的 yaw，直接进入三阶段 NDT
+    # 🔴 调参提示：这个值取决于你的 seed_ndt_resolution 和场景。
+    #   典型值：粗 NDT(res=1.2m, iter=5) 时，正常配准 score ≈ 0.3~2.0，
+    #   若所有候选 score > yaw_seed_fallback_threshold，说明评分完全不可信，回退到原始 yaw。
+    #   建议先看日志里 Top-5 的 fitness 值，取正常场景下最差值的 2 倍作为阈值。
+    yaw_seed_fallback_threshold: 15.0  # 回退阈值：best_score 超过此值时保留原始 yaw
+
+    # ==================== 三阶段 NDT 配准参数 ====================
+    # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
+    # 导致被地面、天花板或外围噪点带偏。
+    # 尝试把 stage1_resolution 改小（比如 0.8 或 0.6），防止大网格吸收过多错误特征。
+    ndt_stage1_resolution: 1.20
+    ndt_stage2_resolution: 0.60    
+    ndt_stage3_resolution: 0.2     
+
+    # 收敛参数
+    ndt_max_iterations: 80
+    ndt_transformation_epsilon: 0.005
+    ndt_step_size: 0.04             # 如果容易发散/非局部跳跃，可以调小（如 0.05）
+
+    # 高级优化
+    ndt_enable_trilinear_interp: true 
+    ndt_enable_linked_cells: true     
+    ndt_outlier_ratio: 0.50           
+
+    # 性能控制
+    ndt_threads: 8                 
+    ndt_fitness_threshold: 20.0    
+
+    # ==================== 屏蔽 GICP ====================
+    enable_gicp: false
+
+    # ==================== 降采样与预处理 ====================
+    # 🔴 调参提示：保留重要的边缘与立面。如果 scan_voxel_size 太大，特征会被抹平。
+    map_voxel_size: 0.1
+    scan_voxel_size: 0.05
+    accumulate_voxel_size: 0.1
+
+    # ==================== 多帧累积 ====================
+    # 🔴 调参提示：运动中初始化时，如果多帧时间跨幅太大，会糊掉。
+    # 如果经常跑飞，可以试试静止时初始化，或者减少累积帧数。
+    accumulate_scans: true
+    accumulate_frames: 4
+    accumulate_duration: 2.5
+
+    # ==================== 空间过滤 (按雷达底盘坐标系) ====================
+    # 🔴 调参提示【极大概率是这里的问题】：
+    # 很多室内场地的地图没有天花板或者地面标高与雷达真实高度不一致！
+    # 如果 filter_z_min 太高或 filter_z_max 过大，导致把地面的点和地图的立柱对齐，或者把天花板对齐进去，就会把正确的初值带飞。
+    # - 强烈建议：将 filter_z_min 调到 0.0 或更高（比如 0.3），也就是切掉所有地面和人的腿部。
+    spatial_filter_enable: true
+    filter_x_min: -100.0
+    filter_x_max: 100.0
+    filter_y_min: -100.0
+    filter_y_max: 100.0
+    # 注意：下面是相对雷达的高度，若雷达离地 0.4m，那地面在 -0.4。这里建议收紧！
+    filter_z_min: -0.52   # 试试改成 0.1，过滤掉整个下半部分干扰
+    filter_z_max: 2.5     # 试试改成 1.5，过滤掉高层杂点
+
+    # ==================== Patchwork++ 地面分割 ====================
+    patchwork_enable: false
+    patchwork_sensor_height: 0.18
+    patchwork_verbose: false

@@ -23,6 +23,11 @@ rosidl_generate_interfaces(
   "msg/slave_computer/ModeCmd.msg"
   "msg/slave_computer/MyPath.msg"
   "msg/slave_computer/ChassisOdom.msg"
+  # 决策系统消息
+  "msg/decision_messages/OurRobotState.msg"
+  "msg/decision_messages/EnemyRobotState.msg"
+  "msg/decision_messages/GameState.msg"
+  "msg/decision_messages/SentryControl.msg"
   DEPENDENCIES
   std_msgs
   geometry_msgs)
