@@ -17,10 +17,12 @@ from launch.actions import (
     IncludeLaunchDescription,
     SetEnvironmentVariable,
 )
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 import os
+import yaml
 
 
 def generate_launch_description():
@@ -31,6 +33,20 @@ def generate_launch_description():
     
     # ==================== 配置文件 ====================
     nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
+    
+    # === 解析 YAML 获取默认的 use_static_map_odom 状态 ===
+    default_use_static_map_odom = 'false'
+    try:
+        with open(nav_params_file, 'r') as f:
+            params_dict = yaml.safe_load(f)
+            if params_dict and 'nav_server' in params_dict:
+                ros_params = params_dict['nav_server'].get('ros__parameters', {})
+                # 获取 YAML 中的 bool 值并转化为 launch parser 接受的 'true' 或 'false'
+                if ros_params.get('use_static_map_odom', False):
+                    default_use_static_map_odom = 'true'
+    except Exception as e:
+        print(f"[Warning] Failed to parse nav_params.yaml for static map->odom toggle: {e}")
+
     rog_map_config = os.path.join(rog_map_dir, 'config', 'rog_map_config.yaml')
     projector_params = os.path.join(rog_map_dir, 'config', 'projector_params.yaml')
     stair_detector_params = os.path.join(rog_map_dir, 'config', 'stair_detector_params.yaml')
@@ -63,6 +79,12 @@ def generate_launch_description():
         default_value='true',
         description='使用仿真时间'
     )
+
+    declare_use_static_map_odom = DeclareLaunchArgument(
+        'use_static_map_odom',
+        default_value=default_use_static_map_odom,
+        description='true: 发布静态 map->odom(0,0,0); false: 使用 localization_initializer 发布 map->odom'
+    )
     
     # ==================== 1. small_point_lio (SLAM定位) ====================
     small_point_lio_launch = IncludeLaunchDescription(
@@ -85,6 +107,7 @@ def generate_launch_description():
         package='localization_initializer',
         executable='localization_initializer_node',
         name='localization_initializer',
+        condition=UnlessCondition(LaunchConfiguration('use_static_map_odom')),
         output='screen',
         parameters=[
             loc_init_config,
@@ -98,6 +121,20 @@ def generate_launch_description():
             ('/localization/status', '/localization/status'),
             ('/localization/fitness_marker', '/localization/fitness_marker'),
         ]
+    )
+
+    static_tf_map_odom = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_map_odom',
+        condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+        arguments=[
+            '--x', '0', '--y', '0', '--z', '0',
+            '--roll', '0', '--pitch', '0', '--yaw', '0',
+            '--frame-id', 'map', '--child-frame-id', 'odom'
+        ],
+        output='screen'
     )
 
     
@@ -157,10 +194,12 @@ def generate_launch_description():
         declare_rog_map_config,
         declare_rviz_config,
         declare_use_sim_time,
+    declare_use_static_map_odom,
         
         # 启动节点 (按依赖顺序)
         small_point_lio_launch,    # 1. LIO 里程计 (odom → base_link)
-        localization_init_node,    # 2. NDT 重定位 (map → odom)，等待 RViz 选点
+        localization_init_node,    # 2a. NDT 重定位 (map → odom)
+        static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0)
         integration_node,          # 3. ROG-Map (3D地图 + 2D投影 + 台阶检测)
         navigation_launch,         # 4. 导航服务器 (规划 + NMPC)
         rviz_node,                 # 5. RViz (含 2D Pose Estimate)
