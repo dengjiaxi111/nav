@@ -11,6 +11,7 @@
 #include <limits>
 #include <array>
 #include <unordered_map>
+#include <set>
 #include <cmath>
 #include <numeric>
 #include <sstream>
@@ -151,6 +152,10 @@ StairDetector::StairDetector(const rclcpp::NodeOptions& options,
     if (cfg_.enable_visualization) {
         marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
             cfg_.output_marker_topic, 10);
+        
+        // 发布预筛选后的点云
+        prefilter_cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/stair_detector/prefilter_cloud", 10);
     }
     
     RCLCPP_INFO(get_logger(), "=== Stair Detector Initialized (Component + Direct-Call) ===");
@@ -170,6 +175,13 @@ StairDetector::StairDetector(const rclcpp::NodeOptions& options,
     RCLCPP_INFO(get_logger(), "  [NEW] Plane Segmentation: %s (RANSAC dist=%.3fm, iter=%d)",
                 cfg_.enable_plane_segmentation ? "ENABLED" : "DISABLED",
                 cfg_.ransac_distance_threshold, cfg_.ransac_max_iterations);
+    
+    // 注册参数变化回调
+    param_callback_handle_ = add_on_set_parameters_callback(
+        std::bind(&StairDetector::parametersCallback, this, std::placeholders::_1));
+    
+    RCLCPP_INFO(get_logger(), "  Dynamic parameter reconfiguration: ENABLED");
+    RCLCPP_INFO(get_logger(), "  Use 'ros2 param set' or rqt_reconfigure to adjust parameters");
     
     last_process_time_ = now();
 }
@@ -251,6 +263,7 @@ void StairDetector::updateTimerCallback() {
     
     if (cfg_.enable_visualization) {
         publishVisualization();
+        publishPrefilterCloud();  // 发布预筛选点云
     }
     
     // 性能统计
@@ -341,12 +354,28 @@ void StairDetector::processPointCloud(const PointCloud::Ptr& cloud_in) {
         }
     }
     
-    // Step 2.5: 欧式聚类 (回退方案或补充)
+    // Step 2.5: 区域生长聚类（方案3：考虑法向量一致性）
     if (candidates.empty()) {
-        RCLCPP_DEBUG(get_logger(), "[Fallback] Using Euclidean clustering");
-        auto clusters = euclideanClustering(cloud_prefilter);
-        last_clusters_ = clusters;
-        if (clusters.empty()) {
+        RCLCPP_DEBUG(get_logger(), "[Clustering] Using region growing with normal consistency");
+        auto clusters = regionGrowingClustering(cloud_prefilter);
+        
+        // 方案1：对过大簇进行分割
+        std::vector<PointCloud::Ptr> refined_clusters;
+        for (auto& cluster : clusters) {
+            if (cluster->size() > static_cast<size_t>(cfg_.max_cluster_size)) {
+                RCLCPP_DEBUG(get_logger(), "[Clustering] Oversized cluster detected: %zu points", 
+                            cluster->size());
+                auto sub_clusters = subdivideOversizedCluster(cluster);
+                refined_clusters.insert(refined_clusters.end(), 
+                                       sub_clusters.begin(), sub_clusters.end());
+            } else {
+                refined_clusters.push_back(cluster);
+            }
+        }
+        
+        last_clusters_ = refined_clusters;
+        
+        if (refined_clusters.empty()) {
             last_candidates_.clear();
             last_rejected_.clear();
             if (current_state_ != DetectionState::IDLE) {
@@ -387,11 +416,11 @@ PointCloud::Ptr StairDetector::roiFilter(const PointCloud::Ptr& cloud_in) {
     pass_y.setFilterLimits(cfg_.roi_y_min, cfg_.roi_y_max);
     pass_y.filter(*cloud_temp);
     
-    // Z 轴过滤（切掉地面）
+    // Z 轴过滤（仅切掉地面，不限制上限）
     pcl::PassThrough<PointT> pass_z;
     pass_z.setInputCloud(cloud_temp);
     pass_z.setFilterFieldName("z");
-    pass_z.setFilterLimits(cfg_.roi_z_min, cfg_.roi_z_max);
+    pass_z.setFilterLimits(cfg_.roi_z_min, 100.0);  // 上限设为极大值，不实际限制
     pass_z.filter(*cloud_filtered);
     
     return cloud_filtered;
@@ -402,9 +431,12 @@ PointCloud::Ptr StairDetector::stairLikeFilter(const PointCloud::Ptr& cloud_in) 
         int count = 0;
         float min_z = std::numeric_limits<float>::max();
         float max_z = std::numeric_limits<float>::lowest();
+        std::set<int> occupied_z_layers;  // 记录哪些 Z 层有点
     };
 
     const float cell = std::max(0.01f, cfg_.cell_size_xy);
+    const float z_layer_size = 0.025f;  // Z 轴分层大小：2.5cm
+    
     std::unordered_map<long long, CellStats> cells;
     cells.reserve(cloud_in->size());
 
@@ -414,30 +446,57 @@ PointCloud::Ptr StairDetector::stairLikeFilter(const PointCloud::Ptr& cloud_in) 
         return (static_cast<long long>(ix) << 32) ^ (static_cast<unsigned int>(iy));
     };
 
+    // 第一次遍历：统计每个网格的完整 Z 轴分布
     for (const auto& pt : cloud_in->points) {
         const long long key = key_from(pt.x, pt.y);
         auto& stat = cells[key];
         stat.count += 1;
         stat.min_z = std::min(stat.min_z, pt.z);
         stat.max_z = std::max(stat.max_z, pt.z);
+        
+        // 记录该点所在的 Z 层
+        int z_layer = static_cast<int>(std::floor(pt.z / z_layer_size));
+        stat.occupied_z_layers.insert(z_layer);
     }
 
     PointCloud::Ptr filtered(new PointCloud);
     filtered->reserve(cloud_in->size());
 
+    // 第二次遍历：根据网格特征过滤
     for (const auto& pt : cloud_in->points) {
         const long long key = key_from(pt.x, pt.y);
         const auto& stat = cells[key];
         const float height = stat.max_z - stat.min_z;
+        
+        // 条件 1: 点数太少，可能是噪声
         if (stat.count < cfg_.min_cell_points) {
             continue;
         }
+        
+        // 条件 2: 必须有一定的垂直跨度（排除完全平坦的地面）
+        if (height < cfg_.min_cell_height) {
+            continue;
+        }
+        
+        // 条件 3: 顶部不能太高（排除天花板、高处悬挡物）
         if (stat.max_z > cfg_.max_cell_top_z) {
             continue;
         }
-        if (height < cfg_.min_cell_height || height > cfg_.max_cell_height) {
+        
+        // 条件 4: Z轴占据率检查（新增）
+        // 计算理论上应该有多少个 Z 层
+        int expected_layers = std::max(1, static_cast<int>(std::ceil(height / z_layer_size)));
+        // 实际占据的层数
+        int actual_layers = static_cast<int>(stat.occupied_z_layers.size());
+        // 占据率
+        float z_occupancy = static_cast<float>(actual_layers) / static_cast<float>(expected_layers);
+        
+        // 要求至少 50% 的 Z 层有点
+        if (z_occupancy < 0.5f) {
             continue;
         }
+        
+        // 通过所有条件，保留该网格的所有点
         filtered->push_back(pt);
     }
 
@@ -532,6 +591,195 @@ std::vector<PlaneModel> StairDetector::extractMultiplePlanes(const PointCloud::P
     }
     
     return planes;
+}
+
+Vec3f StairDetector::computePointNormal(const PointCloud::Ptr& cloud, 
+                                         const pcl::search::KdTree<PointT>::Ptr& tree,
+                                         int point_idx, int k_neighbors) {
+    /**
+     * 快速法向量估计：使用 k 近邻 PCA
+     */
+    std::vector<int> indices;
+    std::vector<float> distances;
+    
+    if (tree->nearestKSearch(cloud->points[point_idx], k_neighbors, indices, distances) < 3) {
+        return Vec3f(0, 0, 1);  // 默认向上
+    }
+    
+    // 计算质心
+    Vec3f centroid = Vec3f::Zero();
+    for (int idx : indices) {
+        const auto& pt = cloud->points[idx];
+        centroid += Vec3f(pt.x, pt.y, pt.z);
+    }
+    centroid /= static_cast<float>(indices.size());
+    
+    // 计算协方差矩阵
+    Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+    for (int idx : indices) {
+        const auto& pt = cloud->points[idx];
+        Vec3f d(pt.x - centroid.x(), pt.y - centroid.y(), pt.z - centroid.z());
+        cov += d * d.transpose();
+    }
+    cov /= static_cast<float>(indices.size());
+    
+    // 特征值分解
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(cov);
+    if (solver.info() != Eigen::Success) {
+        return Vec3f(0, 0, 1);
+    }
+    
+    // 法向量 = 最小特征值对应的特征向量
+    Vec3f normal = solver.eigenvectors().col(0);
+    normal.normalize();
+    
+    return normal;
+}
+
+std::vector<PointCloud::Ptr> StairDetector::regionGrowingClustering(
+    const PointCloud::Ptr& cloud_filtered) {
+    /**
+     * 区域生长聚类：考虑法向量一致性
+     * 只有距离近 AND 法向量相似的点才会被聚到一起
+     * 这样可以分离共面但法向量不同的区域（台阶边缘 vs 墙面）
+     */
+    
+    if (cloud_filtered->empty()) {
+        return {};
+    }
+    
+    // 构建 KdTree
+    pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
+    tree->setInputCloud(cloud_filtered);
+    
+    // 预计算所有点的法向量
+    std::vector<Vec3f> normals(cloud_filtered->size());
+    const int k_neighbors = 10;  // 用于法向量估计的邻居数
+    
+    for (size_t i = 0; i < cloud_filtered->size(); ++i) {
+        normals[i] = computePointNormal(cloud_filtered, tree, i, k_neighbors);
+    }
+    
+    // 区域生长
+    std::vector<bool> processed(cloud_filtered->size(), false);
+    std::vector<PointCloud::Ptr> clusters;
+    
+    const float distance_tolerance = cfg_.cluster_tolerance;
+    const float normal_angle_threshold = 10.0f * M_PI / 180.0f;  // 10度
+    
+    for (size_t seed_idx = 0; seed_idx < cloud_filtered->size(); ++seed_idx) {
+        if (processed[seed_idx]) continue;
+        
+        // 开始新簇
+        PointCloud::Ptr cluster(new PointCloud);
+        std::vector<int> seed_queue;
+        seed_queue.push_back(seed_idx);
+        processed[seed_idx] = true;
+        
+        while (!seed_queue.empty()) {
+            int current_idx = seed_queue.back();
+            seed_queue.pop_back();
+            
+            cluster->push_back(cloud_filtered->points[current_idx]);
+            
+            // 查找邻居
+            std::vector<int> neighbor_indices;
+            std::vector<float> neighbor_distances;
+            tree->radiusSearch(cloud_filtered->points[current_idx], 
+                              distance_tolerance, 
+                              neighbor_indices, 
+                              neighbor_distances);
+            
+            for (int neighbor_idx : neighbor_indices) {
+                if (processed[neighbor_idx]) continue;
+                
+                // 关键：检查法向量夹角
+                float dot_product = normals[current_idx].dot(normals[neighbor_idx]);
+                dot_product = std::max(-1.0f, std::min(1.0f, dot_product));
+                float angle = std::acos(std::abs(dot_product));  // 使用绝对值（方向可能相反）
+                
+                if (angle < normal_angle_threshold) {
+                    processed[neighbor_idx] = true;
+                    seed_queue.push_back(neighbor_idx);
+                }
+            }
+        }
+        
+        // 尺寸检查
+        if (cluster->size() >= static_cast<size_t>(cfg_.min_cluster_size) &&
+            cluster->size() <= static_cast<size_t>(cfg_.max_cluster_size)) {
+            cluster->width = cluster->size();
+            cluster->height = 1;
+            cluster->is_dense = true;
+            clusters.push_back(cluster);
+        }
+    }
+    
+    RCLCPP_DEBUG(get_logger(), "[RegionGrowing] Generated %zu clusters from %zu points",
+                 clusters.size(), cloud_filtered->size());
+    
+    return clusters;
+}
+
+std::vector<PointCloud::Ptr> StairDetector::subdivideOversizedCluster(
+    const PointCloud::Ptr& cluster) {
+    /**
+     * 方案1：过大簇分割
+     * 将横向尺寸过大的簇沿长边切分成多个子簇
+     */
+    
+    std::vector<PointCloud::Ptr> sub_clusters;
+    
+    // 计算边界框
+    PointT min_pt, max_pt;
+    pcl::getMinMax3D(*cluster, min_pt, max_pt);
+    
+    float width_x = max_pt.x - min_pt.x;
+    float width_y = max_pt.y - min_pt.y;
+    float width_z = max_pt.z - min_pt.z;
+    
+    const float max_horizontal_size = 1.0f;  // 最大横向尺寸 1m
+    
+    // 如果横向尺寸不超标，不切分
+    if (width_x <= max_horizontal_size && width_y <= max_horizontal_size) {
+        sub_clusters.push_back(cluster);
+        return sub_clusters;
+    }
+    
+    // 确定切分方向和数量
+    bool split_along_x = (width_x > width_y);
+    float split_size = split_along_x ? width_x : width_y;
+    int num_segments = std::ceil(split_size / max_horizontal_size);
+    float segment_size = split_size / num_segments;
+    
+    // 按段分配点
+    std::vector<PointCloud::Ptr> segments(num_segments);
+    for (auto& seg : segments) {
+        seg.reset(new PointCloud);
+    }
+    
+    for (const auto& pt : cluster->points) {
+        float coord = split_along_x ? pt.x : pt.y;
+        float min_coord = split_along_x ? min_pt.x : min_pt.y;
+        int segment_idx = static_cast<int>((coord - min_coord) / segment_size);
+        segment_idx = std::min(segment_idx, num_segments - 1);
+        segments[segment_idx]->push_back(pt);
+    }
+    
+    // 保留有效段
+    for (auto& seg : segments) {
+        if (seg->size() >= static_cast<size_t>(cfg_.min_cluster_size)) {
+            seg->width = seg->size();
+            seg->height = 1;
+            seg->is_dense = true;
+            sub_clusters.push_back(seg);
+        }
+    }
+    
+    RCLCPP_DEBUG(get_logger(), "[Subdivide] Split cluster (%zu pts, %.2fm x %.2fm) into %zu segments",
+                 cluster->size(), width_x, width_y, sub_clusters.size());
+    
+    return sub_clusters;
 }
 
 std::vector<PointCloud::Ptr> StairDetector::euclideanClustering(
@@ -942,23 +1190,27 @@ void StairDetector::computeSurfaceNormals(StairCandidate& candidate) {
     // 法向量 = 最小特征值对应的特征向量
     candidate.surface_normal = eigenvectors.col(0);
     
-    // 确保法向量朝上 (z分量为正)
-    if (candidate.surface_normal.z() < 0) {
-        candidate.surface_normal = -candidate.surface_normal;
-    }
+    // 不强制法向量朝上，保持原始方向
+    // （竖直平面的法向量应该是水平的）
     
     // 4. 计算平面性 = 1 - (λ0/λ1)
     if (eigenvalues(1) > 1e-6f) {
         candidate.planarity = 1.0f - eigenvalues(0) / eigenvalues(1);
     }
     
-    // 5. 逐点分类：水平面 vs 垂直面
-    // 简化版：用整体法向量判断 (更精确的方法需要逐点计算局部法向量)
+    // 5. 逐点分类：竖直面 vs 水平面
+    // 台阶的竖直边缘：法向量水平朝外 (|nz| ≈ 0)
     const float total_points = static_cast<float>(candidate.cloud->points.size());
-    if (std::abs(candidate.surface_normal.z()) > 0.9f) {
-        candidate.horizontal_points = static_cast<int>(total_points);
-    } else if (std::abs(candidate.surface_normal.z()) < 0.2f) {
+    const float nz_abs = std::abs(candidate.surface_normal.z());
+    
+    if (nz_abs < 0.2f) {
+        // 法向量接近水平 → 竖直平面（台阶边缘）
         candidate.vertical_points = static_cast<int>(total_points);
+        candidate.horizontal_points = 0;
+    } else if (nz_abs > 0.9f) {
+        // 法向量接近竖直 → 水平平面
+        candidate.horizontal_points = static_cast<int>(total_points);
+        candidate.vertical_points = 0;
     }
     
     candidate.normal_valid = true;
@@ -983,27 +1235,35 @@ bool StairDetector::validateNormalFeatures(const StairCandidate& candidate, std:
         return false;
     }
     
-    // 2. 法向量朝向检查 (必须接近竖直向上)
+    // 2. 法向量朝向检查（修正：检查竖直平面，不是水平平面）
+    // 台阶竖直边缘的法向量应该是水平的（nz ≈ 0）
     float nz_abs = std::abs(candidate.surface_normal.z());
-    if (nz_abs < cfg_.horizontal_normal_z_min) {
-        reject_reason = "normal_not_horizontal";
-        RCLCPP_DEBUG(get_logger(), "[Normal] Rejected: |nz|=%.3f < %.3f", 
+    if (nz_abs > cfg_.horizontal_normal_z_min) {
+        // nz 太大 → 这是水平面，不是台阶边缘 → 拒绝
+        reject_reason = "normal_not_vertical";
+        RCLCPP_DEBUG(get_logger(), "[Normal] Rejected: |nz|=%.3f > %.3f (expected vertical plane)", 
                      nz_abs, cfg_.horizontal_normal_z_min);
         return false;
     }
     
-    // 3. 水平点占比检查
-    float horizontal_ratio = candidate.horizontal_points / 
-                            static_cast<float>(candidate.cloud->points.size());
-    if (horizontal_ratio < cfg_.horizontal_points_ratio_min) {
-        reject_reason = "insufficient_horizontal_surface";
-        RCLCPP_DEBUG(get_logger(), "[Normal] Rejected: horizontal_ratio=%.3f < %.3f", 
-                     horizontal_ratio, cfg_.horizontal_points_ratio_min);
+    // 3. 竖直点占比检查（修正：检查竖直点，不是水平点）
+    float vertical_ratio = candidate.vertical_points / 
+                          static_cast<float>(candidate.cloud->points.size());
+    if (vertical_ratio < cfg_.horizontal_points_ratio_min) {
+        reject_reason = "insufficient_vertical_surface";
+        RCLCPP_DEBUG(get_logger(), "[Normal] Rejected: vertical_ratio=%.3f < %.3f", 
+                     vertical_ratio, cfg_.horizontal_points_ratio_min);
         return false;
     }
+    // if (horizontal_ratio < cfg_.horizontal_points_ratio_min) {
+    //     reject_reason = "insufficient_horizontal_surface";
+    //     RCLCPP_DEBUG(get_logger(), "[Normal] Rejected: horizontal_ratio=%.3f < %.3f", 
+    //                  horizontal_ratio, cfg_.horizontal_points_ratio_min);
+    //     return false;
+    // }
     
-    RCLCPP_DEBUG(get_logger(), "[Normal] Passed: planarity=%.3f, nz=%.3f, h_ratio=%.3f", 
-                 candidate.planarity, nz_abs, horizontal_ratio);
+    // RCLCPP_DEBUG(get_logger(), "[Normal] Passed: planarity=%.3f, nz=%.3f, h_ratio=%.3f", 
+    //              candidate.planarity, nz_abs, horizontal_ratio);
     return true;
 }
 
@@ -1578,6 +1838,125 @@ bool StairDetector::transformPointCloud(
     } catch (const tf2::TransformException& ex) {
         return false;
     }
+}
+
+void StairDetector::publishPrefilterCloud() {
+    if (!prefilter_cloud_pub_ || !last_prefilter_cloud_ || last_prefilter_cloud_->empty()) {
+        return;
+    }
+    
+    // 方法1: 发布为点云消息（保留原有功能）
+    sensor_msgs::msg::PointCloud2 cloud_msg;
+    pcl::toROSMsg(*last_prefilter_cloud_, cloud_msg);
+    cloud_msg.header.stamp = now();
+    cloud_msg.header.frame_id = cfg_.target_frame;
+    prefilter_cloud_pub_->publish(cloud_msg);
+    
+    // 方法2: 用球形 Marker 可视化（添加到 markers）
+    if (!marker_pub_) {
+        return;
+    }
+    
+    visualization_msgs::msg::Marker spheres;
+    spheres.header.frame_id = cfg_.target_frame;
+    spheres.header.stamp = now();
+    spheres.ns = "prefilter_cloud_spheres";
+    spheres.id = 9999;  // 使用特殊ID避免冲突
+    spheres.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+    spheres.action = visualization_msgs::msg::Marker::ADD;
+    
+    // 球形大小
+    spheres.scale.x = 0.04;  // 球形直径 4cm
+    spheres.scale.y = 0.04;
+    spheres.scale.z = 0.04;
+    
+    // 颜色：明亮的黄色
+    spheres.color.r = 1.0f;
+    spheres.color.g = 1.0f;
+    spheres.color.b = 0.0f;
+    spheres.color.a = 0.8f;  // 半透明
+    
+    spheres.lifetime = rclcpp::Duration::from_seconds(0.5);
+    
+    // 添加所有预筛选点
+    spheres.points.reserve(last_prefilter_cloud_->size());
+    for (const auto& pt : last_prefilter_cloud_->points) {
+        geometry_msgs::msg::Point p;
+        p.x = pt.x;
+        p.y = pt.y;
+        p.z = pt.z;
+        spheres.points.push_back(p);
+    }
+    
+    // 发布独立的 MarkerArray
+    visualization_msgs::msg::MarkerArray marker_array;
+    marker_array.markers.push_back(spheres);
+    marker_pub_->publish(marker_array);
+}
+
+rcl_interfaces::msg::SetParametersResult StairDetector::parametersCallback(
+    const std::vector<rclcpp::Parameter>& parameters) {
+    
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    
+    for (const auto& param : parameters) {
+        const std::string& name = param.get_name();
+        
+        // === ROI 参数 ===
+        if (name == "roi_x_min") cfg_.roi_x_min = param.as_double();
+        else if (name == "roi_x_max") cfg_.roi_x_max = param.as_double();
+        else if (name == "roi_y_min") cfg_.roi_y_min = param.as_double();
+        else if (name == "roi_y_max") cfg_.roi_y_max = param.as_double();
+        else if (name == "roi_z_min") cfg_.roi_z_min = param.as_double();
+        else if (name == "roi_z_max") cfg_.roi_z_max = param.as_double();
+        
+        // === 聚类参数 ===
+        else if (name == "cluster_tolerance") cfg_.cluster_tolerance = param.as_double();
+        else if (name == "min_cluster_size") cfg_.min_cluster_size = param.as_int();
+        else if (name == "max_cluster_size") cfg_.max_cluster_size = param.as_int();
+        
+        // === 几何约束参数 ===
+        else if (name == "single_stair_height") cfg_.single_stair_height = param.as_double();
+        else if (name == "double_stair_height") cfg_.double_stair_height = param.as_double();
+        else if (name == "height_tolerance") cfg_.height_tolerance = param.as_double();
+        else if (name == "min_stair_width") cfg_.min_stair_width = param.as_double();
+        else if (name == "min_stair_depth") cfg_.min_stair_depth = param.as_double();
+        else if (name == "max_z_thickness") cfg_.max_z_thickness = param.as_double();
+        
+        // === 法向量估计参数 ===
+        else if (name == "enable_normal_estimation") cfg_.enable_normal_estimation = param.as_bool();
+        else if (name == "min_planarity") cfg_.min_planarity = param.as_double();
+        else if (name == "horizontal_normal_z_min") cfg_.horizontal_normal_z_min = param.as_double();
+        else if (name == "horizontal_points_ratio_min") cfg_.horizontal_points_ratio_min = param.as_double();
+        else if (name == "normal_min_points") cfg_.normal_min_points = param.as_int();
+        
+        // === 平面分割参数 ===
+        else if (name == "enable_plane_segmentation") cfg_.enable_plane_segmentation = param.as_bool();
+        else if (name == "ransac_distance_threshold") cfg_.ransac_distance_threshold = param.as_double();
+        else if (name == "ransac_max_iterations") cfg_.ransac_max_iterations = param.as_int();
+        else if (name == "min_plane_points") cfg_.min_plane_points = param.as_int();
+        else if (name == "ground_plane_z_tolerance") cfg_.ground_plane_z_tolerance = param.as_double();
+        else if (name == "max_planes") cfg_.max_planes = param.as_int();
+        
+        // === 预筛选参数 ===
+        else if (name == "cell_size_xy") cfg_.cell_size_xy = param.as_double();
+        else if (name == "min_cell_points") cfg_.min_cell_points = param.as_int();
+        else if (name == "min_cell_height") cfg_.min_cell_height = param.as_double();
+        else if (name == "max_cell_height") cfg_.max_cell_height = param.as_double();
+        else if (name == "max_cell_top_z") cfg_.max_cell_top_z = param.as_double();
+        
+        // === 跟踪参数 ===
+        else if (name == "min_detection_frames") cfg_.min_detection_frames = param.as_int();
+        else if (name == "lowpass_alpha") cfg_.lowpass_alpha = param.as_double();
+        else if (name == "blind_zone_distance") cfg_.blind_zone_distance = param.as_double();
+        
+        // 参数更新日志
+        RCLCPP_INFO(get_logger(), "Parameter updated: %s = %s", 
+                    name.c_str(), param.value_to_string().c_str());
+    }
+    
+    return result;
 }
 
 } // namespace stair_detector

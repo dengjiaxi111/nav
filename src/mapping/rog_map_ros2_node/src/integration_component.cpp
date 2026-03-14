@@ -31,7 +31,6 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
     executor_->add_node(rog_map_component_);
     
     RCLCPP_INFO(this->get_logger(), "  ROGMapComponent created");
-    
     // 等待 ROG-Map 初始化完成
     rclcpp::sleep_for(std::chrono::milliseconds(500));
     
@@ -50,7 +49,7 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
     projector_options.use_intra_process_comms(true);
     
     // 直接从父节点声明并获取所有 projector 参数
-    // 参数格式: projector.robot_height, projector.base_to_ground 等
+    // 参数格式: projector.robot_height, projector.base_to_ground_default 等
     std::vector<std::string> projector_param_names = {
         "robot_height", "robot_width", "base_to_ground_default", "ground_tolerance",
         "enable_dynamic_leg_length", "wheel_frame", "leg_length_min", "leg_length_max",
@@ -66,12 +65,24 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
         "enable_debug_log", "enable_step_debug_viz", "step_debug_topic"
     };
     
+    // 从 launch 文件的 parameter overrides 中加载参数
+    RCLCPP_INFO(this->get_logger(), "Loading Map2DProjector parameters:");
+    
+    // 获取所有以 "projector." 开头的参数
+    auto param_overrides = this->get_node_parameters_interface()->get_parameter_overrides();
+    
     for (const auto& param_name : projector_param_names) {
         std::string full_name = "projector." + param_name;
-        if (this->has_parameter(full_name)) {
-            auto param = this->get_parameter(full_name);
-            projector_options.append_parameter_override(param_name, param.get_parameter_value());
-            RCLCPP_DEBUG(this->get_logger(), "  Copying param: %s", full_name.c_str());
+        
+        // 检查参数是否在 overrides 中（即从 launch 文件传入）
+        auto it = param_overrides.find(full_name);
+        if (it != param_overrides.end()) {
+            // 参数存在于 launch 文件中，传递给子节点
+            projector_options.append_parameter_override(param_name, it->second);
+            RCLCPP_INFO(this->get_logger(), "  ✓ %s = %s", 
+                        full_name.c_str(), rclcpp::Parameter(full_name, it->second).value_to_string().c_str());
+        } else {
+            RCLCPP_DEBUG(this->get_logger(), "  ○ %s not set (will use default)", full_name.c_str());
         }
     }
     
@@ -97,11 +108,21 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
         "target_frame", "map_frame", "enable_visualization", "update_rate"
     };
     
+    // 从 launch 文件的 parameter overrides 中加载参数
+    RCLCPP_INFO(this->get_logger(), "Loading StairDetector parameters:");
+    
     for (const auto& param_name : detector_param_names) {
-        if (this->has_parameter(param_name)) {
-            auto param = this->get_parameter(param_name);
-            detector_options.append_parameter_override(param_name, param.get_parameter_value());
-            RCLCPP_DEBUG(this->get_logger(), "  Copying param: %s", param_name.c_str());
+        std::string full_name = "stair_detector." + param_name;
+        
+        // 检查参数是否在 overrides 中
+        auto it = param_overrides.find(full_name);
+        if (it != param_overrides.end()) {
+            // 参数存在，传递给子节点（去掉 stair_detector. 前缀）
+            detector_options.append_parameter_override(param_name, it->second);
+            RCLCPP_INFO(this->get_logger(), "  ✓ %s = %s", 
+                        full_name.c_str(), rclcpp::Parameter(full_name, it->second).value_to_string().c_str());
+        } else {
+            RCLCPP_DEBUG(this->get_logger(), "  ○ %s not set (will use default)", full_name.c_str());
         }
     }
     

@@ -28,8 +28,8 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     // 从参数服务器加载配置
     cfg_.robot_height = this->declare_parameter<double>("robot_height", 0.5);
     cfg_.robot_width = this->declare_parameter<double>("robot_width", 0.4);
-    cfg_.base_to_ground_default = this->declare_parameter<double>("base_to_ground_default", 0.10);
-    cfg_.ground_tolerance = this->declare_parameter<double>("ground_tolerance", 0.03);
+    cfg_.base_to_ground_default = this->declare_parameter<double>("base_to_ground_default", 0.10);  // 适配SLAM坐标系偏移
+    cfg_.ground_tolerance = this->declare_parameter<double>("ground_tolerance", 0.08);  // 增加地面容差
     
     cfg_.enable_dynamic_leg_length = this->declare_parameter<bool>("enable_dynamic_leg_length", false);
     cfg_.wheel_frame = this->declare_parameter<std::string>("wheel_frame", "wheel_link");

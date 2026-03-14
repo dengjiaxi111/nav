@@ -5,7 +5,6 @@
 #include <nav_core/controller_base.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
-#include <visualization_msgs/msg/marker.hpp>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -89,7 +88,9 @@ private:
 
     /**
      * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
-     * 参数格式 p = [d_esdf, grad_x, grad_y, x_query, y_query]
+        * 参数格式 p = [xref(7), d_esdf, weight_scale,
+        *               q_pos, q_theta, q_vel, r_lin, r_ang,
+        *               esdf_weight, esdf_safe_dist, contouring_weight]
      * @param yref 参考轨迹（用于查询位置）
      */
     void injectEsdfParameters(const std::vector<std::vector<double>>& yref,
@@ -122,10 +123,10 @@ private:
     
     // ========== acados Solver ==========
     wheelleg_nmpc_solver_capsule* acados_ocp_capsule_ = nullptr;
-    int N_horizon_ = 40;
-    double T_horizon_ = 2.0;
+    int N_horizon_ = 50;
+    double T_horizon_ = 1.5;
     
-    static constexpr int NP_PARAM = 9;  // [xref(7), d_esdf, weight_scale]
+    static constexpr int NP_PARAM = 17;
     
     // ========== 参数配置 ==========
     struct NMPCParams {
@@ -135,34 +136,38 @@ private:
         double max_linear_accel = 2.0;
         double max_angular_accel = 3.0;
         bool allow_reverse = false;
-        
-        // 代价权重
+
+        // 代价权重（运行时参数注入）
         double Q_position = 10.0;
         double Q_orientation = 5.0;
         double Q_velocity = 1.0;
         double R_linear = 0.1;
         double R_angular = 0.1;
-        double terminal_multiplier = 2.0;
-        
-        // ESDF 障碍物代价 (在 solver 内部使用)
-        double esdf_weight = 20.0;         // ESDF 代价权重
-        double esdf_safe_dist = 0.5;       // 安全距离 (m)
+
+        // ESDF 与轮廓代价权重（运行时参数注入）
+        double esdf_weight = 20.0;
+        double esdf_safe_dist = 0.5;
+        double contouring_weight = 50.0;
+
+        // ESDF 代价开关
         bool enable_esdf_cost = true;      // 启用 ESDF 代价
-        
+
         // 局部参考提取
         double horizon_length = 3.0;       // 提取前方路径长度 (米)
         double desired_velocity = 1.0;     // 期望速度
-        
+
         // 横向误差自适应速度缩减 (图片策略)
         double lateral_error_threshold = 0.15;  // 横向误差阈值 (m)，超过此值启用速度缩减
-        
+
         // 近端权重递增
         double near_weight_multiplier = 2.0;  // 前 1/4 时域权重倍数
+
+        // 终端权重缩放
+        double terminal_multiplier = 2.0;
     } params_;
     
     // ========== ROS 接口 ==========
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr predicted_path_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr debug_marker_pub_;
     
     // 性能统计
     struct {
