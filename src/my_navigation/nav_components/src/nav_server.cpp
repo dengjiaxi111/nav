@@ -100,7 +100,7 @@ public:
         RCLCPP_INFO(get_logger(), "controller_timeout: %.1f s", controller_timeout_);
         RCLCPP_INFO(get_logger(), "controller_progress_threshold: %.2f m", controller_progress_threshold_);
         RCLCPP_INFO(get_logger(), "path_check_period: %.2f s", path_check_period_);
-        RCLCPP_INFO(get_logger(), "path_lateral_tolerance: %.3f m ⚠️", path_lateral_tolerance_);
+        RCLCPP_INFO(get_logger(), "path_lateral_tolerance: %.3f m ", path_lateral_tolerance_);
         RCLCPP_INFO(get_logger(), "escape.trigger_costmap_threshold: %d", escape_trigger_costmap_threshold_);
         RCLCPP_INFO(get_logger(), "escape.target_safe_esdf: %.2f m", escape_target_safe_esdf_);
         RCLCPP_INFO(get_logger(), "escape.search_radius: %.1f m", escape_search_radius_);
