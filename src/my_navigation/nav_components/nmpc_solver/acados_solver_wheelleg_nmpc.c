@@ -419,6 +419,14 @@ void wheelleg_nmpc_acados_create_set_default_parameters(wheelleg_nmpc_solver_cap
     double* p = calloc(NP, sizeof(double));
     p[7] = 10;
     p[8] = 1;
+    p[9] = 10;
+    p[10] = 5;
+    p[11] = 1;
+    p[12] = 0.1;
+    p[13] = 0.1;
+    p[14] = 20;
+    p[15] = 0.5;
+    p[16] = 50;
 
     for (int i = 0; i <= N; i++) {
         wheelleg_nmpc_acados_update_params(capsule, i, p, NP);
@@ -999,7 +1007,7 @@ int wheelleg_nmpc_acados_update_params(wheelleg_nmpc_solver_capsule* capsule, in
 {
     int solver_status = 0;
 
-    int casadi_np = 9;
+    int casadi_np = 17;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);

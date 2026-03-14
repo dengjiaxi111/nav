@@ -38,36 +38,32 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.max_angular_accel", params_.max_angular_accel);
     node_->declare_parameter("nmpc.allow_reverse", params_.allow_reverse);
     
-    // 求解器参数 (必须与 export_ocp.py 一致!)
-    node_->declare_parameter("nmpc.N_horizon", N_horizon_);
-    node_->declare_parameter("nmpc.T_horizon", T_horizon_);
-    
     // 局部参考提取
     node_->declare_parameter("nmpc.horizon_length", params_.horizon_length);
     node_->declare_parameter("nmpc.desired_velocity", params_.desired_velocity);
     node_->declare_parameter("nmpc.lateral_error_threshold", params_.lateral_error_threshold);
-    
-    // 代价权重
+
+    // 代价权重（运行时注入）
     node_->declare_parameter("nmpc.Q_position", params_.Q_position);
     node_->declare_parameter("nmpc.Q_orientation", params_.Q_orientation);
     node_->declare_parameter("nmpc.Q_velocity", params_.Q_velocity);
     node_->declare_parameter("nmpc.R_linear", params_.R_linear);
     node_->declare_parameter("nmpc.R_angular", params_.R_angular);
-    node_->declare_parameter("nmpc.terminal_multiplier", params_.terminal_multiplier);
-    
-    // ESDF 障碍物代价参数
+
+    // ESDF / 轮廓代价参数（运行时注入）
     node_->declare_parameter("nmpc.esdf_weight", params_.esdf_weight);
     node_->declare_parameter("nmpc.esdf_safe_dist", params_.esdf_safe_dist);
+    node_->declare_parameter("nmpc.contouring_weight", params_.contouring_weight);
+
+    // 权重缩放
+    node_->declare_parameter("nmpc.terminal_multiplier", params_.terminal_multiplier);
+    
+    // ESDF 障碍物代价参数（权重/安全距离由 solver 固化）
     node_->declare_parameter("nmpc.enable_esdf_cost", params_.enable_esdf_cost);
     node_->declare_parameter("nmpc.near_weight_multiplier", params_.near_weight_multiplier);
     
-    // 容差参数
-    node_->declare_parameter("nmpc.xy_tolerance", 0.1);
-    node_->declare_parameter("nmpc.yaw_tolerance", 0.1);
-    
     // 可视化选项
     node_->declare_parameter("nmpc.publish_predicted_path", true);
-    node_->declare_parameter("nmpc.publish_debug_markers", false);
     
     // ========== 读取参数 ==========
     params_.max_linear_vel = node_->get_parameter("nmpc.max_linear_vel").as_double();
@@ -76,30 +72,26 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.max_angular_accel = node_->get_parameter("nmpc.max_angular_accel").as_double();
     params_.allow_reverse = node_->get_parameter("nmpc.allow_reverse").as_bool();
     
-    N_horizon_ = node_->get_parameter("nmpc.N_horizon").as_int();
-    T_horizon_ = node_->get_parameter("nmpc.T_horizon").as_double();
-    
     params_.horizon_length = node_->get_parameter("nmpc.horizon_length").as_double();
     params_.desired_velocity = node_->get_parameter("nmpc.desired_velocity").as_double();
     params_.lateral_error_threshold = node_->get_parameter("nmpc.lateral_error_threshold").as_double();
-    
+
     params_.Q_position = node_->get_parameter("nmpc.Q_position").as_double();
     params_.Q_orientation = node_->get_parameter("nmpc.Q_orientation").as_double();
     params_.Q_velocity = node_->get_parameter("nmpc.Q_velocity").as_double();
     params_.R_linear = node_->get_parameter("nmpc.R_linear").as_double();
     params_.R_angular = node_->get_parameter("nmpc.R_angular").as_double();
-    params_.terminal_multiplier = node_->get_parameter("nmpc.terminal_multiplier").as_double();
-    
+
     params_.esdf_weight = node_->get_parameter("nmpc.esdf_weight").as_double();
     params_.esdf_safe_dist = node_->get_parameter("nmpc.esdf_safe_dist").as_double();
+    params_.contouring_weight = node_->get_parameter("nmpc.contouring_weight").as_double();
+
+    params_.terminal_multiplier = node_->get_parameter("nmpc.terminal_multiplier").as_double();
+
     params_.enable_esdf_cost = node_->get_parameter("nmpc.enable_esdf_cost").as_bool();
     params_.near_weight_multiplier = node_->get_parameter("nmpc.near_weight_multiplier").as_double();
     
-    xy_tolerance_ = node_->get_parameter("nmpc.xy_tolerance").as_double();
-    yaw_tolerance_ = node_->get_parameter("nmpc.yaw_tolerance").as_double();
-    
     bool publish_path = node_->get_parameter("nmpc.publish_predicted_path").as_bool();
-    bool publish_markers = node_->get_parameter("nmpc.publish_debug_markers").as_bool();
     
     // ========== 创建 acados solver ==========
     acados_ocp_capsule_ = wheelleg_nmpc_acados_create_capsule();
@@ -109,6 +101,22 @@ void NMPC::initialize(rclcpp::Node* node) {
         RCLCPP_ERROR(node_->get_logger(), "❌ NMPC: acados solver 创建失败");
         throw std::runtime_error("acados solver creation failed");
     }
+
+    // 求解器离散参数由生成代码固化，这里从 solver 真值读取，避免 YAML 与实际不一致
+    N_horizon_ = WHEELLEG_NMPC_N;
+    {
+        ocp_nlp_config* nlp_config = wheelleg_nmpc_acados_get_nlp_config(acados_ocp_capsule_);
+        ocp_nlp_dims* nlp_dims = wheelleg_nmpc_acados_get_nlp_dims(acados_ocp_capsule_);
+        ocp_nlp_in* nlp_in = wheelleg_nmpc_acados_get_nlp_in(acados_ocp_capsule_);
+        double solver_dt = 0.0;
+        ocp_nlp_in_get(nlp_config, nlp_dims, nlp_in, 0, "Ts", &solver_dt);
+        if (solver_dt > 0.0) {
+            T_horizon_ = solver_dt * static_cast<double>(N_horizon_);
+        } else {
+            RCLCPP_WARN(node_->get_logger(),
+                "NMPC: 读取 solver Ts 失败，沿用默认 T_horizon=%.3f", T_horizon_);
+        }
+    }
     
     // 更新运行时参数到 solver
     updateNMPCParameters();
@@ -117,10 +125,6 @@ void NMPC::initialize(rclcpp::Node* node) {
     if (publish_path) {
         predicted_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
             "nmpc/predicted_path", 10);
-    }
-    if (publish_markers) {
-        debug_marker_pub_ = node_->create_publisher<visualization_msgs::msg::Marker>(
-            "nmpc/debug_markers", 10);
     }
     
     // ========== 订阅里程计（来自 small_point_lio）==========
@@ -132,8 +136,13 @@ void NMPC::initialize(rclcpp::Node* node) {
     RCLCPP_INFO(node_->get_logger(), "NMPC: 订阅里程计话题 %s", odom_topic.c_str());
     
     RCLCPP_INFO(node_->get_logger(), 
-        "✓ NMPC Controller initialized (N=%d, T=%.2f s)", 
-        N_horizon_, T_horizon_);
+        "✓ NMPC Controller initialized (N=%d, T=%.2f s, dt=%.3f s)", 
+        N_horizon_, T_horizon_, T_horizon_ / static_cast<double>(N_horizon_));
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC 权重: Qp=%.2f Qt=%.2f Qv=%.2f Rl=%.3f Ra=%.3f EsdfW=%.2f EsdfSafe=%.2f Contour=%.2f",
+        params_.Q_position, params_.Q_orientation, params_.Q_velocity,
+        params_.R_linear, params_.R_angular,
+        params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight);
     
     initialized_ = true;
 }
@@ -661,17 +670,29 @@ void NMPC::updateNMPCParameters() {
     }
     
     RCLCPP_INFO(node_->get_logger(), 
-        "NMPC 参数已更新: v_max=%.1f, ω_max=%.1f, Q_pos=%.1f, R_lin=%.2f, esdf_w=%.1f",
-        params_.max_linear_vel, params_.max_angular_vel, params_.Q_position, 
-        params_.R_linear, params_.esdf_weight);
+        "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, reverse=%d, Qp=%.2f, Rl=%.3f",
+        params_.max_linear_vel, params_.max_angular_vel,
+        params_.max_linear_accel, params_.max_angular_accel,
+        params_.allow_reverse,
+        params_.Q_position, params_.R_linear);
 }
 
 void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
                               const std::vector<double>& theta_adjusted) {
     if (!acados_ocp_capsule_) return;
 
-    // 参数布局: [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref, d_esdf, weight_scale]
-    double p_default[NP_PARAM] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 1.0};
+    // 参数布局:
+    // [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
+    //  d_esdf, weight_scale,
+    //  q_pos, q_theta, q_vel, r_lin, r_ang,
+    //  esdf_weight, esdf_safe_dist, contouring_weight]
+    double p_default[NP_PARAM] = {
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        10.0, 1.0,
+        params_.Q_position, params_.Q_orientation, params_.Q_velocity,
+        params_.R_linear, params_.R_angular,
+        params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight
+    };
 
     bool has_esdf = params_.enable_esdf_cost && map_manager_ && map_manager_->hasEsdf();
     auto esdf = has_esdf ? map_manager_->getEsdf() : nullptr;
@@ -709,6 +730,16 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
             weight_scale = params_.terminal_multiplier;
         }
         p_values[8] = weight_scale;
+
+        // 运行时权重注入
+        p_values[9] = params_.Q_position;
+        p_values[10] = params_.Q_orientation;
+        p_values[11] = params_.Q_velocity;
+        p_values[12] = params_.R_linear;
+        p_values[13] = params_.R_angular;
+        p_values[14] = params_.esdf_weight;
+        p_values[15] = params_.esdf_safe_dist;
+        p_values[16] = params_.contouring_weight;
 
         // ESDF 查询 (仅距离)
         double dist = 10.0;

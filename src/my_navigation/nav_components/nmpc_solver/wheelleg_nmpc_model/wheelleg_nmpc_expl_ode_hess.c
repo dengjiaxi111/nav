@@ -57,11 +57,11 @@ static const casadi_int casadi_s0[9] = {5, 1, 0, 5, 0, 1, 2, 3, 4};
 static const casadi_int casadi_s1[33] = {5, 5, 0, 5, 10, 15, 20, 25, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4};
 static const casadi_int casadi_s2[15] = {5, 2, 0, 5, 10, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4};
 static const casadi_int casadi_s3[6] = {2, 1, 0, 2, 0, 1};
-static const casadi_int casadi_s4[13] = {9, 1, 0, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+static const casadi_int casadi_s4[21] = {17, 1, 0, 17, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 static const casadi_int casadi_s5[11] = {7, 1, 0, 7, 0, 1, 2, 3, 4, 5, 6};
 static const casadi_int casadi_s6[32] = {28, 1, 0, 28, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27};
 
-/* wheelleg_nmpc_expl_ode_hess:(i0[5],i1[5x5],i2[5x2],i3[5],i4[2],i5[9])->(o0[7],o1[28]) */
+/* wheelleg_nmpc_expl_ode_hess:(i0[5],i1[5x5],i2[5x2],i3[5],i4[2],i5[17])->(o0[7],o1[28]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a0, a1, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a2, a20, a21, a22, a3, a4, a5, a6, a7, a8, a9;
   a0=0.;

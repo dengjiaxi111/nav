@@ -22,24 +22,19 @@ def export_nmpc_solver():
     ocp.model.name = "wheelleg_nmpc"
     ocp.model.x = model_obj.state
     ocp.model.u = model_obj.control
-    ocp.model.p = model_obj.params  # 运行时参数: 参考 + ESDF 距离 + 权重缩放
+    ocp.model.p = model_obj.params  # 运行时参数: 参考 + ESDF + 权重
     ocp.model.f_expl_expr = model_obj.dynamics()
     
     # 维度
     nx = model_obj.state.shape[0]   # 5
     nu = model_obj.control.shape[0] # 2
-    np_ = model_obj.np              # 9 (参考 + ESDF 距离)
+    np_ = model_obj.np
     
     # 时间参数 (关键性能参数)
     T_horizon = 1.5      
     N = 50             
     ocp.solver_options.tf = T_horizon
     ocp.dims.N = N
-    
-    # ========== ESDF 障碍物代价参数 ==========
-    esdf_safe_dist = 0.5   # 安全距离 (m)
-    esdf_weight = 20.0     # ESDF 代价权重
-    contouring_weight = 50.0  # 路径偏离代价权重（防止切角）
     
     # ========== 代价函数 (EXTERNAL cost) ==========
     # 参数展开
@@ -51,6 +46,15 @@ def export_nmpc_solver():
     a_ref = model_obj.a_ref
     alpha_ref = model_obj.alpha_ref
     weight_scale = model_obj.weight_scale
+
+    q_pos = model_obj.q_pos
+    q_theta = model_obj.q_theta
+    q_vel = model_obj.q_vel
+    r_lin = model_obj.r_lin
+    r_ang = model_obj.r_ang
+    esdf_weight = model_obj.esdf_weight
+    esdf_safe_dist = model_obj.esdf_safe_dist
+    contouring_weight = model_obj.contouring_weight
     
     # 角度误差 (wrap 到 [-pi, pi])
     theta_err = model_obj.angle_diff(model_obj.theta, theta_ref)
@@ -68,20 +72,18 @@ def export_nmpc_solver():
         model_obj.alpha_ang - alpha_ref
     )
     
-    # Q: 位置 > 航向 > 速度 (根据URDF差速模型调整)
-    Q_diag = np.array([10.0, 10.0, 5.0, 1.0, 1.0])
-    R_diag = np.array([0.1, 0.1])
-    Q = ca.diag(Q_diag)
-    R = ca.diag(R_diag)
-    
     # ESDF 违反量
     esdf_violation = model_obj.esdf_cost_expr(safe_dist=esdf_safe_dist)
     
     # 路径偏离代价（contouring error）- 防止"切西瓜"
     contouring_cost = contouring_weight * model_obj.contouring_error()
     
-    tracking_cost = ca.mtimes([state_err.T, Q, state_err])
-    control_cost = ca.mtimes([control_err.T, R, control_err])
+    tracking_cost = (
+        q_pos * (state_err[0] ** 2 + state_err[1] ** 2)
+        + q_theta * (state_err[2] ** 2)
+        + q_vel * (state_err[3] ** 2 + state_err[4] ** 2)
+    )
+    control_cost = r_lin * (control_err[0] ** 2) + r_ang * (control_err[1] ** 2)
     esdf_cost = esdf_weight * esdf_violation**2
     
     # 近端/终端缩放作用于 tracking + esdf + contouring，控制平滑性不缩放
@@ -101,11 +103,16 @@ def export_nmpc_solver():
     ocp.model.cost_expr_ext_cost_e = terminal_cost
     
     # ========== 运行时参数默认值 ==========
-    # p = [xref(7个), d_esdf=10.0, weight_scale=1.0]
+    # p = [xref(7), d_esdf, weight_scale,
+    #      q_pos, q_theta, q_vel, r_lin, r_ang,
+    #      esdf_weight, esdf_safe_dist, contouring_weight]
     ocp.parameter_values = np.array([
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # 参考
-        10.0,  # d_esdf 远离障碍物
-        1.0    # weight_scale
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        10.0,
+        1.0,
+        10.0, 5.0, 1.0,
+        0.1, 0.1,
+        20.0, 0.5, 50.0
     ])
     
     # ========== 约束 ==========
@@ -147,7 +154,7 @@ def export_nmpc_solver():
     # 生成求解器
     print(f"正在生成 NMPC solver 到 {output_dir}...")
     print(f"  状态维度: nx={nx}, 控制维度: nu={nu}")
-    print(f"  参数维度: np={np_} (xref[7] + d_esdf + weight_scale)")
+    print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights)")
     print(f"  成本类型: EXTERNAL (tracking + ESDF + control)")
     print(f"  预测步数: N={N}, 时域: T={T_horizon}s, dt={T_horizon/N}s")
     

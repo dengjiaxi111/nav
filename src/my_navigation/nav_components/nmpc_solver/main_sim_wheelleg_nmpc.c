@@ -94,6 +94,14 @@ int main()
     p[6] = 0;
     p[7] = 10;
     p[8] = 1;
+    p[9] = 10;
+    p[10] = 5;
+    p[11] = 1;
+    p[12] = 0.1;
+    p[13] = 0.1;
+    p[14] = 20;
+    p[15] = 0.5;
+    p[16] = 50;
 
     wheelleg_nmpc_acados_sim_update_params(capsule, p, NP);
   
