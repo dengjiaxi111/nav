@@ -85,9 +85,8 @@ src/my_navigation/nav_components/
 ├── model_ocp/
 │   ├── model.py
 │   ├── export_ocp.py
-│   ├── nmpc_config.yaml
-│   ├── nmpc_config_loader.py
-│   └── nmpc_interface.py
+│   ├── requirements.txt
+│   └── acados_ocp.json
 └── nmpc_solver/
     ├── libacados_ocp_solver_wheelleg_nmpc.so
     ├── acados_solver_wheelleg_nmpc.c/.h

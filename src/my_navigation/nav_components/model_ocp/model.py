@@ -67,11 +67,6 @@ class WheellegModel:
         )
         self.np = self.params.shape[0]
         
-        # 物理参数 (根据URDF: 轮距0.58m, 轮径0.08m, 差速驱动)
-        # max_v = wheel_radius * max_wheel_speed
-        # 轮子 velocity command 限幅 [-80, 80] rad/s (来自URDF ros2_control)
-        # max_v = 0.08 * 80 = 6.4 m/s (理论值，实际受摩擦限制)
-        # 实际合理值: ~1.5 m/s (考虑 Gazebo 仿真稳定性)
         self.max_v = 1.5        # 最大线速度 (m/s)
         self.max_omega = 3.0    # 最大角速度 (rad/s): v_diff / track_width
         self.max_a = 2.0        # 最大线加速度
