@@ -130,7 +130,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         arguments=[
-            '--x', '0', '--y', '0', '--z', '0',
+            '--x', '0', '--y', '0', '--z', '0.3',
             '--roll', '0', '--pitch', '0', '--yaw', '0',
             '--frame-id', 'map', '--child-frame-id', 'odom'
         ],

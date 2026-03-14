@@ -7,8 +7,8 @@ small_point_lio:
         lidar_type: livox                          # 雷达类型
         lidar_frame: livox_frame                   # 雷达坐标系
         save_pcd: true                            # 是否保存点云
-        gravity_alignment: true                   # 是否启用重力对齐（让odom系Z轴严格竖直向上）
-        gravity_alignment_debug: true             # 是否输出重力对齐的调试信息（每100帧输出一次变换四元数）
+        gravity_alignment: false                   # 是否启用重力对齐（让odom系Z轴严格竖直向上）
+        gravity_alignment_debug: false             # 是否输出重力对齐的调试信息（每100帧输出一次变换四元数）
 
         # 点云过滤
         point_filter_num: 1                        # 多少个点取一个点

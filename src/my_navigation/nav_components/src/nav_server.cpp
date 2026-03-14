@@ -446,6 +446,7 @@ private:
         goal_ = *msg;
         goal_.header.frame_id = map_frame_;
         stopRobot();
+        controller_.reset();
         recovery_mgr_.reset();
         fsm_.reset();
         fsm_.transitionTo(nav_core::NavState::PLANNING);
@@ -504,6 +505,7 @@ private:
         goal_handle_ = goal_handle;
         goal_ = goal_handle->get_goal()->goal_pose;
         stopRobot();
+        controller_.reset();
         recovery_mgr_.reset();
         fsm_.reset();
         fsm_.transitionTo(nav_core::NavState::PLANNING);

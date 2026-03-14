@@ -41,6 +41,17 @@ void NMPC::initialize(rclcpp::Node* node) {
     // 局部参考提取
     node_->declare_parameter("nmpc.horizon_length", params_.horizon_length);
     node_->declare_parameter("nmpc.desired_velocity", params_.desired_velocity);
+    node_->declare_parameter("nmpc.use_omega_ref_from_path", params_.use_omega_ref_from_path);
+    node_->declare_parameter("nmpc.goal_decel_start_dist", params_.goal_decel_start_dist);
+    node_->declare_parameter("nmpc.goal_crawl_speed", params_.goal_crawl_speed);
+    node_->declare_parameter("nmpc.enable_goal_speed_guard", params_.enable_goal_speed_guard);
+    node_->declare_parameter("nmpc.goal_speed_guard_dist_scale", params_.goal_speed_guard_dist_scale);
+    node_->declare_parameter("nmpc.goal_speed_guard_decel_scale", params_.goal_speed_guard_decel_scale);
+    node_->declare_parameter("nmpc.goal_speed_guard_abs_floor", params_.goal_speed_guard_abs_floor);
+    node_->declare_parameter("nmpc.pivot_turn_heading_thresh", params_.pivot_turn_heading_thresh);
+    node_->declare_parameter("nmpc.heading_slowdown_start", params_.heading_slowdown_start);
+    node_->declare_parameter("nmpc.heading_slowdown_min_factor", params_.heading_slowdown_min_factor);
+    node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
     node_->declare_parameter("nmpc.lateral_error_threshold", params_.lateral_error_threshold);
 
     // 代价权重（运行时注入）
@@ -74,6 +85,39 @@ void NMPC::initialize(rclcpp::Node* node) {
     
     params_.horizon_length = node_->get_parameter("nmpc.horizon_length").as_double();
     params_.desired_velocity = node_->get_parameter("nmpc.desired_velocity").as_double();
+    params_.use_omega_ref_from_path =
+        node_->get_parameter("nmpc.use_omega_ref_from_path").as_bool();
+    params_.goal_decel_start_dist =
+        node_->get_parameter("nmpc.goal_decel_start_dist").as_double();
+    params_.goal_crawl_speed = node_->get_parameter("nmpc.goal_crawl_speed").as_double();
+    params_.enable_goal_speed_guard =
+        node_->get_parameter("nmpc.enable_goal_speed_guard").as_bool();
+    params_.goal_speed_guard_dist_scale =
+        node_->get_parameter("nmpc.goal_speed_guard_dist_scale").as_double();
+    params_.goal_speed_guard_decel_scale =
+        node_->get_parameter("nmpc.goal_speed_guard_decel_scale").as_double();
+    params_.goal_speed_guard_abs_floor =
+        node_->get_parameter("nmpc.goal_speed_guard_abs_floor").as_double();
+    params_.pivot_turn_heading_thresh =
+        node_->get_parameter("nmpc.pivot_turn_heading_thresh").as_double();
+    params_.heading_slowdown_start =
+        node_->get_parameter("nmpc.heading_slowdown_start").as_double();
+    params_.heading_slowdown_min_factor =
+        node_->get_parameter("nmpc.heading_slowdown_min_factor").as_double();
+    params_.odom_feedback_alpha = node_->get_parameter("nmpc.odom_feedback_alpha").as_double();
+    params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
+    params_.goal_decel_start_dist = std::max(0.1, params_.goal_decel_start_dist);
+    params_.goal_crawl_speed = std::max(0.0, params_.goal_crawl_speed);
+    params_.goal_speed_guard_dist_scale = std::max(1.0, params_.goal_speed_guard_dist_scale);
+    params_.goal_speed_guard_decel_scale = std::max(0.1, params_.goal_speed_guard_decel_scale);
+    params_.goal_speed_guard_abs_floor = std::max(0.05, params_.goal_speed_guard_abs_floor);
+    params_.pivot_turn_heading_thresh = std::clamp(params_.pivot_turn_heading_thresh, 0.0, M_PI);
+    params_.heading_slowdown_start = std::clamp(params_.heading_slowdown_start, 0.0, M_PI);
+    params_.heading_slowdown_min_factor =
+        std::clamp(params_.heading_slowdown_min_factor, 0.0, 1.0);
+    if (params_.heading_slowdown_start > params_.pivot_turn_heading_thresh) {
+        params_.heading_slowdown_start = params_.pivot_turn_heading_thresh;
+    }
     params_.lateral_error_threshold = node_->get_parameter("nmpc.lateral_error_threshold").as_double();
 
     params_.Q_position = node_->get_parameter("nmpc.Q_position").as_double();
@@ -150,12 +194,16 @@ void NMPC::initialize(rclcpp::Node* node) {
 void NMPC::setPath(const nav_msgs::msg::Path& path) {
     if (path.poses.empty()) {
         global_path_.poses.clear();
+        goal_brake_latched_ = false;
+        goal_brake_speed_cap_ = 1e9;
         return;
     }
     
     // 保留完整路径用于后续处理
     global_path_ = path;
     nearest_idx_ = 0;
+    goal_brake_latched_ = false;
+    goal_brake_speed_cap_ = 1e9;
     
     RCLCPP_INFO(node_->get_logger(), 
         "NMPC: 接收新路径, %zu 个点", path.poses.size());
@@ -198,14 +246,17 @@ nav_core::ControlResult NMPC::computeVelocity(
     x0[1] = current_pose.pose.position.y;
     x0[2] = tf2::getYaw(current_pose.pose.orientation);
     
-    // 从里程计获取真实速度（闭环反馈）
+    // 速度反馈融合（缓解里程计滞后导致的“回正拖拽”）
+    // x0_vel = alpha * odom_vel + (1-alpha) * last_cmd_vel
+    // alpha 越小，越接近“轨迹发生器”行为，反向回正更积极
     {
         std::lock_guard<std::mutex> lock(odom_mutex_);
         if (odom_received_) {
-            // small_point_lio 输出的速度在 body 坐标系下
-            // linear.x = 前向速度, angular.z = 角速度
-            x0[3] = latest_odom_.twist.twist.linear.x;
-            x0[4] = latest_odom_.twist.twist.angular.z;
+            double odom_v = latest_odom_.twist.twist.linear.x;
+            double odom_w = latest_odom_.twist.twist.angular.z;
+            double a = params_.odom_feedback_alpha;
+            x0[3] = a * odom_v + (1.0 - a) * last_state_[3];
+            x0[4] = a * odom_w + (1.0 - a) * last_state_[4];
         } else {
             // 里程计尚未收到，使用上次输出（开环估计）
             x0[3] = last_state_[3];
@@ -314,6 +365,26 @@ nav_core::ControlResult NMPC::computeVelocity(
     double dt = T_horizon_ / N_horizon_;  // 与 solver 步长一致
     double v_cmd = x0[3] + u_opt[0] * dt;
     double omega_cmd = x0[4] + u_opt[1] * dt;
+
+    // 近终点安全保护：进入减速锁存后，线速度只允许下降不允许回升
+    if (goal_brake_latched_) {
+        v_cmd = std::min(v_cmd, last_state_[3]);
+    }
+
+    // 近终点绝对安全包络：无论参考或权重如何抖动，速度上限都受 sqrt(2ad) 约束
+    if (params_.enable_goal_speed_guard) {
+        double guard_dist = params_.goal_decel_start_dist * params_.goal_speed_guard_dist_scale;
+        if (dist < guard_dist) {
+            double a_guard = std::max(params_.goal_speed_guard_abs_floor,
+                                      params_.max_linear_accel * params_.goal_speed_guard_decel_scale);
+            double v_safe = std::sqrt(std::max(0.0, 2.0 * a_guard * dist));
+            if (params_.allow_reverse) {
+                v_cmd = std::clamp(v_cmd, -v_safe, v_safe);
+            } else {
+                v_cmd = std::clamp(v_cmd, 0.0, v_safe);
+            }
+        }
+    }
     
     // 限幅
     v_cmd = std::clamp(v_cmd, -params_.max_linear_vel, params_.max_linear_vel);
@@ -349,6 +420,8 @@ void NMPC::reset() {
     std::fill(last_control_.begin(), last_control_.end(), 0.0);
     stats_ = {};
     odom_received_ = false;
+    goal_brake_latched_ = false;
+    goal_brake_speed_cap_ = 1e9;
     
     // 重置 solver
     if (acados_ocp_capsule_) {
@@ -447,11 +520,21 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         auto& p2 = global_path_.poses[k + 1].pose.position;
         total_dist_to_goal += std::hypot(p2.x - p1.x, p2.y - p1.y);
     }
+
+    // 终点减速锁存逻辑：进入减速区后，速度上限只减不增，避免停车阶段速度回跳
+    if (total_dist_to_goal < params_.goal_decel_start_dist) {
+        if (!goal_brake_latched_) {
+            goal_brake_latched_ = true;
+            goal_brake_speed_cap_ = params_.desired_velocity;
+        }
+    }
     
     // 记住上一个找到的索引，确保参考轨迹单调递增
     int last_found_idx = nearest_idx_;
     double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
     
+    const double robot_theta_now = tf2::getYaw(current_pose.orientation);
+
     for (int i = 0; i <= N_horizon_; ++i) {
         // 计算期望的前向距离
         double forward_dist = params_.desired_velocity * i * dt;
@@ -483,16 +566,46 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 // 线性插值角度
                 double theta = theta1 + ratio * theta_diff;
                 
-                // 渐进减速逻辑：根据到终点的距离调整期望速度
-                double remaining_dist = total_dist_to_goal - dist;
+                // 终点平滑刹车：靠近目标时将参考速度连续收敛到 0
+                double remaining_dist = std::max(0.0, total_dist_to_goal - dist);
                 double desired_v = params_.desired_velocity;
+
+
+                // 1. 计算运动学刹车所需的极限速度
+                // 使用比 max_linear_accel 稍微激进一点的减速度，强制 NMPC 尽早投入刹车动作
+                double aggressive_decel = params_.max_linear_accel * 1.2; 
+                double v_limit = std::sqrt(2.0 * aggressive_decel * remaining_dist);
                 
-                // 在 2.0m 范围内开始减速，线性降到 0.3m/s
-                const double decel_start_dist = 2.0;
-                const double min_speed = 0.3;
-                if (remaining_dist < decel_start_dist) {
-                    desired_v = min_speed + 
-                        (params_.desired_velocity - min_speed) * (remaining_dist / decel_start_dist);
+                // 2. 取期望速度与刹车极限速度的最小值
+                // 这样在距离较远时，它会保持 desired_velocity 巡航；
+                // 一旦进入 v_limit 曲线，它会立刻沿着抛物线非线性降速
+                desired_v = std::min(params_.desired_velocity, v_limit);
+
+                // 3. 终点临界处理
+                // 当距离小于 0.05m 时，直接给 0，消除末端积分漂移
+                if (remaining_dist <= 0.05) {
+                    desired_v = 0.0;
+                }
+
+
+                // 起步/大角度场景：优先原地转向对齐，再前进
+                double d_theta = theta - robot_theta_now;
+                while (d_theta > M_PI) d_theta -= 2.0 * M_PI;
+                while (d_theta < -M_PI) d_theta += 2.0 * M_PI;
+                double heading_err = std::abs(d_theta);
+                if (heading_err > params_.pivot_turn_heading_thresh) {
+                    desired_v = 0.0;
+                } else if (heading_err > params_.heading_slowdown_start) {
+                    double denom = std::max(1e-3,
+                        params_.pivot_turn_heading_thresh - params_.heading_slowdown_start);
+                    double speed_factor =
+                        1.0 - (heading_err - params_.heading_slowdown_start) / denom;
+                    desired_v *= std::max(params_.heading_slowdown_min_factor, speed_factor);
+                }
+
+                if (goal_brake_latched_) {
+                    desired_v = std::min(desired_v, goal_brake_speed_cap_);
+                    goal_brake_speed_cap_ = std::min(goal_brake_speed_cap_, desired_v);
                 }
                 
                 // ========== 横向误差自适应速度缩减 (首次规划 i=0 时) ==========
@@ -545,7 +658,18 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     }
                 }
                 
-                yref.push_back({x, y, theta, desired_v, 0.0});
+                // 角速度参考
+                // 默认关闭路径导数 omega_ref，避免离散路径带来的尖峰噪声干扰回正
+                double omega_ref = 0.0;
+                if (params_.use_omega_ref_from_path && !yref.empty()) {
+                    double dtheta = theta - yref.back()[2];
+                    while (dtheta > M_PI) dtheta -= 2.0 * M_PI;
+                    while (dtheta < -M_PI) dtheta += 2.0 * M_PI;
+                    omega_ref = dtheta / dt;
+                    omega_ref = std::clamp(omega_ref, -params_.max_angular_vel, params_.max_angular_vel);
+                }
+
+                yref.push_back({x, y, theta, desired_v, omega_ref});
                 
                 // 更新索引和累积距离
                 last_found_idx = idx;
@@ -590,11 +714,13 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
 int NMPC::findNearestPathPoint(const geometry_msgs::msg::Pose& pose) {
     double min_dist = std::numeric_limits<double>::max();
     int nearest = nearest_idx_;
+    bool used_global_relocalization = false;
     
     // 阶段1: 局部窗口搜索 (快速路径)
-    int local_backward = 10;  // 向后搜索10个点
+    int local_backward = 0;   // 默认不允许回退，抑制近终点索引抖动
     int local_forward = 30;   // 向前搜索30个点
-    int search_start = std::max(0, nearest_idx_ - local_backward);
+    int monotonic_floor = std::max(0, nearest_idx_ - local_backward);
+    int search_start = monotonic_floor;
     int search_end = std::min(static_cast<int>(global_path_.poses.size()), 
                               nearest_idx_ + local_forward);
     
@@ -615,6 +741,7 @@ int NMPC::findNearestPathPoint(const geometry_msgs::msg::Pose& pose) {
         RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
             "NMPC: 机器人偏离路径过远 (%.2f m > %.2f m)", 
             min_dist, deviation_threshold);
+        used_global_relocalization = true;
         
         min_dist = std::numeric_limits<double>::max();
         nearest = 0;
@@ -635,7 +762,10 @@ int NMPC::findNearestPathPoint(const geometry_msgs::msg::Pose& pose) {
             "NMPC: 最近点索引=%d, 距离=%.2f m", nearest, min_dist);
     }
     
-    return nearest;
+    if (used_global_relocalization) {
+        return nearest;
+    }
+    return std::max(nearest_idx_, nearest);
 }
 
 void NMPC::updateNMPCParameters() {

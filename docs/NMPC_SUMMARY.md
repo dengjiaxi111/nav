@@ -22,6 +22,10 @@ p = [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
      esdf_weight, esdf_safe_dist, contouring_weight]
 ```
 
+- 当前实现中：
+  - `Q_velocity` 仅惩罚线速度误差 `(v-v_ref)^2`，不再惩罚 `(omega-omega_ref)^2`。
+  - `omega_ref` 由参考航向变化率近似得到：`omega_ref ≈ d(theta_ref)/dt`（并限幅）。
+
 ## 3. 参数生效规则
 
 ### 3.1 启动读取并应用
@@ -99,11 +103,16 @@ src/my_navigation/nav_components/
 
 ```bash
 # 1) 重新导出 solver（修改 model/export 后）
-cd /home/lehan/navigation2026/src/my_navigation/nav_components/model_ocp
-python3 export_ocp.py
+cd /home/nuc/navigation2026
+source .venv/bin/activate
+export ACADOS_SOURCE_DIR=/home/nuc/dependency/acados
+export LD_LIBRARY_PATH=/home/nuc/dependency/acados/lib:$LD_LIBRARY_PATH
+
+cd /home/nuc/navigation2026/src/my_navigation/nav_components/model_ocp
+python export_ocp.py
 
 # 2) 编译 nav_components
-cd /home/lehan/navigation2026
+cd /home/nuc/navigation2026
 colcon build --packages-select nav_components --symlink-install
 source install/setup.bash
 
