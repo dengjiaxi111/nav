@@ -2,6 +2,9 @@
 
 nav_server:
   ros__parameters:
+    # 静态重定位开关 (true: 测试时发布固定的map->odom=000; false: 实际场地使用NDT重定位)
+    use_static_map_odom: true
+    
     # 地图路径由 navigation.launch.py 注入
     map_file: ""
     control_rate: 100.0
