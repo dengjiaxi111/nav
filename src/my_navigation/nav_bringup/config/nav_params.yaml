@@ -156,6 +156,8 @@ nav_server:
       heading_slowdown_start: 0.785       # 航向误差>该值开始降速 (rad)
       heading_slowdown_min_factor: 0.1  # 航向降速最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
+      vel_lag_tau: 0.6           # 线速度一阶滞后时间常数(s)
+      omega_lag_tau: 0.6         # 角速度一阶滞后时间常数(s)
       lateral_error_threshold: 0.15  # 横向误差阈值 (m)，超过时启用速度缩减策略
 
       # === 代价权重（运行时生效） ===

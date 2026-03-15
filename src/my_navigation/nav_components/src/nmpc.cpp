@@ -17,7 +17,7 @@ extern "C" {
 namespace nav_components {
 
 NMPC::NMPC() {
-    last_state_.resize(5, 0.0);
+    last_state_.resize(7, 0.0);
     last_control_.resize(2, 0.0);
 }
 
@@ -52,6 +52,8 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.heading_slowdown_start", params_.heading_slowdown_start);
     node_->declare_parameter("nmpc.heading_slowdown_min_factor", params_.heading_slowdown_min_factor);
     node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
+    node_->declare_parameter("nmpc.vel_lag_tau", params_.vel_lag_tau);
+    node_->declare_parameter("nmpc.omega_lag_tau", params_.omega_lag_tau);
     node_->declare_parameter("nmpc.lateral_error_threshold", params_.lateral_error_threshold);
 
     // 代价权重（运行时注入）
@@ -115,6 +117,9 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.heading_slowdown_start = std::clamp(params_.heading_slowdown_start, 0.0, M_PI);
     params_.heading_slowdown_min_factor =
         std::clamp(params_.heading_slowdown_min_factor, 0.0, 1.0);
+    params_.vel_lag_tau = std::max(0.05, node_->get_parameter("nmpc.vel_lag_tau").as_double());
+    params_.omega_lag_tau =
+        std::max(0.05, node_->get_parameter("nmpc.omega_lag_tau").as_double());
     if (params_.heading_slowdown_start > params_.pivot_turn_heading_thresh) {
         params_.heading_slowdown_start = params_.pivot_turn_heading_thresh;
     }
@@ -187,6 +192,9 @@ void NMPC::initialize(rclcpp::Node* node) {
         params_.Q_position, params_.Q_orientation, params_.Q_velocity,
         params_.R_linear, params_.R_angular,
         params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight);
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC 一阶滞后: tau_v=%.3f s, tau_w=%.3f s",
+        params_.vel_lag_tau, params_.omega_lag_tau);
     
     initialized_ = true;
 }
@@ -240,8 +248,8 @@ nav_core::ControlResult NMPC::computeVelocity(
         return nav_core::ControlResult::FAILED;
     }
     
-    // 1. 提取当前状态 [x, y, theta, v, omega]
-    std::vector<double> x0(5);
+    // 1. 提取当前状态 [x, y, theta, v, omega, v_cmd, omega_cmd]
+    std::vector<double> x0(7);
     x0[0] = current_pose.pose.position.x;
     x0[1] = current_pose.pose.position.y;
     x0[2] = tf2::getYaw(current_pose.pose.orientation);
@@ -267,6 +275,8 @@ nav_core::ControlResult NMPC::computeVelocity(
             }
         }
     }
+    x0[5] = last_state_[5];
+    x0[6] = last_state_[6];
     
     // 2. 检查是否到达目标（仅检查 xy 距离，不要求 yaw 对齐）
     const auto& goal = global_path_.poses.back().pose;
@@ -348,6 +358,8 @@ nav_core::ControlResult NMPC::computeVelocity(
         cmd_vel.angular.z = last_state_[4] * decay;
         last_state_[3] = cmd_vel.linear.x;
         last_state_[4] = cmd_vel.angular.z;
+        last_state_[5] = cmd_vel.linear.x;
+        last_state_[6] = cmd_vel.angular.z;
         return nav_core::ControlResult::RUNNING;  // 继续尝试
     }
     
@@ -360,11 +372,12 @@ nav_core::ControlResult NMPC::computeVelocity(
     }
     
     // 6. 应用控制
-    // u_opt = [a_lin, alpha_ang] (加速度)
-    // 积分得到速度: v += a * dt
+    // u_opt = [a_cmd, alpha_cmd] (加速度命令)
     double dt = T_horizon_ / N_horizon_;  // 与 solver 步长一致
-    double v_cmd = x0[3] + u_opt[0] * dt;
-    double omega_cmd = x0[4] + u_opt[1] * dt;
+    double a_cmd = u_opt[0];
+    double alpha_cmd = u_opt[1];
+    double v_cmd = x0[5] + a_cmd * dt;
+    double omega_cmd = x0[6] + alpha_cmd * dt;
 
     // 近终点安全保护：进入减速锁存后，线速度只允许下降不允许回升
     if (goal_brake_latched_) {
@@ -387,6 +400,9 @@ nav_core::ControlResult NMPC::computeVelocity(
     }
     
     // 限幅
+    if (!params_.allow_reverse) {
+        v_cmd = std::max(0.0, v_cmd);
+    }
     v_cmd = std::clamp(v_cmd, -params_.max_linear_vel, params_.max_linear_vel);
     omega_cmd = std::clamp(omega_cmd, -params_.max_angular_vel, params_.max_angular_vel);
     
@@ -395,8 +411,10 @@ nav_core::ControlResult NMPC::computeVelocity(
     
     // 更新状态
     last_state_ = x0;
-    last_state_[3] = v_cmd;
+    last_state_[3] = v_cmd;      // 开环回退时作为速度估计
     last_state_[4] = omega_cmd;
+    last_state_[5] = v_cmd;      // 命令状态缓存
+    last_state_[6] = omega_cmd;
     last_control_ = u_opt;
     
     // 发布调试信息
@@ -445,7 +463,7 @@ int NMPC::solveNMPC(
     if (!acados_ocp_capsule_) return -1;
     
     // 设置初始状态约束
-    double x0_array[5] = {x0[0], x0[1], x0[2], x0[3], x0[4]};
+    double x0_array[7] = {x0[0], x0[1], x0[2], x0[3], x0[4], x0[5], x0[6]};
     
     // 获取 acados 接口
     ocp_nlp_config* nlp_config = wheelleg_nmpc_acados_get_nlp_config(acados_ocp_capsule_);
@@ -780,11 +798,14 @@ void NMPC::updateNMPCParameters() {
     ocp_nlp_in* nlp_in = wheelleg_nmpc_acados_get_nlp_in(acados_ocp_capsule_);
     ocp_nlp_out* nlp_out = wheelleg_nmpc_acados_get_nlp_out(acados_ocp_capsule_);
     
-    // ========== 1. 更新状态约束 (速度限制) ==========
+    // ========== 1. 更新状态约束 (真实速度 + 命令速度) ==========
     double v_lower = params_.allow_reverse ? -params_.max_linear_vel : 0.0;
     for (int i = 1; i < N_horizon_; ++i) {
-        double lbx[2] = {v_lower, -params_.max_angular_vel};
-        double ubx[2] = {params_.max_linear_vel, params_.max_angular_vel};
+        double lbx[4] = {v_lower, -params_.max_angular_vel, v_lower, -params_.max_angular_vel};
+        double ubx[4] = {
+            params_.max_linear_vel, params_.max_angular_vel,
+            params_.max_linear_vel, params_.max_angular_vel
+        };
         
         ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, i, "lbx", lbx);
         ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, i, "ubx", ubx);
@@ -800,9 +821,10 @@ void NMPC::updateNMPCParameters() {
     }
     
     RCLCPP_INFO(node_->get_logger(), 
-        "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, reverse=%d, Qp=%.2f, Rl=%.3f",
+        "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, tau_v=%.2f, tau_w=%.2f, reverse=%d, Qp=%.2f, Rl=%.3f",
         params_.max_linear_vel, params_.max_angular_vel,
         params_.max_linear_accel, params_.max_angular_accel,
+        params_.vel_lag_tau, params_.omega_lag_tau,
         params_.allow_reverse,
         params_.Q_position, params_.R_linear);
 }
@@ -815,13 +837,15 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
     // [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
     //  d_esdf, weight_scale,
     //  q_pos, q_theta, q_vel, r_lin, r_ang,
-    //  esdf_weight, esdf_safe_dist, contouring_weight]
+    //  esdf_weight, esdf_safe_dist, contouring_weight,
+    //  vel_lag_tau, omega_lag_tau]
     double p_default[NP_PARAM] = {
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         10.0, 1.0,
         params_.Q_position, params_.Q_orientation, params_.Q_velocity,
         params_.R_linear, params_.R_angular,
-        params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight
+        params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight,
+        params_.vel_lag_tau, params_.omega_lag_tau
     };
 
     bool has_esdf = params_.enable_esdf_cost && map_manager_ && map_manager_->hasEsdf();
@@ -847,8 +871,13 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
         p_values[2] = theta_adjusted[idx];
         p_values[3] = yref[idx][3];
         p_values[4] = yref[idx][4];
-        p_values[5] = 0.0;  // 控制参考恒为 0 (希望减小加速度)
-        p_values[6] = 0.0;
+        // 控制参考使用加速度前馈（由相邻速度参考差分得到）
+        int idx_next = std::min(idx + 1, static_cast<int>(yref.size()) - 1);
+        double dt_ref = std::max(1e-3, T_horizon_ / static_cast<double>(N_horizon_));
+        double a_ref = (yref[idx_next][3] - yref[idx][3]) / dt_ref;
+        double alpha_ref = (yref[idx_next][4] - yref[idx][4]) / dt_ref;
+        p_values[5] = std::clamp(a_ref, -params_.max_linear_accel, params_.max_linear_accel);
+        p_values[6] = std::clamp(alpha_ref, -params_.max_angular_accel, params_.max_angular_accel);
 
         // 近端/终端权重缩放
         double weight_scale = 1.0;
@@ -870,11 +899,13 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
         p_values[14] = params_.esdf_weight;
         p_values[15] = params_.esdf_safe_dist;
         p_values[16] = params_.contouring_weight;
+        p_values[17] = params_.vel_lag_tau;
+        p_values[18] = params_.omega_lag_tau;
 
         // ESDF 查询 (仅距离)
         double dist = 10.0;
         if (has_esdf && esdf) {
-            double x_pred[5] = {0};
+            double x_pred[7] = {0};
             ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, i, "x", x_pred);
 
             double alpha = (stats_.solve_count == 0) ? 1.0 : 0.7;
@@ -905,8 +936,8 @@ void NMPC::publishPredictedPath(const std_msgs::msg::Header& header, const std::
     predicted_path.header = header;
     predicted_path.header.frame_id = "map";
     
-    // 提取预测状态 x = [x, y, theta, v, omega]
-    std::vector<double> x_pred(5);
+    // 提取预测状态 x = [x, y, theta, v, omega, v_cmd, omega_cmd]
+    std::vector<double> x_pred(7);
     
     for (int i = 0; i <= N_horizon_; ++i) {
         ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, i, "x", x_pred.data());

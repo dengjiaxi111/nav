@@ -36,13 +36,13 @@
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define WHEELLEG_NMPC_NX     5
+#define WHEELLEG_NMPC_NX     7
 #define WHEELLEG_NMPC_NZ     0
 #define WHEELLEG_NMPC_NU     2
-#define WHEELLEG_NMPC_NP     17
+#define WHEELLEG_NMPC_NP     19
 #define WHEELLEG_NMPC_NP_GLOBAL     0
-#define WHEELLEG_NMPC_NBX    2
-#define WHEELLEG_NMPC_NBX0   5
+#define WHEELLEG_NMPC_NBX    4
+#define WHEELLEG_NMPC_NBX0   7
 #define WHEELLEG_NMPC_NBU    2
 #define WHEELLEG_NMPC_NSBX   0
 #define WHEELLEG_NMPC_NSBU   0
@@ -99,7 +99,6 @@ typedef struct wheelleg_nmpc_solver_capsule
     // dynamics
 
     external_function_external_param_casadi *expl_vde_forw;
-    external_function_external_param_casadi *expl_vde_forw_p;
     external_function_external_param_casadi *expl_ode_fun;
     external_function_external_param_casadi *expl_vde_adj;
 
@@ -174,6 +173,7 @@ ACADOS_SYMBOL_EXPORT int wheelleg_nmpc_acados_setup_qp_matrices_and_factorize(wh
 ACADOS_SYMBOL_EXPORT int wheelleg_nmpc_acados_free(wheelleg_nmpc_solver_capsule * capsule);
 ACADOS_SYMBOL_EXPORT void wheelleg_nmpc_acados_print_stats(wheelleg_nmpc_solver_capsule * capsule);
 ACADOS_SYMBOL_EXPORT int wheelleg_nmpc_acados_custom_update(wheelleg_nmpc_solver_capsule* capsule, double* data, int data_len);
+
 
 ACADOS_SYMBOL_EXPORT ocp_nlp_in *wheelleg_nmpc_acados_get_nlp_in(wheelleg_nmpc_solver_capsule * capsule);
 ACADOS_SYMBOL_EXPORT ocp_nlp_out *wheelleg_nmpc_acados_get_nlp_out(wheelleg_nmpc_solver_capsule * capsule);

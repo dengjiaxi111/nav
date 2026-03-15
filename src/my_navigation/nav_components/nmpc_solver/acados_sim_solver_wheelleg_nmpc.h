@@ -34,10 +34,10 @@
 #include "acados_c/sim_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define WHEELLEG_NMPC_NX     5
+#define WHEELLEG_NMPC_NX     7
 #define WHEELLEG_NMPC_NZ     0
 #define WHEELLEG_NMPC_NU     2
-#define WHEELLEG_NMPC_NP     17
+#define WHEELLEG_NMPC_NP     19
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,7 +54,6 @@ typedef struct wheelleg_nmpc_sim_solver_capsule
     sim_opts *acados_sim_opts;
     sim_config *acados_sim_config;
     void *acados_sim_dims;
-    void *acados_sim_mem;
 
     /* external functions */
     // ERK
@@ -62,14 +61,12 @@ typedef struct wheelleg_nmpc_sim_solver_capsule
     external_function_param_casadi * sim_vde_adj_casadi;
     external_function_param_casadi * sim_expl_ode_fun_casadi;
     external_function_param_casadi * sim_expl_ode_hess;
-    external_function_param_casadi * sim_expl_vde_forw_p;
 
     // IRK
     external_function_param_casadi * sim_impl_dae_fun;
     external_function_param_casadi * sim_impl_dae_fun_jac_x_xdot_z;
     external_function_param_casadi * sim_impl_dae_jac_x_xdot_u_z;
     external_function_param_casadi * sim_impl_dae_hess;
-    external_function_param_casadi * sim_impl_dae_jac_p;
 
     // GNSF
     external_function_param_casadi * sim_gnsf_phi_fun;
@@ -93,7 +90,7 @@ ACADOS_SYMBOL_EXPORT sim_out * wheelleg_nmpc_acados_get_sim_out(wheelleg_nmpc_si
 ACADOS_SYMBOL_EXPORT void * wheelleg_nmpc_acados_get_sim_dims(wheelleg_nmpc_sim_solver_capsule *capsule);
 ACADOS_SYMBOL_EXPORT sim_opts * wheelleg_nmpc_acados_get_sim_opts(wheelleg_nmpc_sim_solver_capsule *capsule);
 ACADOS_SYMBOL_EXPORT sim_solver * wheelleg_nmpc_acados_get_sim_solver(wheelleg_nmpc_sim_solver_capsule *capsule);
-ACADOS_SYMBOL_EXPORT void * wheelleg_nmpc_acados_get_sim_mem(wheelleg_nmpc_sim_solver_capsule *capsule);
+
 
 ACADOS_SYMBOL_EXPORT wheelleg_nmpc_sim_solver_capsule * wheelleg_nmpc_acados_sim_solver_create_capsule(void);
 ACADOS_SYMBOL_EXPORT int wheelleg_nmpc_acados_sim_solver_free_capsule(wheelleg_nmpc_sim_solver_capsule *capsule);

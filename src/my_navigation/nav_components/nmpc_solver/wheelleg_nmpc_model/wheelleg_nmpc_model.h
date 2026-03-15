@@ -54,9 +54,6 @@ const int *wheelleg_nmpc_expl_vde_forw_sparsity_out(int);
 int wheelleg_nmpc_expl_vde_forw_n_in(void);
 int wheelleg_nmpc_expl_vde_forw_n_out(void);
 
-// explicit param-direction forward VDE
-
-
 // explicit adjoint VDE
 int wheelleg_nmpc_expl_vde_adj(const real_t** arg, real_t** res, int* iw, real_t* w, void *mem);
 int wheelleg_nmpc_expl_vde_adj_work(int *, int *, int *, int *);

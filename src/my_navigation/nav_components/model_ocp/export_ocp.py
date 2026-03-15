@@ -1,7 +1,7 @@
 """
 使用 acados 导出 NMPC 求解器
 设计目标: 50Hz+ 控制频率, 低延迟
-特性: 集成 ESDF 障碍物代价 (通过运行时参数 p 注入)
+特性: 集成 ESDF 障碍物代价 + 增广状态速度命令建模 + 底层速度一阶滞后
 """
 
 from acados_template import AcadosOcp, AcadosOcpSolver
@@ -26,7 +26,7 @@ def export_nmpc_solver():
     ocp.model.f_expl_expr = model_obj.dynamics()
     
     # 维度
-    nx = model_obj.state.shape[0]   # 5
+    nx = model_obj.state.shape[0]   # 7
     nu = model_obj.control.shape[0] # 2
     np_ = model_obj.np
     
@@ -108,14 +108,16 @@ def export_nmpc_solver():
     # ========== 运行时参数默认值 ==========
     # p = [xref(7), d_esdf, weight_scale,
     #      q_pos, q_theta, q_vel, r_lin, r_ang,
-    #      esdf_weight, esdf_safe_dist, contouring_weight]
+    #      esdf_weight, esdf_safe_dist, contouring_weight,
+    #      vel_lag_tau, omega_lag_tau]
     ocp.parameter_values = np.array([
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         10.0,
         1.0,
         10.0, 5.0, 1.0,
         0.1, 0.1,
-        20.0, 0.5, 50.0
+        20.0, 0.5, 50.0,
+        0.6, 0.6
     ])
     
     # ========== 约束 ==========
@@ -124,13 +126,19 @@ def export_nmpc_solver():
     # 初始状态约束 (等式约束)
     ocp.constraints.x0 = np.zeros(nx)
     
-    # 状态约束 (路径约束) - 只约束速度
-    ocp.constraints.idxbx = np.array([3, 4])  # [v, omega]
-    ocp.constraints.lbx = np.array([-model_obj.max_v, -model_obj.max_omega])
-    ocp.constraints.ubx = np.array([model_obj.max_v, model_obj.max_omega])
+    # 状态约束 (路径约束) - 约束真实速度与命令速度
+    ocp.constraints.idxbx = np.array([3, 4, 5, 6])  # [v, omega, v_cmd, omega_cmd]
+    ocp.constraints.lbx = np.array([
+        -model_obj.max_v, -model_obj.max_omega,
+        -model_obj.max_v, -model_obj.max_omega
+    ])
+    ocp.constraints.ubx = np.array([
+        model_obj.max_v, model_obj.max_omega,
+        model_obj.max_v, model_obj.max_omega
+    ])
     
-    # 控制约束
-    ocp.constraints.idxbu = np.array([0, 1])  # [a_lin, alpha_ang]
+    # 控制约束 (加速度)
+    ocp.constraints.idxbu = np.array([0, 1])  # [a_cmd, alpha_cmd]
     ocp.constraints.lbu = u_min
     ocp.constraints.ubu = u_max
     
@@ -157,7 +165,7 @@ def export_nmpc_solver():
     # 生成求解器
     print(f"正在生成 NMPC solver 到 {output_dir}...")
     print(f"  状态维度: nx={nx}, 控制维度: nu={nu}")
-    print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights)")
+    print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights + lag_tau)")
     print(f"  成本类型: EXTERNAL (tracking + ESDF + control)")
     print(f"  预测步数: N={N}, 时域: T={T_horizon}s, dt={T_horizon/N}s")
     
