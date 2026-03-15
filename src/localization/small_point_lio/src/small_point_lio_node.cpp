@@ -317,15 +317,15 @@ namespace small_point_lio {
             Eigen::Vector3f angular_vel_base = R_lidar_to_base * omg_lidar;
 
             // DEBUG: 定期打印角速度变换
-            static int omg_debug_counter = 0;
-            if (omg_debug_counter++ % 50 == 0) {
-                RCLCPP_INFO(get_logger(), "[OMG_DEBUG] omg_lidar (raw): [%.4f, %.4f, %.4f] rad/s",
-                    omg_lidar.x(), omg_lidar.y(), omg_lidar.z());
-                RCLCPP_INFO(get_logger(), "[OMG_DEBUG] omg_base (transformed): [%.4f, %.4f, %.4f] rad/s",
-                    angular_vel_base.x(), angular_vel_base.y(), angular_vel_base.z());
-                RCLCPP_INFO(get_logger(), "[OMG_DEBUG] |omg_lidar| = %.4f, |omg_base| = %.4f (should be equal)",
-                    omg_lidar.norm(), angular_vel_base.norm());
-            }
+            // static int omg_debug_counter = 0;
+            // if (omg_debug_counter++ % 50 == 0) {
+            //     RCLCPP_INFO(get_logger(), "[OMG_DEBUG] omg_lidar (raw): [%.4f, %.4f, %.4f] rad/s",
+            //         omg_lidar.x(), omg_lidar.y(), omg_lidar.z());
+            //     RCLCPP_INFO(get_logger(), "[OMG_DEBUG] omg_base (transformed): [%.4f, %.4f, %.4f] rad/s",
+            //         angular_vel_base.x(), angular_vel_base.y(), angular_vel_base.z());
+            //     RCLCPP_INFO(get_logger(), "[OMG_DEBUG] |omg_lidar| = %.4f, |omg_base| = %.4f (should be equal)",
+            //         omg_lidar.norm(), angular_vel_base.norm());
+            // }
 
             // ============================================================
             // 线速度估计：使用位置差分+低通滤波

@@ -5,7 +5,7 @@
 运行时参数 p (外部代价版):
     [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
      d_esdf, weight_scale,
-     q_pos, q_theta, q_vel,
+    q_pos, q_theta, q_vel,
      r_lin, r_ang,
      esdf_weight, esdf_safe_dist, contouring_weight]
 说明:
@@ -13,6 +13,7 @@
     - d_esdf 仅包含 ESDF 距离 (m)
     - weight_scale 用于近端/终端权重缩放 (含 terminal_multiplier)
     - Q/R/ESDF/contouring 权重均支持运行时注入
+    - q_vel 用于速度跟踪；在 OCP 代价中对角速度误差施加了缩放惩罚项
 """
 
 import casadi as ca

@@ -221,7 +221,7 @@ namespace rog_map {
             update_min = std::min(update_min, update_ms);
             update_count++;
             
-            if (update_count % 50 == 0) {
+            if (update_count % 5000 == 0) {
                 double update_avg = update_sum / update_count;
                 std::cout << YELLOW << "[ROG-Map Update Perf] frames=" << update_count 
                           << " avg=" << update_avg << "ms"

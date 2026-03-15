@@ -147,7 +147,7 @@ void Pcd2pgm::PassThroughFilter(const double &thre_low, const double &thre_high,
   //设置滤波范围
   passthrough.setFilterLimits(thre_low, thre_high);
   // true表示保留滤波范围外，false表示保留范围内
-  passthrough.setFilterLimitsNegative(flag_in);
+  passthrough.setNegative(flag_in);
   //执行滤波并存储
   passthrough.filter(*cloud_after_PassThrough_);
   // test 保存滤波后的点云到文件

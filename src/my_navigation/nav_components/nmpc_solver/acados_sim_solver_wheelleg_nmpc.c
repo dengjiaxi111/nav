@@ -75,6 +75,8 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
 
     double Tsim = 0.03;
 
+    capsule->acados_sim_mem = NULL;
+
     external_function_opts ext_fun_opts;
     external_function_opts_set_to_default(&ext_fun_opts);
     ext_fun_opts.external_workspace = false;
@@ -84,6 +86,9 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
     capsule->sim_expl_vde_forw = (external_function_param_casadi *) malloc(sizeof(external_function_param_casadi));
     capsule->sim_vde_adj_casadi = (external_function_param_casadi *) malloc(sizeof(external_function_param_casadi));
     capsule->sim_expl_ode_fun_casadi = (external_function_param_casadi *) malloc(sizeof(external_function_param_casadi));
+    
+        capsule->sim_expl_vde_forw_p = NULL;
+    
 
     capsule->sim_expl_vde_forw->casadi_fun = &wheelleg_nmpc_expl_vde_forw;
     capsule->sim_expl_vde_forw->casadi_n_in = &wheelleg_nmpc_expl_vde_forw_n_in;
@@ -108,6 +113,8 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
     capsule->sim_expl_ode_fun_casadi->casadi_sparsity_out = &wheelleg_nmpc_expl_ode_fun_sparsity_out;
     capsule->sim_expl_ode_fun_casadi->casadi_work = &wheelleg_nmpc_expl_ode_fun_work;
     external_function_param_casadi_create(capsule->sim_expl_ode_fun_casadi, np, &ext_fun_opts);
+
+    
     capsule->sim_expl_ode_hess = (external_function_param_casadi *) malloc(sizeof(external_function_param_casadi));
     capsule->sim_expl_ode_hess->casadi_fun = &wheelleg_nmpc_expl_ode_hess;
     capsule->sim_expl_ode_hess->casadi_work = &wheelleg_nmpc_expl_ode_hess_work;
@@ -133,6 +140,7 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
     sim_dims_set(wheelleg_nmpc_sim_config, wheelleg_nmpc_sim_dims, "nx", &nx);
     sim_dims_set(wheelleg_nmpc_sim_config, wheelleg_nmpc_sim_dims, "nu", &nu);
     sim_dims_set(wheelleg_nmpc_sim_config, wheelleg_nmpc_sim_dims, "nz", &nz);
+    sim_dims_set(wheelleg_nmpc_sim_config, wheelleg_nmpc_sim_dims, "np", &np);
 
 
     // sim opts
@@ -170,6 +178,7 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
                  "expl_vde_adj", capsule->sim_vde_adj_casadi);
     wheelleg_nmpc_sim_config->model_set(wheelleg_nmpc_sim_in->model,
                  "expl_ode_fun", capsule->sim_expl_ode_fun_casadi);
+    
     wheelleg_nmpc_sim_config->model_set(wheelleg_nmpc_sim_in->model,
                 "expl_ode_hess", capsule->sim_expl_ode_hess);
 
@@ -177,6 +186,8 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
     sim_solver *wheelleg_nmpc_sim_solver = sim_solver_create(wheelleg_nmpc_sim_config,
                                                wheelleg_nmpc_sim_dims, wheelleg_nmpc_sim_opts, wheelleg_nmpc_sim_in);
     capsule->acados_sim_solver = wheelleg_nmpc_sim_solver;
+
+    capsule->acados_sim_mem = wheelleg_nmpc_sim_solver->mem;
 
 
     /* initialize parameter values */
@@ -260,9 +271,11 @@ int wheelleg_nmpc_acados_sim_free(wheelleg_nmpc_sim_solver_capsule *capsule)
     external_function_param_casadi_free(capsule->sim_expl_vde_forw);
     external_function_param_casadi_free(capsule->sim_vde_adj_casadi);
     external_function_param_casadi_free(capsule->sim_expl_ode_fun_casadi);
+    
     free(capsule->sim_expl_vde_forw);
     free(capsule->sim_vde_adj_casadi);
     free(capsule->sim_expl_ode_fun_casadi);
+    
     external_function_param_casadi_free(capsule->sim_expl_ode_hess);
     free(capsule->sim_expl_ode_hess);
 
@@ -283,6 +296,7 @@ int wheelleg_nmpc_acados_sim_update_params(wheelleg_nmpc_sim_solver_capsule *cap
     capsule->sim_expl_vde_forw[0].set_param(capsule->sim_expl_vde_forw, p);
     capsule->sim_vde_adj_casadi[0].set_param(capsule->sim_vde_adj_casadi, p);
     capsule->sim_expl_ode_fun_casadi[0].set_param(capsule->sim_expl_ode_fun_casadi, p);
+    
     capsule->sim_expl_ode_hess[0].set_param(capsule->sim_expl_ode_hess, p);
 
     return status;
@@ -317,5 +331,10 @@ sim_opts * wheelleg_nmpc_acados_get_sim_opts(wheelleg_nmpc_sim_solver_capsule *c
 sim_solver  * wheelleg_nmpc_acados_get_sim_solver(wheelleg_nmpc_sim_solver_capsule *capsule)
 {
     return capsule->acados_sim_solver;
+};
+
+void * wheelleg_nmpc_acados_get_sim_mem(wheelleg_nmpc_sim_solver_capsule *capsule)
+{
+    return capsule->acados_sim_mem;
 };
 

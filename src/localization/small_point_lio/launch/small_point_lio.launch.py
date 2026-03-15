@@ -23,7 +23,7 @@ def generate_launch_description():
                 [
                     FindPackageShare("small_point_lio"),
                     "config",                                                                                                                                                                                                                                                                              
-                    "mid360_sim.yaml",
+                    "mid360.yaml",
                 ]
             ),
             {'use_sim_time': LaunchConfiguration('use_sim_time')}
@@ -36,17 +36,17 @@ def generate_launch_description():
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         arguments=[
             "--x",
-            "0.0",
+            "0.2",
             "--y",
             "0.0",
             "--z",
-            "0.3",
+            "0.05",
             "--roll",
-            "3.14159265", 
+            "0.5",# "-0.5236", 
             "--pitch",
             "0.0",
             "--yaw",
-            "0.0",
+            "1.5708",
             "--frame-id",
             "base_link",
             "--child-frame-id",

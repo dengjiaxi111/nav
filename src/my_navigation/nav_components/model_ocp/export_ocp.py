@@ -56,8 +56,9 @@ def export_nmpc_solver():
     esdf_safe_dist = model_obj.esdf_safe_dist
     contouring_weight = model_obj.contouring_weight
     
-    # 角度误差 (wrap 到 [-pi, pi])
-    theta_err = model_obj.angle_diff(model_obj.theta, theta_ref)
+    # 角度误差（连续差）
+    # 注意：C++ 侧已将 theta_ref 做连续化注入，这里不再 wrap，避免引入 2π 局部极小值
+    theta_err = model_obj.theta - theta_ref
     
     # 跟踪误差
     state_err = ca.vertcat(
@@ -81,7 +82,9 @@ def export_nmpc_solver():
     tracking_cost = (
         q_pos * (state_err[0] ** 2 + state_err[1] ** 2)
         + q_theta * (state_err[2] ** 2)
-        + q_vel * (state_err[3] ** 2 + state_err[4] ** 2)
+        + q_vel * (state_err[3] ** 2)
+        # 强化角速度阻尼，抑制 180° 大转向过冲与直线衰减振荡
+        + 5.0 * (state_err[4] ** 2)
     )
     control_cost = r_lin * (control_err[0] ** 2) + r_ang * (control_err[1] ** 2)
     esdf_cost = esdf_weight * esdf_violation**2

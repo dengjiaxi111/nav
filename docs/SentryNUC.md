@@ -29,13 +29,19 @@ git submodule update --recursive --init 下载git下对应的依赖
 mkdir build
 cd build
 cmake .. \
-    -DCMAKE_INSTALL_PREFIX=/usr/local \
+  -DCMAKE_INSTALL_PREFIX=/usr/local \
     -DACADOS_WITH_QPOASES=ON \
     -DACADOS_INSTALL_DIR=/usr/local
 make -j20
 sudo make install
 sudo ldconfig
 ```
+
+> 备注（重要）：上面是历史安装方式。  
+> 当前导航仓导出 `model_ocp/export_ocp.py` 时，推荐使用与 `acados_template` 同源的一致前缀：
+> `-DACADOS_INSTALL_DIR=$HOME/dependency/acados`，并在导出前设置
+> `ACADOS_SOURCE_DIR=$HOME/dependency/acados`、`LD_LIBRARY_PATH=$HOME/dependency/acados/lib:$LD_LIBRARY_PATH`。  
+> 否则容易出现导出阶段符号不匹配（如 `undefined symbol: ocp_nlp_dump_last_qp_to_json`）。
 ```shell
 
 sudo apt install libsdl-image1.2-dev

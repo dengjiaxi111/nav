@@ -155,6 +155,23 @@ private:
         // 局部参考提取
         double horizon_length = 3.0;       // 提取前方路径长度 (米)
         double desired_velocity = 1.0;     // 期望速度
+        bool use_omega_ref_from_path = false;  // 是否使用路径导数作为 omega_ref
+
+        // 终点减速与起步对齐（参考轨迹整形）
+        double goal_decel_start_dist = 1.5;      // 距终点开始减速距离 (m)
+        double goal_crawl_speed = 0.15;          // 终点前爬行速度下限 (m/s)
+        bool enable_goal_speed_guard = true;     // 启用近终点速度安全包络
+        double goal_speed_guard_dist_scale = 1.5; // 包络生效距离倍率(相对 goal_decel_start_dist)
+        double goal_speed_guard_decel_scale = 1.2; // 安全刹车减速度倍率(相对 max_linear_accel)
+        double goal_speed_guard_abs_floor = 0.5; // 安全刹车最小减速度(m/s^2)
+        double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
+        double heading_slowdown_start = 0.2;     // 航向误差大于该阈值开始降速 (rad)
+        double heading_slowdown_min_factor = 0.1; // 航向降速最小倍率
+
+        // 速度反馈融合（用于缓解物理里程计对指令的拖拽）
+        // x0_vel = alpha * odom_vel + (1-alpha) * last_cmd_vel
+        // alpha=1.0 为纯闭环里程计；alpha=0.0 为纯指令前馈
+        double odom_feedback_alpha = 0.0;
 
         // 横向误差自适应速度缩减 (图片策略)
         double lateral_error_threshold = 0.15;  // 横向误差阈值 (m)，超过此值启用速度缩减
@@ -176,6 +193,10 @@ private:
         int solve_count = 0;
         int consecutive_failures = 0;
     } stats_;
+
+    // 终点减速锁存：进入减速区后只允许参考速度上限递减，避免速度回跳
+    bool goal_brake_latched_ = false;
+    double goal_brake_speed_cap_ = 1e9;
 };
 
 }  // namespace nav_components
