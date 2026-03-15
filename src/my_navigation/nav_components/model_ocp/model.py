@@ -24,8 +24,14 @@ import casadi as ca
 import numpy as np
 
 
+# 建模开关: True=包含惯性/滞后环节, False=不包含惯性环节(直接加速度模型)
+DEFAULT_ENABLE_LAG_MODEL = True
+
+
 class WheellegModel:
-    def __init__(self):
+    def __init__(self, enable_lag_model: bool = DEFAULT_ENABLE_LAG_MODEL):
+        self.enable_lag_model = bool(enable_lag_model)
+
         # 状态变量 (7维)
         self.x = ca.SX.sym('x')          # 位置 x (m)
         self.y = ca.SX.sym('y')          # 位置 y (m)
@@ -93,11 +99,16 @@ class WheellegModel:
         dy = self.v * ca.sin(self.theta)
         dtheta = self.omega
 
-        # 动力学部分: 速度命令经过一阶滞后后作用于真实速度
-        tau_v = ca.fmax(self.vel_lag_tau, 0.05)
-        tau_w = ca.fmax(self.omega_lag_tau, 0.05)
-        dv = (self.v_cmd - self.v) / tau_v
-        domega = (self.omega_cmd - self.omega) / tau_w
+        if self.enable_lag_model:
+            # 动力学部分(含惯性): 速度命令经过一阶滞后后作用于真实速度
+            tau_v = ca.fmax(self.vel_lag_tau, 0.05)
+            tau_w = ca.fmax(self.omega_lag_tau, 0.05)
+            dv = (self.v_cmd - self.v) / tau_v
+            domega = (self.omega_cmd - self.omega) / tau_w
+        else:
+            # 动力学部分(不含惯性): 真实速度由加速度直接积分
+            dv = self.a_lin
+            domega = self.alpha_ang
 
         # 控制输入作用在命令状态（控制量保持加速度）
         dv_cmd = self.a_lin

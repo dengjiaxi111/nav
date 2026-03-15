@@ -12,8 +12,14 @@ import os
 
 
 def export_nmpc_solver():
+    # 模型开关: 通过环境变量控制是否包含惯性/滞后环节
+    # NMPC_ENABLE_LAG_MODEL=1/true/on  -> 含惯性模型
+    # NMPC_ENABLE_LAG_MODEL=0/false/off -> 不含惯性模型
+    lag_flag = os.getenv("NMPC_ENABLE_LAG_MODEL", "1").strip().lower()
+    enable_lag_model = lag_flag not in ("0", "false", "off", "no")
+
     # 创建模型实例
-    model_obj = WheellegModel()
+    model_obj = WheellegModel(enable_lag_model=enable_lag_model)
     
     # ========== OCP 配置 ==========
     ocp = AcadosOcp()
@@ -164,6 +170,7 @@ def export_nmpc_solver():
     
     # 生成求解器
     print(f"正在生成 NMPC solver 到 {output_dir}...")
+    print(f"  模型类型: {'Lag-augmented' if enable_lag_model else 'Direct-accel(no-lag)'}")
     print(f"  状态维度: nx={nx}, 控制维度: nu={nu}")
     print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights + lag_tau)")
     print(f"  成本类型: EXTERNAL (tracking + ESDF + control)")
