@@ -169,6 +169,11 @@ private:
         double heading_slowdown_start = 0.2;     // 航向误差大于该阈值开始降速 (rad)
         double heading_slowdown_min_factor = 0.1; // 航向降速最小倍率
 
+        // 高曲率路段速度衰减（参考速度整形）
+        bool enable_curvature_speed_decay = true;   // 启用曲率速度衰减
+        double curvature_decay_kappa_ref = 0.8;     // 曲率参考值 (1/m)
+        double curvature_decay_min_factor = 0.45;   // 曲率衰减最小倍率
+
         // 速度反馈融合（用于缓解物理里程计对指令的拖拽）
         // x0_vel = alpha * odom_vel + (1-alpha) * last_cmd_vel
         // alpha=1.0 为纯闭环里程计；alpha=0.0 为纯指令前馈

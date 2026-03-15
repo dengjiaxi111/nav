@@ -23,21 +23,30 @@ nav_server:
     
     # 周期性路径检查 (动态障碍物应对，默认启用)
     path_check_period: 0.1  # 路径检查周期(秒) - 降低以快速响应动态障碍物
-    path_lateral_tolerance: 0.25  # 横向偏离路径容忍度(米)，超过则重规划
+    path_lateral_tolerance: 1.25  # 横向偏离路径容忍度(米)，超过则重规划
     # 说明: 系统每隔 path_check_period 秒检查机器人到路径的最短距离
     # 如果横向偏离超过 path_lateral_tolerance，会停止并重新规划
     # path_check_period 越小响应越快，但会增加 CPU 负载（建议 0.2-1.0 秒）
+
+    # ============ 路径持久化/复用 ============
+    path_io:
+      enable_save_planned_path: false  # true: 每次规划成功后保存平滑路径
+      planned_path_file: "/tmp/nav_planned_path.yaml"
+      use_prior_path: true            # true: 规划阶段优先读取先验路径并直接送入控制器
+      prior_path_file: "/tmp/nav_planned_path.yaml"
+      validate_prior_path: false        # 读取后先做障碍物校验
+      fallback_to_planner: false        # 先验路径不可用时回退到在线规划
     
     # ============ 分层地图系统 ============
     # 静态层: 从yaml/pgm文件加载的全局地图
-    enable_static_layer: true   # 启用静态层（默认启用）
+    enable_static_layer: false   # 启用静态层（默认启用）
     # 说明: 
     #   - 启用时: 从map_file加载pgm/yaml静态地图
     #   - 禁用时: 自动创建50x50m空白地图框架（纯动态SLAM模式）
     # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
     
     # 动态层: 来自rog_map的局部障碍物
-    enable_dynamic_layer: true  # 启用动态层融合
+    enable_dynamic_layer: false  # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
 
@@ -78,7 +87,7 @@ nav_server:
     
     # Costmap 膨胀
     inflation:
-      radius: 0.8              # 膨胀半径(m)
+      radius: 0.5              # 膨胀半径(m)
       inscribed_radius: 0.2    # 内切圆半径(m)，致命代价区
       cost_scaling: 1.8        # 指数衰减因子
       decay_type: exponential  # linear 或 exponential
@@ -143,8 +152,8 @@ nav_server:
       allow_reverse: false       # 倒车
       
       # === 局部参考轨迹提取 ===
-      horizon_length: 1.8        # 前向提取距离 (米) - 缩短以增强近端跟踪
-      desired_velocity: 2.0      # 期望跟踪速度 (m/s) - 降低以更稳定
+      horizon_length: 1.2        # 前向提取距离 (米) - 缩短以增强近端跟踪
+      desired_velocity: 1.5      # 期望跟踪速度 (m/s) - 降低以更稳定
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_decel_start_dist: 2.5  # 距终点开始减速距离 (m)
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
@@ -155,6 +164,9 @@ nav_server:
       pivot_turn_heading_thresh: 1.57  # 航向误差>该值时原地转向 (rad)
       heading_slowdown_start: 0.785       # 航向误差>该值开始降速 (rad)
       heading_slowdown_min_factor: 0.1  # 航向降速最小倍率
+      enable_curvature_speed_decay: true  # 高曲率路段启用参考速度衰减
+      curvature_decay_kappa_ref: 0.4      # 曲率参考值(1/m)，越小衰减越明显
+      curvature_decay_min_factor: 0.3    # 曲率衰减最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
       vel_lag_tau: 0.6           # 线速度一阶滞后时间常数(s)
       omega_lag_tau: 0.6         # 角速度一阶滞后时间常数(s)
@@ -162,8 +174,8 @@ nav_server:
 
       # === 代价权重（运行时生效） ===
       Q_position: 25.0           # 位置(x,y)跟踪权重
-      Q_orientation: 10.0         # 航向角(theta)跟踪权重
-      Q_velocity: 10.0            # 速度跟踪权重（v+omega）
+      Q_orientation: 15.0         # 航向角(theta)跟踪权重
+      Q_velocity: 5.0            # 速度跟踪权重（v+omega）
       R_linear: 0.01              # 线加速度平滑权重
       R_angular: 0.01            # 角加速度平滑权重
 

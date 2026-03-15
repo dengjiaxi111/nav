@@ -4,6 +4,7 @@
 #include <chrono>
 #include <algorithm>
 #include <array>
+#include <fstream>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/buffer.h>
@@ -13,6 +14,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include <nav_core/nav_fsm.hpp>
 #include <nav_core/map_interface.hpp>
@@ -52,6 +54,21 @@ public:
         
         path_check_period_ = get_parameter("path_check_period").as_double();
         path_lateral_tolerance_ = get_parameter("path_lateral_tolerance").as_double();
+
+        // === 路径持久化/复用参数 ===
+        declare_parameter("path_io.enable_save_planned_path", false);
+        declare_parameter("path_io.planned_path_file", "/tmp/nav_planned_path.yaml");
+        declare_parameter("path_io.use_prior_path", false);
+        declare_parameter("path_io.prior_path_file", "");
+        declare_parameter("path_io.validate_prior_path", true);
+        declare_parameter("path_io.fallback_to_planner", true);
+
+        enable_save_planned_path_ = get_parameter("path_io.enable_save_planned_path").as_bool();
+        planned_path_file_ = get_parameter("path_io.planned_path_file").as_string();
+        use_prior_path_ = get_parameter("path_io.use_prior_path").as_bool();
+        prior_path_file_ = get_parameter("path_io.prior_path_file").as_string();
+        validate_prior_path_ = get_parameter("path_io.validate_prior_path").as_bool();
+        fallback_to_planner_ = get_parameter("path_io.fallback_to_planner").as_bool();
         
         // === 脱困系统参数 ===
         declare_parameter("escape.trigger_costmap_threshold", 99);
@@ -101,6 +118,8 @@ public:
         RCLCPP_INFO(get_logger(), "controller_progress_threshold: %.2f m", controller_progress_threshold_);
         RCLCPP_INFO(get_logger(), "path_check_period: %.2f s", path_check_period_);
         RCLCPP_INFO(get_logger(), "path_lateral_tolerance: %.3f m ", path_lateral_tolerance_);
+        RCLCPP_INFO(get_logger(), "path_io.enable_save_planned_path: %d", enable_save_planned_path_);
+        RCLCPP_INFO(get_logger(), "path_io.use_prior_path: %d", use_prior_path_);
         RCLCPP_INFO(get_logger(), "escape.trigger_costmap_threshold: %d", escape_trigger_costmap_threshold_);
         RCLCPP_INFO(get_logger(), "escape.target_safe_esdf: %.2f m", escape_target_safe_esdf_);
         RCLCPP_INFO(get_logger(), "escape.search_radius: %.1f m", escape_search_radius_);
@@ -749,11 +768,131 @@ private:
             return false;
         }
     }
+
+    bool savePathToYaml(const nav_msgs::msg::Path& path, const std::string& file_path) {
+        if (path.poses.empty()) {
+            RCLCPP_WARN(get_logger(), "路径为空，跳过保存: %s", file_path.c_str());
+            return false;
+        }
+
+        try {
+            YAML::Node root;
+            root["frame_id"] = path.header.frame_id;
+            root["poses"] = YAML::Node(YAML::NodeType::Sequence);
+
+            for (const auto& p : path.poses) {
+                YAML::Node n;
+                n["x"] = p.pose.position.x;
+                n["y"] = p.pose.position.y;
+                n["z"] = p.pose.position.z;
+                n["qx"] = p.pose.orientation.x;
+                n["qy"] = p.pose.orientation.y;
+                n["qz"] = p.pose.orientation.z;
+                n["qw"] = p.pose.orientation.w;
+                root["poses"].push_back(n);
+            }
+
+            std::ofstream fout(file_path);
+            if (!fout.is_open()) {
+                RCLCPP_ERROR(get_logger(), "无法写入路径文件: %s", file_path.c_str());
+                return false;
+            }
+            fout << root;
+            fout.close();
+
+            RCLCPP_INFO(get_logger(), "已保存规划路径: %s (%zu 点)", file_path.c_str(), path.poses.size());
+            return true;
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(get_logger(), "保存路径失败: %s", e.what());
+            return false;
+        }
+    }
+
+    bool loadPathFromYaml(const std::string& file_path, nav_msgs::msg::Path& path) {
+        try {
+            YAML::Node root = YAML::LoadFile(file_path);
+            if (!root["poses"] || !root["poses"].IsSequence()) {
+                RCLCPP_ERROR(get_logger(), "路径文件格式错误(缺少 poses): %s", file_path.c_str());
+                return false;
+            }
+
+            nav_msgs::msg::Path loaded;
+            loaded.header.stamp = now();
+            loaded.header.frame_id = root["frame_id"] ?
+                root["frame_id"].as<std::string>() : map_frame_;
+            if (loaded.header.frame_id.empty()) {
+                loaded.header.frame_id = map_frame_;
+            }
+
+            for (const auto& node : root["poses"]) {
+                geometry_msgs::msg::PoseStamped p;
+                p.header = loaded.header;
+                p.pose.position.x = node["x"].as<double>();
+                p.pose.position.y = node["y"].as<double>();
+                p.pose.position.z = node["z"] ? node["z"].as<double>() : 0.0;
+                p.pose.orientation.x = node["qx"] ? node["qx"].as<double>() : 0.0;
+                p.pose.orientation.y = node["qy"] ? node["qy"].as<double>() : 0.0;
+                p.pose.orientation.z = node["qz"] ? node["qz"].as<double>() : 0.0;
+                p.pose.orientation.w = node["qw"] ? node["qw"].as<double>() : 1.0;
+                loaded.poses.push_back(p);
+            }
+
+            if (loaded.poses.size() < 2) {
+                RCLCPP_ERROR(get_logger(), "先验路径点数不足(<2): %s", file_path.c_str());
+                return false;
+            }
+
+            path = std::move(loaded);
+            RCLCPP_INFO(get_logger(), "已读取先验路径: %s (%zu 点)", file_path.c_str(), path.poses.size());
+            return true;
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(get_logger(), "读取先验路径失败(%s): %s", file_path.c_str(), e.what());
+            return false;
+        }
+    }
     
     void doPlanning() {
         if (!map_manager_ || !map_manager_->hasMap()) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "等待地图...");
             return;
+        }
+
+        // 可选：直接加载先验路径并交给控制器
+        if (use_prior_path_) {
+            nav_msgs::msg::Path prior_path;
+            bool loaded = !prior_path_file_.empty() && loadPathFromYaml(prior_path_file_, prior_path);
+            if (loaded) {
+                bool valid = true;
+                if (validate_prior_path_) {
+                    valid = planner_.validatePath(prior_path);
+                    if (!valid) {
+                        RCLCPP_WARN(get_logger(), "先验路径验证失败: %s", prior_path_file_.c_str());
+                    }
+                }
+
+                if (valid) {
+                    current_path_ = prior_path;
+                    controller_.setPath(current_path_);
+                    path_pub_->publish(current_path_);
+
+                    control_count_ = 0;
+                    last_progress_time_ = std::chrono::steady_clock::now();
+                    last_progress_pose_ = current_pose_;
+                    last_path_check_wall_time_ = std::chrono::steady_clock::now();
+
+                    RCLCPP_INFO(get_logger(), "使用先验路径进入控制状态");
+                    fsm_.transitionTo(nav_core::NavState::CONTROLLING);
+                    return;
+                }
+            } else {
+                RCLCPP_WARN(get_logger(), "未能读取先验路径: %s", prior_path_file_.c_str());
+            }
+
+            if (!fallback_to_planner_) {
+                RCLCPP_ERROR(get_logger(), "先验路径不可用且禁用了 fallback_to_planner");
+                fsm_.triggerRecovery(nav_core::RecoveryTrigger::PLANNING_FAILED);
+                return;
+            }
         }
         
         // 在规划前检查起点是否在障碍物中
@@ -788,6 +927,10 @@ private:
             current_path_ = path;
             controller_.setPath(path);
             path_pub_->publish(path);
+
+            if (enable_save_planned_path_) {
+                savePathToYaml(current_path_, planned_path_file_);
+            }
             
             control_count_ = 0;
             last_progress_time_ = std::chrono::steady_clock::now();
@@ -1218,6 +1361,14 @@ private:
     int stair_mode_release_counter_{0};
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
+
+    // 路径持久化/复用
+    bool enable_save_planned_path_ = false;
+    std::string planned_path_file_;
+    bool use_prior_path_ = false;
+    std::string prior_path_file_;
+    bool validate_prior_path_ = true;
+    bool fallback_to_planner_ = true;
     
     // 路径检查相关
     double path_check_period_ = 2.0;  // 路径检查周期(秒)

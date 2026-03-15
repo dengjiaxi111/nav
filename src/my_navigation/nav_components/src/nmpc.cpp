@@ -51,6 +51,9 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.pivot_turn_heading_thresh", params_.pivot_turn_heading_thresh);
     node_->declare_parameter("nmpc.heading_slowdown_start", params_.heading_slowdown_start);
     node_->declare_parameter("nmpc.heading_slowdown_min_factor", params_.heading_slowdown_min_factor);
+    node_->declare_parameter("nmpc.enable_curvature_speed_decay", params_.enable_curvature_speed_decay);
+    node_->declare_parameter("nmpc.curvature_decay_kappa_ref", params_.curvature_decay_kappa_ref);
+    node_->declare_parameter("nmpc.curvature_decay_min_factor", params_.curvature_decay_min_factor);
     node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
     node_->declare_parameter("nmpc.vel_lag_tau", params_.vel_lag_tau);
     node_->declare_parameter("nmpc.omega_lag_tau", params_.omega_lag_tau);
@@ -106,6 +109,12 @@ void NMPC::initialize(rclcpp::Node* node) {
         node_->get_parameter("nmpc.heading_slowdown_start").as_double();
     params_.heading_slowdown_min_factor =
         node_->get_parameter("nmpc.heading_slowdown_min_factor").as_double();
+    params_.enable_curvature_speed_decay =
+        node_->get_parameter("nmpc.enable_curvature_speed_decay").as_bool();
+    params_.curvature_decay_kappa_ref =
+        node_->get_parameter("nmpc.curvature_decay_kappa_ref").as_double();
+    params_.curvature_decay_min_factor =
+        node_->get_parameter("nmpc.curvature_decay_min_factor").as_double();
     params_.odom_feedback_alpha = node_->get_parameter("nmpc.odom_feedback_alpha").as_double();
     params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
     params_.goal_decel_start_dist = std::max(0.1, params_.goal_decel_start_dist);
@@ -117,6 +126,9 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.heading_slowdown_start = std::clamp(params_.heading_slowdown_start, 0.0, M_PI);
     params_.heading_slowdown_min_factor =
         std::clamp(params_.heading_slowdown_min_factor, 0.0, 1.0);
+    params_.curvature_decay_kappa_ref = std::max(1e-3, params_.curvature_decay_kappa_ref);
+    params_.curvature_decay_min_factor =
+        std::clamp(params_.curvature_decay_min_factor, 0.05, 1.0);
     params_.vel_lag_tau = std::max(0.05, node_->get_parameter("nmpc.vel_lag_tau").as_double());
     params_.omega_lag_tau =
         std::max(0.05, node_->get_parameter("nmpc.omega_lag_tau").as_double());
@@ -195,6 +207,11 @@ void NMPC::initialize(rclcpp::Node* node) {
     RCLCPP_INFO(node_->get_logger(),
         "NMPC 一阶滞后: tau_v=%.3f s, tau_w=%.3f s",
         params_.vel_lag_tau, params_.omega_lag_tau);
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC 曲率降速: enable=%d, kappa_ref=%.3f, min_factor=%.2f",
+        params_.enable_curvature_speed_decay,
+        params_.curvature_decay_kappa_ref,
+        params_.curvature_decay_min_factor);
     
     initialized_ = true;
 }
@@ -619,6 +636,19 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     double speed_factor =
                         1.0 - (heading_err - params_.heading_slowdown_start) / denom;
                     desired_v *= std::max(params_.heading_slowdown_min_factor, speed_factor);
+                }
+
+                // 高曲率路段速度衰减：v *= clamp(1 / (1 + |kappa| / kappa_ref), min_factor, 1)
+                if (params_.enable_curvature_speed_decay) {
+                    double seg_len = std::hypot(p2.x - p1.x, p2.y - p1.y);
+                    if (seg_len > 1e-3) {
+                        double kappa = std::abs(theta_diff) / seg_len;
+                        double decay = 1.0 / (1.0 + kappa / params_.curvature_decay_kappa_ref);
+                        decay = std::clamp(decay,
+                                           params_.curvature_decay_min_factor,
+                                           1.0);
+                        desired_v *= decay;
+                    }
                 }
 
                 if (goal_brake_latched_) {
