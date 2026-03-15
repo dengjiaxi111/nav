@@ -49,9 +49,9 @@ private:
     // ========== 核心算法 ==========
     /**
      * @brief 求解 NMPC 优化问题
-     * @param x0 当前状态 [x, y, theta, v, omega]
+      * @param x0 当前状态 [x, y, theta, v, omega, v_cmd, omega_cmd]
      * @param yref 参考轨迹序列 (N+1个点)
-     * @param u_opt 输出最优控制 [a_lin, alpha_ang]
+      * @param u_opt 输出最优控制 [a_cmd, alpha_cmd]
      * @return 求解状态 (0=成功)
      */
     int solveNMPC(const std::vector<double>& x0,
@@ -88,9 +88,10 @@ private:
 
     /**
      * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
-        * 参数格式 p = [xref(7), d_esdf, weight_scale,
-        *               q_pos, q_theta, q_vel, r_lin, r_ang,
-        *               esdf_weight, esdf_safe_dist, contouring_weight]
+      * 参数格式 p = [xref(7), d_esdf, weight_scale,
+      *               q_pos, q_theta, q_vel, r_lin, r_ang,
+      *               esdf_weight, esdf_safe_dist, contouring_weight,
+      *               vel_lag_tau, omega_lag_tau]
      * @param yref 参考轨迹（用于查询位置）
      */
     void injectEsdfParameters(const std::vector<std::vector<double>>& yref,
@@ -106,8 +107,8 @@ private:
     int nearest_idx_ = 0;  // 最近路径点索引
     
     // NMPC 状态
-    std::vector<double> last_state_;   // 上一次状态 [x,y,theta,v,omega]
-    std::vector<double> last_control_; // 上一次控制 [a,alpha]
+    std::vector<double> last_state_;   // 上一次状态 [x,y,theta,v,omega,v_cmd,omega_cmd]
+    std::vector<double> last_control_; // 上一次控制 [a_cmd,alpha_cmd]
     bool initialized_ = false;
     
     // 地图接口（ESDF 查询）
@@ -126,7 +127,7 @@ private:
     int N_horizon_ = 50;
     double T_horizon_ = 1.5;
     
-    static constexpr int NP_PARAM = 17;
+    static constexpr int NP_PARAM = 19;
     
     // ========== 参数配置 ==========
     struct NMPCParams {
@@ -181,6 +182,10 @@ private:
 
         // 终端权重缩放
         double terminal_multiplier = 2.0;
+
+        // 底层闭环速度一阶滞后模型时间常数（秒）
+        double vel_lag_tau = 0.6;
+        double omega_lag_tau = 0.6;
     } params_;
     
     // ========== ROS 接口 ==========

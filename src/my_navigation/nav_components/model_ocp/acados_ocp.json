@@ -1,27 +1,7 @@
 {
-    "code_gen_opts": {
-        "acados_include_path": "/home/nuc/dependency/acados/include",
-        "acados_lib_path": "/home/nuc/dependency/acados/lib",
-        "acados_link_libs": {
-            "clarabel": "",
-            "daqp": "",
-            "hpmpc": "",
-            "ooqp": "",
-            "openmp": "",
-            "osqp": "-losqp",
-            "qpdunes": "",
-            "qpoases": "-lqpOASES_e"
-        },
-        "acados_version": "a312651ab",
-        "code_export_directory": "/home/nuc/navigation2026/src/my_navigation/nav_components/nmpc_solver",
-        "cython_include_dirs": [
-            "/home/nuc/navigation2026/.venv/lib/python3.12/site-packages/numpy/core/include",
-            "/usr/include/python3.12"
-        ],
-        "json_file": "acados_ocp.json",
-        "os": "unix",
-        "shared_lib_ext": ".so"
-    },
+    "acados_include_path": "/home/lehan/dependency/acados/include",
+    "acados_lib_path": "/home/lehan/dependency/acados/lib",
+    "code_export_directory": "/home/lehan/navigation2026/src/my_navigation/nav_components/nmpc_solver",
     "constraints": {
         "C": [],
         "C_e": [],
@@ -40,14 +20,18 @@
         ],
         "idxbx": [
             3,
-            4
+            4,
+            5,
+            6
         ],
         "idxbx_0": [
             0,
             1,
             2,
             3,
-            4
+            4,
+            5,
+            6
         ],
         "idxbx_e": [],
         "idxbxe_0": [
@@ -55,7 +39,9 @@
             1,
             2,
             3,
-            4
+            4,
+            5,
+            6
         ],
         "idxs_rev": [],
         "idxs_rev_0": [],
@@ -77,9 +63,13 @@
         ],
         "lbx": [
             -1.5,
+            -3.0,
+            -1.5,
             -3.0
         ],
         "lbx_0": [
+            0.0,
+            0.0,
             0.0,
             0.0,
             0.0,
@@ -115,9 +105,13 @@
         ],
         "ubx": [
             1.5,
+            3.0,
+            1.5,
             3.0
         ],
         "ubx_0": [
+            0.0,
+            0.0,
             0.0,
             0.0,
             0.0,
@@ -198,20 +192,24 @@
         "zu_0": [],
         "zu_e": []
     },
+    "cython_include_dirs": [
+        "/usr/lib/python3/dist-packages/numpy/core/include",
+        "/usr/include/python3.10"
+    ],
     "dims": {
         "N": 50,
         "n_global_data": 0,
         "nbu": 2,
-        "nbx": 2,
-        "nbx_0": 5,
+        "nbx": 4,
+        "nbx_0": 7,
         "nbx_e": 0,
-        "nbxe_0": 5,
+        "nbxe_0": 7,
         "ng": 0,
         "ng_e": 0,
         "nh": 0,
         "nh_0": 0,
         "nh_e": 0,
-        "np": 17,
+        "np": 19,
         "np_global": 0,
         "nphi": 0,
         "nphi_0": 0,
@@ -234,8 +232,8 @@
         "nsphi_0": 0,
         "nsphi_e": 0,
         "nu": 2,
-        "nx": 5,
-        "nx_next": 5,
+        "nx": 7,
+        "nx_next": 7,
         "ny": 0,
         "ny_0": 0,
         "ny_e": 0,
@@ -258,7 +256,7 @@
         "wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_e_fun_jac_hess.c",
         "wheelleg_nmpc_cost/wheelleg_nmpc_cost_ext_cost_e_fun_jac.c"
     ],
-    "hash": "4ce8650e34154f51a96647ebe3a268fc",
+    "json_file": "acados_ocp.json",
     "model": {
         "con_h_expr": [],
         "con_h_expr_0": [],
@@ -275,8 +273,8 @@
         "cost_conl_custom_outer_hess": [],
         "cost_conl_custom_outer_hess_0": [],
         "cost_conl_custom_outer_hess_e": [],
-        "cost_expr_ext_cost": "SX(((weight_scale*((((((q_pos*(sq((x-x_ref))+sq((y-y_ref))))+(q_theta*sq((theta-theta_ref))))+(q_vel*sq((v-v_ref))))+(5*sq((omega-omega_ref))))+(esdf_weight*sq(fmax(0,(esdf_safe_dist-d_esdf)))))+(contouring_weight*sq(((cos(theta_ref)*(y-y_ref))-(sin(theta_ref)*(x-x_ref)))))))+((r_lin*sq((a_lin-a_ref)))+(r_ang*sq((alpha-alpha_ref))))))",
-        "cost_expr_ext_cost_0": "SX(((weight_scale*((((((q_pos*(sq((x-x_ref))+sq((y-y_ref))))+(q_theta*sq((theta-theta_ref))))+(q_vel*sq((v-v_ref))))+(5*sq((omega-omega_ref))))+(esdf_weight*sq(fmax(0,(esdf_safe_dist-d_esdf)))))+(contouring_weight*sq(((cos(theta_ref)*(y-y_ref))-(sin(theta_ref)*(x-x_ref)))))))+((r_lin*sq((a_lin-a_ref)))+(r_ang*sq((alpha-alpha_ref))))))",
+        "cost_expr_ext_cost": "SX(((weight_scale*((((((q_pos*(sq((x-x_ref))+sq((y-y_ref))))+(q_theta*sq((theta-theta_ref))))+(q_vel*sq((v-v_ref))))+(5*sq((omega-omega_ref))))+(esdf_weight*sq(fmax(0,(esdf_safe_dist-d_esdf)))))+(contouring_weight*sq(((cos(theta_ref)*(y-y_ref))-(sin(theta_ref)*(x-x_ref)))))))+((r_lin*sq((a_cmd-a_ref)))+(r_ang*sq((alpha_cmd-alpha_ref))))))",
+        "cost_expr_ext_cost_0": "SX(((weight_scale*((((((q_pos*(sq((x-x_ref))+sq((y-y_ref))))+(q_theta*sq((theta-theta_ref))))+(q_vel*sq((v-v_ref))))+(5*sq((omega-omega_ref))))+(esdf_weight*sq(fmax(0,(esdf_safe_dist-d_esdf)))))+(contouring_weight*sq(((cos(theta_ref)*(y-y_ref))-(sin(theta_ref)*(x-x_ref)))))))+((r_lin*sq((a_cmd-a_ref)))+(r_ang*sq((alpha_cmd-alpha_ref))))))",
         "cost_expr_ext_cost_custom_hess": [],
         "cost_expr_ext_cost_custom_hess_0": [],
         "cost_expr_ext_cost_custom_hess_e": [],
@@ -290,7 +288,6 @@
         "cost_y_expr": [],
         "cost_y_expr_0": [],
         "cost_y_expr_e": [],
-        "disc_dyn_custom_hess_ux_expr": [],
         "disc_dyn_custom_jac_ux_expr": [],
         "disc_dyn_expr": [],
         "dyn_disc_fun": null,
@@ -308,38 +305,38 @@
             "f_expl_expr",
             "p",
             "p_global",
-            "pi",
             "u",
             "x",
             "xdot",
             "z"
         ],
-        "f_expl_expr": "SX([(v*cos(theta)), (v*sin(theta)), omega, a_lin, alpha])",
+        "f_expl_expr": "SX(@1=0.05, [(v*cos(theta)), (v*sin(theta)), omega, ((v_cmd_state-v)/fmax(vel_lag_tau,@1)), ((omega_cmd_state-omega)/fmax(omega_lag_tau,@1)), a_cmd, alpha_cmd])",
         "f_impl_expr": [],
         "gnsf_model": null,
         "name": "wheelleg_nmpc",
         "nu_original": null,
-        "p": "SX([x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref, d_esdf, weight_scale, q_pos, q_theta, q_vel, r_lin, r_ang, esdf_weight, esdf_safe_dist, contouring_weight])",
+        "p": "SX([x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref, d_esdf, weight_scale, q_pos, q_theta, q_vel, r_lin, r_ang, esdf_weight, esdf_safe_dist, contouring_weight, vel_lag_tau, omega_lag_tau])",
         "p_global": "SX(0x1)",
-        "pi": "SX([pi_0, pi_1, pi_2, pi_3, pi_4])",
-        "serialized_expressions": "jhpnnagiieahaaaadaaaaaaaaaaaaaaaaadaegaakaaaaaaadfifgefhogdgehjgpgogcaaaaaaaoaaaaaaaehngahpfdhfgchjgbgmgjgkhfgchaaaaaaaabagaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaegfaaaaaaaaaaaaaaabaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaapgadaabagaaaaaaadhpgfhchdgfgbahaaaaaaakgjgehpfehngahaaaaaaaaaaaaaaaafaaaaaaadhigfgmgmgaaaaaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaaaebababaaabababaaapbfilobfilobfnpdmfpicmfpicmfpnpdaaaaaeaaaaaaaaaaaaaabakdmiadcooijhfeodaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaocdaaaaaaangehihaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaachbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaalaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaabaaaaaaafeaaaaaaaaaaaaaalaaaaaaaaaaaaaaaibaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaamaaaaaaahhfgjghgigehpfdhdgbgmgfgegpcaaaaaaaaaaaaaafaaaaaaabhpfahpgdhegpcaaaaaaaaaaaaaabaaaaaaaihegpcaaaaaaaaaaaaaafaaaaaaaihpfchfgggegpcaaaaaaaaaaaaaabaaaaaaajhegpcaaaaaaaaaaaaaafaaaaaaajhpfchfgggegpcaaaaaaaaaaaaaahaaaaaaabhpfehigfgehbgegpcaaaaaaaaaaaaaafaaaaaaaehigfgehbgegpcaaaaaaaaaaaaaajaaaaaaaehigfgehbgpfchfgggegpcaaaaaaaaaaaaaafaaaaaaabhpfghfgmgegpcaaaaaaaaaaaaaabaaaaaaaghegpcaaaaaaaaaaaaaafaaaaaaaghpfchfgggegpcaaaaaaaaaaaaaafaaaaaaapgngfghgbgegpcaaaaaaaaaaaaaajaaaaaaapgngfghgbgpfchfgggegpcaaaaaaaaaaaaaalaaaaaaafgdhegggpfhhfgjghgigehegpcaaaaaaaaaaaaaaoaaaaaaafgdhegggpfdhbgggfgpfegjgdhehegpcaaaaaaaaaaaaaagaaaaaaaegpffgdhegggegpcaaaaaaaaaaaaaabbaaaaaadgpgogehpgfhchjgoghgpfhhfgjghgigehegpcaaaaaaaaaaaaaafaaaaaaachpfmgjgogegpcaaaaaaaaaaaaaafaaaaaaabgpfmgjgogegpcaaaaaaaaaaaaaafaaaaaaabgpfchfgggegpcaaaaaaaaaaaaaafaaaaaaachpfbgoghgegpcaaaaaaaaaaaaaafaaaaaaabgmgahigbgegpcaaaaaaaaaaaaaajaaaaaaabgmgahigbgpfchfgggkcaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaacheaaaaaaaaaaaaaaachfaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachkbaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachgaaaaaaaaaaaaaaachhaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachmbaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachlbaaaaaaaaaaaaaachnbaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachdaaaaaaaaaaaaaaachobaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachacaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachiaaaaaaaaaaaaaaachbcaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachpbaaaaaaaaaaaaaachccaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaachnaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachecaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachlaaaaaaaaaaaaaaachfcaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachdcaaaaaaaaaaaaaachgcaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachoaaaaaaaaaaaaaaachpaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachicaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaaegmcaaaaaaaaaaaaaajgfaaaaaaachjcaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachhcaaaaaaaaaaaaaachlcaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachbbaaaaaaaaaaaaaachcbaaaaaaaaaaaaaaegdcaaaaaaaaaaaaaaegmcaaaaaaaaaaaaaaadchncaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachpcaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachabaaaaaaaaaaaaaachadaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachmcaaaaaaaaaaaaaachbdaaaaaaaaaaaaaaegoaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachgaaaaaaaaaaaaaaachhaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachddaaaaaaaaaaaaaachedaaaaaaaaaaaaaaegnaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaacheaaaaaaaaaaaaaaachfaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachgdaaaaaaaaaaaaaachhdaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachfdaaaaaaaaaaaaaachidaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachjdaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachdbaaaaaaaaaaaaaachkdaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachcdaaaaaaaaaaaaaachldaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachcaaaaaaaaaaaaaaachmdaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachfbaaaaaaaaaaaaaachgbaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachodaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachebaaaaaaaaaaaaaachpdaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachibaaaaaaaaaaaaaachjbaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachbeaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachhbaaaaaaaaaaaaaachceaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachaeaaaaaaaaaaaaaachdeaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachndaaaaaaaaaaaaaacheeaaaaaaaaaaaaaacaaaaaaaaaaaaaaachkcaaaaaaaaaaaaaachocaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapcaaaaaabaaaaaaaaaaaaaaaaaaaaaaapcaaaaaacaaaaaaaaaaaaaaaaaaaaaaapcaaaaaadaaaaaaaaaaaaaaaaaaaaaaacaaaaaaaeaaaaaaacaaaaaaadaaaaaaalaaaaaaaeaaaaaaaeaaaaaaaeaaaaaaapcaaaaaafaaaaaaaaaaaaaaaaaaaaaaapcaaaaaagaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaafaaaaaaagaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaabaaaaaaaeaaaaaaaeaaaaaaahaaaaaaadaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaiaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaaiaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaajaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaajaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaamcaaaaaaeaaaaaaaaaaaaaaaaaaaebaepcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaajaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaajaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaamcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaajaaaaaaaaaaaaaaaaaaaaaaapcaaaaaakaaaaaaaaaaaaaaaaaaaaaaacaaaaaaajaaaaaaajaaaaaaakaaaaaaadcaaaaaahaaaaaaahaaaaaaajaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaaoaaaaaaahaaaaaaaiaaaaaaaiaaaaaaacaaaaaaafaaaaaaafaaaaaaagaaaaaaadaaaaaaahaaaaaaahaaaaaaafaaaaaaanaaaaaaaiaaaaaaaiaaaaaaaiaaaaaaacaaaaaaacaaaaaaacaaaaaaadaaaaaaadaaaaaaaiaaaaaaaiaaaaaaacaaaaaaacaaaaaaahaaaaaaahaaaaaaaiaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaadaaaaaaaaaaaaaaaaaaaaaaabaaaaaaapcaaaaaabaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaacaaaaaaaeaaaaaaaeaaaaaaahaaaaaaalaaaaaaaeaaaaaaaeaaaaaaaeaaaaaaadaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaiaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaaiaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaabaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaocaaaaaaaaaaaaaaaaaaaaaaaaaaaaaababaaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaachfeaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaachfeaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaachfeaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachcaaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachmcaaaaaaaaaaaaaachbdaaaaaaaaaaaaaachldaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaegjaaaaaaaaaaaaaaafaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaafaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaaaaaaaaaadaaaaaaaaaaaaaaaeaaaaaaaaaaaaaaafaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaaegoaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaaegnaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaachoaaaaaaaaaaaaaaachfbaaaaaaaaaaaaaachibaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaegfbaaaaaaaaaaaaaabbaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaaaaaaaaaadaaaaaaaaaaaaaaaeaaaaaaaaaaaaaaafaaaaaaaaaaaaaaagaaaaaaaaaaaaaaahaaaaaaaaaaaaaaaiaaaaaaaaaaaaaaajaaaaaaaaaaaaaaakaaaaaaaaaaaaaaalaaaaaaaaaaaaaaamaaaaaaaaaaaaaaanaaaaaaaaaaaaaaaoaaaaaaaaaaaaaaapaaaaaaaaaaaaaaaabaaaaaaaaaaaaaabbaaaaaaaaaaaaaachfaaaaaaaaaaaaaaachhaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaachnaaaaaaaaaaaaaaachpaaaaaaaaaaaaaaachgbaaaaaaaaaaaaaachjbaaaaaaaaaaaaaachcbaaaaaaaaaaaaaachcaaaaaaaaaaaaaaachdaaaaaaaaaaaaaaachiaaaaaaaaaaaaaaachlaaaaaaaaaaaaaaachebaaaaaaaaaaaaaachhbaaaaaaaaaaaaaachabaaaaaaaaaaaaaachbbaaaaaaaaaaaaaachdbaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaegeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachkeaaaaaaaaaaaaaafaaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaaeaaaaaaaahjgpfadegpcaaaaaaaaaaaaaaeaaaaaaaahjgpfbdegpcaaaaaaaaaaaaaaeaaaaaaaahjgpfcdegpcaaaaaaaaaaaaaaeaaaaaaaahjgpfddegpcaaaaaaaaaaaaaaeaaaaaaaahjgpfeddachgeaaaaaaaaaaaaaaeggaaaaaaaaaaaaaaacaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaaaaaaaaaachfbaaaaaaaaaaaaaachibaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachkeaaaaaaaaaaaaaafaaaaaaaaaaaaaaacheaaaaaaaaaaaaaaachgaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaachoaaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachkeaaaaaaaaaaaaaafaaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfadegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfbdegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfcdegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfddegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfeddachgeaaaaaaaaaaaaaachafaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "serialized_expressions": "jhpnnagiieahaaaadaaaaaaaaaaaaaaaaadaegaakaaaaaaadfifgefhogdgehjgpgogcaaaaaaaoaaaaaaaehngahpfdhfgchjgbgmgjgkhfgchaaaaaaaabagaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaegfaaaaaaaaaaaaaaabaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaapgadaabagaaaaaaadhpgfhchdgfgbahaaaaaaakgjgehpfehngahaaaaaaaaaaaaaaaafaaaaaaadhigfgmgmgaaaaaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaaaebababaaabababaaapbfilobfilobfnpdmfpicmfpicmfpnpdaaaaaeaaaaaaaaaaaaaabakdmiadcooijhfeodaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaocdaaaaaaangehihaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaachbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaalaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaabaaaaaaafeaaaaaaaaaaaaaalaaaaaaaaaaaaaaaibaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaamaaaaaaahhfgjghgigehpfdhdgbgmgfgegpcaaaaaaaaaaaaaafaaaaaaabhpfahpgdhegpcaaaaaaaaaaaaaabaaaaaaaihegpcaaaaaaaaaaaaaafaaaaaaaihpfchfgggegpcaaaaaaaaaaaaaabaaaaaaajhegpcaaaaaaaaaaaaaafaaaaaaajhpfchfgggegpcaaaaaaaaaaaaaahaaaaaaabhpfehigfgehbgegpcaaaaaaaaaaaaaafaaaaaaaehigfgehbgegpcaaaaaaaaaaaaaajaaaaaaaehigfgehbgpfchfgggegpcaaaaaaaaaaaaaafaaaaaaabhpfghfgmgegpcaaaaaaaaaaaaaabaaaaaaaghegpcaaaaaaaaaaaaaafaaaaaaaghpfchfgggegpcaaaaaaaaaaaaaafaaaaaaapgngfghgbgegpcaaaaaaaaaaaaaajaaaaaaapgngfghgbgpfchfgggegpcaaaaaaaaaaaaaalaaaaaaafgdhegggpfhhfgjghgigehegpcaaaaaaaaaaaaaaoaaaaaaafgdhegggpfdhbgggfgpfegjgdhehegpcaaaaaaaaaaaaaagaaaaaaaegpffgdhegggegpcaaaaaaaaaaaaaabbaaaaaadgpgogehpgfhchjgoghgpfhhfgjghgigehegpcaaaaaaaaaaaaaafaaaaaaachpfmgjgogegpcaaaaaaaaaaaaaafaaaaaaabgpfdgngegegpcaaaaaaaaaaaaaafaaaaaaabgpfchfgggegpcaaaaaaaaaaaaaafaaaaaaachpfbgoghgegpcaaaaaaaaaaaaaajaaaaaaabgmgahigbgpfdgngegegpcaaaaaaaaaaaaaajaaaaaaabgmgahigbgpfchfgggkcaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaacheaaaaaaaaaaaaaaachfaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachkbaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachgaaaaaaaaaaaaaaachhaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachmbaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachlbaaaaaaaaaaaaaachnbaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachdaaaaaaaaaaaaaaachobaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachacaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachiaaaaaaaaaaaaaaachbcaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachpbaaaaaaaaaaaaaachccaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaachnaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachecaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachlaaaaaaaaaaaaaaachfcaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachdcaaaaaaaaaaaaaachgcaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachoaaaaaaaaaaaaaaachpaaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachicaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaaegmcaaaaaaaaaaaaaajgfaaaaaaachjcaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachhcaaaaaaaaaaaaaachlcaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachbbaaaaaaaaaaaaaachcbaaaaaaaaaaaaaaegdcaaaaaaaaaaaaaaegmcaaaaaaaaaaaaaaadchncaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachpcaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachabaaaaaaaaaaaaaachadaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachmcaaaaaaaaaaaaaachbdaaaaaaaaaaaaaaegoaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachgaaaaaaaaaaaaaaachhaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachddaaaaaaaaaaaaaachedaaaaaaaaaaaaaaegnaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaacheaaaaaaaaaaaaaaachfaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachgdaaaaaaaaaaaaaachhdaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachfdaaaaaaaaaaaaaachidaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachjdaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachdbaaaaaaaaaaaaaachkdaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachcdaaaaaaaaaaaaaachldaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachcaaaaaaaaaaaaaaachmdaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachfbaaaaaaaaaaaaaachgbaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachodaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachebaaaaaaaaaaaaaachpdaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaachibaaaaaaaaaaaaaachjbaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaachbeaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachhbaaaaaaaaaaaaaachceaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachaeaaaaaaaaaaaaaachdeaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachndaaaaaaaaaaaaaacheeaaaaaaaaaaaaaacaaaaaaaaaaaaaaachkcaaaaaaaaaaaaaachocaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapcaaaaaabaaaaaaaaaaaaaaaaaaaaaaapcaaaaaacaaaaaaaaaaaaaaaaaaaaaaapcaaaaaadaaaaaaaaaaaaaaaaaaaaaaacaaaaaaaeaaaaaaacaaaaaaadaaaaaaalaaaaaaaeaaaaaaaeaaaaaaaeaaaaaaapcaaaaaafaaaaaaaaaaaaaaaaaaaaaaapcaaaaaagaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaafaaaaaaagaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaabaaaaaaaeaaaaaaaeaaaaaaahaaaaaaadaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaiaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaaiaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaajaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaajaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaamcaaaaaaeaaaaaaaaaaaaaaaaaaaebaepcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaajaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaajaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaamcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaajaaaaaaaaaaaaaaaaaaaaaaapcaaaaaakaaaaaaaaaaaaaaaaaaaaaaacaaaaaaajaaaaaaajaaaaaaakaaaaaaadcaaaaaahaaaaaaahaaaaaaajaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaaoaaaaaaahaaaaaaaiaaaaaaaiaaaaaaacaaaaaaafaaaaaaafaaaaaaagaaaaaaadaaaaaaahaaaaaaahaaaaaaafaaaaaaanaaaaaaaiaaaaaaaiaaaaaaaiaaaaaaacaaaaaaacaaaaaaacaaaaaaadaaaaaaadaaaaaaaiaaaaaaaiaaaaaaacaaaaaaacaaaaaaahaaaaaaahaaaaaaaiaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaadaaaaaaaaaaaaaaaaaaaaaaabaaaaaaapcaaaaaabaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaacaaaaaaaeaaaaaaaeaaaaaaahaaaaaaalaaaaaaaeaaaaaaaeaaaaaaaeaaaaaaadaaaaaaabaaaaaaabaaaaaaaeaaaaaaapcaaaaaaeaaaaaaaaaaaaaaaaaaaaaaapcaaaaaahaaaaaaaaaaaaaaaaaaaaaaapcaaaaaaiaaaaaaaaaaaaaaaaaaaaaaacaaaaaaahaaaaaaahaaaaaaaiaaaaaaalaaaaaaahaaaaaaahaaaaaaahaaaaaaadaaaaaaaeaaaaaaaeaaaaaaahaaaaaaabaaaaaaabaaaaaaabaaaaaaaeaaaaaaabaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaocaaaaaaaaaaaaaaaaaaaaaaaaaaaaaababaaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaachfeaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaachfeaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaachfeaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachcaaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaaegbaaaaaaaaaaaaaaachmcaaaaaaaaaaaaaachbdaaaaaaaaaaaaaachldaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaeglaaaaaaaaaaaaaaahaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaahaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaaaaaaaaaadaaaaaaaaaaaaaaaeaaaaaaaaaaaaaaafaaaaaaaaaaaaaaagaaaaaaaaaaaaaaahaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaaegoaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaaegdaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaaegnaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaachoaaaaaaaaaaaaaaaegeaaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaalaaaaaaaghpfdgngegpfdhehbgehfgchmaaaaaaaaaaaaaaaegdcaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaalaaaaaaaghfgmgpfmgbghgpfehbgfhegmcaaaaaaaaaaaaaachkjjjjjjjjjjjjkpdegeaaaaaaaaaaaaaaaegcaaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaapaaaaaaapgngfghgbgpfdgngegpfdhehbgehfgchoaaaaaaaaaaaaaaaegdcaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaanaaaaaaapgngfghgbgpfmgbghgpfehbgfhchcfaaaaaaaaaaaaaachfbaaaaaaaaaaaaaachibaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaeghbaaaaaaaaaaaaaadbaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaadbaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaaaaaaaaaadaaaaaaaaaaaaaaaeaaaaaaaaaaaaaaafaaaaaaaaaaaaaaagaaaaaaaaaaaaaaahaaaaaaaaaaaaaaaiaaaaaaaaaaaaaaajaaaaaaaaaaaaaaakaaaaaaaaaaaaaaalaaaaaaaaaaaaaaamaaaaaaaaaaaaaaanaaaaaaaaaaaaaaaoaaaaaaaaaaaaaaapaaaaaaaaaaaaaaaabaaaaaaaaaaaaaabbaaaaaaaaaaaaaacbaaaaaaaaaaaaaadbaaaaaaaaaaaaaachfaaaaaaaaaaaaaaachhaaaaaaaaaaaaaaachkaaaaaaaaaaaaaaachnaaaaaaaaaaaaaaachpaaaaaaaaaaaaaaachgbaaaaaaaaaaaaaachjbaaaaaaaaaaaaaachcbaaaaaaaaaaaaaachcaaaaaaaaaaaaaaachdaaaaaaaaaaaaaaachiaaaaaaaaaaaaaaachlaaaaaaaaaaaaaaachebaaaaaaaaaaaaaachhbaaaaaaaaaaaaaachabaaaaaaaaaaaaaachbbaaaaaaaaaaaaaachdbaaaaaaaaaaaaaachbfaaaaaaaaaaaaaachhfaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaegeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaaeggaaaaaaaaaaaaaaacaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaacaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaacaaaaaaaaaaaaaaachfbaaaaaaaaaaaaaachibaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachkeaaaaaaaaaaaaaahaaaaaaaaaaaaaaacheaaaaaaaaaaaaaaachgaaaaaaaaaaaaaaachjaaaaaaaaaaaaaaachmaaaaaaaaaaaaaaachoaaaaaaaaaaaaaaachpeaaaaaaaaaaaaaachffaaaaaaaaaaaaaadachgeaaaaaaaaaaaaaachkeaaaaaaaaaaaaaahaaaaaaaaaaaaaaaegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfadegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfbdegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfcdegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfddegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfedegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpffdegpcaaaaaaaaaaaaaagaaaaaaaihegpgehpfgddachgeaaaaaaaaaaaaaachlfaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "t": [],
         "t0": null,
         "t_label": "t",
-        "u": "SX([a_lin, alpha])",
+        "u": "SX([a_cmd, alpha_cmd])",
         "u_labels": [
             "u0",
             "u1"
         ],
-        "x": "SX([x, y, theta, v, omega])",
+        "x": "SX([x, y, theta, v, omega, v_cmd_state, omega_cmd_state])",
         "x_labels": [
             "x0",
             "x1",
             "x2",
             "x3",
-            "x4"
+            "x4",
+            "x5",
+            "x6"
         ],
-        "xdot": "SX([xdot_0, xdot_1, xdot_2, xdot_3, xdot_4])",
+        "xdot": "SX([xdot_0, xdot_1, xdot_2, xdot_3, xdot_4, xdot_5, xdot_6])",
         "z": "SX(0x1)"
     },
     "name": "wheelleg_nmpc",
@@ -361,10 +358,13 @@
         0.1,
         20.0,
         0.5,
-        50.0
+        50.0,
+        0.6,
+        0.6
     ],
     "problem_class": "OCP",
     "ros_opts": null,
+    "shared_lib_ext": ".so",
     "simulink_opts": null,
     "solver_options": {
         "N_horizon": 50,
@@ -488,6 +488,7 @@
         "nlp_solver_type": "SQP_RTI",
         "nlp_solver_warm_start_first_qp": false,
         "nlp_solver_warm_start_first_qp_from_nlp": false,
+        "num_threads_in_batch_solve": 1,
         "print_level": 0,
         "qp_solver": "PARTIAL_CONDENSING_HPIPM",
         "qp_solver_cond_N": 25,
@@ -514,7 +515,6 @@
         "rti_log_only_available_residuals": 0,
         "rti_log_residuals": 0,
         "search_direction_mode": "NOMINAL_QP",
-        "sens_forw_p": false,
         "shooting_nodes": [
             0.0,
             0.03,

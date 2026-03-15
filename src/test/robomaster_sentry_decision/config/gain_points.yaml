@@ -1,0 +1,16 @@
+gain_points:
+  red_base_gain:
+    position: [412.0, 754.0]
+    defense_gain: 1.0
+  red_outpost_gain:
+    position: [1172.0, 378.0]
+    defense_gain: 1.0
+  red_fortress_gain:
+    position: [690.0, 746.0]
+    defense_gain: 1.0
+  central_highland_gain:
+    position: [1220.0, 1092.0]
+    defense_gain: 0.5
+  red_trapezoid_gain:
+    position: [430.0, 1108.0]
+    defense_gain: 1.0

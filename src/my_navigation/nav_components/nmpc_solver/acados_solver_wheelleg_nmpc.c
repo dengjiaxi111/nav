@@ -243,7 +243,7 @@ static ocp_nlp_dims* wheelleg_nmpc_acados_create_setup_dimensions(wheelleg_nmpc_
     nsbx[0] = 0;
     ns[0] = NS0;
     
-    nbxe[0] = 5;
+    nbxe[0] = 7;
     
     ny[0] = NY0;
     nh[0] = NH0;
@@ -352,8 +352,6 @@ void wheelleg_nmpc_acados_create_setup_functions(wheelleg_nmpc_solver_capsule* c
             MAP_CASADI_FNC(expl_vde_forw[i], wheelleg_nmpc_expl_vde_forw);
         }
 
-        
-
         capsule->expl_ode_fun = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
         for (int i = 0; i < N; i++) {
             MAP_CASADI_FNC(expl_ode_fun[i], wheelleg_nmpc_expl_ode_fun);
@@ -429,6 +427,8 @@ void wheelleg_nmpc_acados_create_set_default_parameters(wheelleg_nmpc_solver_cap
     p[14] = 20;
     p[15] = 0.5;
     p[16] = 50;
+    p[17] = 0.6;
+    p[18] = 0.6;
 
     for (int i = 0; i <= N; i++) {
         wheelleg_nmpc_acados_update_params(capsule, i, p, NP);
@@ -542,7 +542,6 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     for (int i = 0; i < N; i++)
     {
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_vde_forw", &capsule->expl_vde_forw[i]);
-        
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_ode_fun", &capsule->expl_ode_fun[i]);
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_vde_adj", &capsule->expl_vde_adj[i]);
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_ode_hess", &capsule->expl_ode_hess[i]);
@@ -584,6 +583,8 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     idxbx0[2] = 2;
     idxbx0[3] = 3;
     idxbx0[4] = 4;
+    idxbx0[5] = 5;
+    idxbx0[6] = 6;
 
     double* lubx0 = calloc(2*NBX0, sizeof(double));
     double* lbx0 = lubx0;
@@ -596,12 +597,14 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     free(idxbx0);
     free(lubx0);
     // idxbxe_0
-    int* idxbxe_0 = malloc(5 * sizeof(int));
+    int* idxbxe_0 = malloc(7 * sizeof(int));
     idxbxe_0[0] = 0;
     idxbxe_0[1] = 1;
     idxbxe_0[2] = 2;
     idxbxe_0[3] = 3;
     idxbxe_0[4] = 4;
+    idxbxe_0[5] = 5;
+    idxbxe_0[6] = 6;
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "idxbxe", idxbxe_0);
     free(idxbxe_0);
 
@@ -649,6 +652,8 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     int* idxbx = malloc(NBX * sizeof(int));
     idxbx[0] = 3;
     idxbx[1] = 4;
+    idxbx[2] = 5;
+    idxbx[3] = 6;
     double* lubx = calloc(2*NBX, sizeof(double));
     double* lbx = lubx;
     double* ubx = lubx + NBX;
@@ -656,6 +661,10 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     ubx[0] = 1.5;
     lbx[1] = -3;
     ubx[1] = 3;
+    lbx[2] = -1.5;
+    ubx[2] = 1.5;
+    lbx[3] = -3;
+    ubx[3] = 3;
 
     for (int i = 1; i < N; i++)
     {
@@ -1010,7 +1019,7 @@ int wheelleg_nmpc_acados_update_params(wheelleg_nmpc_solver_capsule* capsule, in
 {
     int solver_status = 0;
 
-    int casadi_np = 17;
+    int casadi_np = 19;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);
@@ -1081,14 +1090,12 @@ int wheelleg_nmpc_acados_free(wheelleg_nmpc_solver_capsule* capsule)
     for (int i = 0; i < N; i++)
     {
         external_function_external_param_casadi_free(&capsule->expl_vde_forw[i]);
-        
         external_function_external_param_casadi_free(&capsule->expl_ode_fun[i]);
         external_function_external_param_casadi_free(&capsule->expl_vde_adj[i]);
         external_function_external_param_casadi_free(&capsule->expl_ode_hess[i]);
     }
     free(capsule->expl_vde_adj);
     free(capsule->expl_vde_forw);
-    
     free(capsule->expl_ode_fun);
     free(capsule->expl_ode_hess);
 
