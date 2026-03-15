@@ -5,7 +5,7 @@
   ros__parameters:
     # ==================== 地图与初始位姿 ====================
     # 官方提供的 PCD 地图文件路径（绝对路径）
-    map_file: "/home/li/navigation2026/2025RMUC_real.pcd"
+    map_file: "/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd"
 
     # 手动设置初始位姿（如果 auto_initialize=true）
     initial_x: 0.0

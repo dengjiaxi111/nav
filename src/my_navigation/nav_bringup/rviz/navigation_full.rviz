@@ -8,12 +8,7 @@ Panels:
         - /Status1
         - /PointCloud21/Topic1
         - /Map1/Topic1
-        - /TF1
-        - /Path1
-        - /MarkerArray1
         - /MarkerArray1/Topic1
-        - /Path2
-        - /Current Scan1
       Splitter Ratio: 0.5
     Tree Height: 583
   - Class: rviz_common/Selection
@@ -33,7 +28,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: Current Scan
+    SyncSource: NDT Aligned Scan
 Visualization Manager:
   Class: ""
   Displays:
@@ -240,8 +235,7 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        prefilter_cloud_spheres: true
-        stair_roi: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -322,7 +316,7 @@ Visualization Manager:
       Color: 0; 170; 255
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -342,9 +336,9 @@ Visualization Manager:
         Value: /localization/aligned_scan
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/Marker
-      Enabled: true
+      Enabled: false
       Name: NDT Fitness Marker
       Namespaces:
         {}
@@ -355,7 +349,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /localization/fitness_marker
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: false
       Autocompute Value Bounds:
@@ -442,9 +436,9 @@ Visualization Manager:
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.6453821063041687
-        Y: -1.990080714225769
-        Z: -13.430706977844238
+        X: -0.24146001040935516
+        Y: 1.3304444551467896
+        Z: -13.433226585388184
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -453,7 +447,7 @@ Visualization Manager:
       Pitch: 1.5697963237762451
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.1603853702545166
+      Yaw: 1.5853849649429321
     Saved: ~
 Window Geometry:
   Displays:

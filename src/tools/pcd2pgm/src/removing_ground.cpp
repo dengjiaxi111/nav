@@ -21,6 +21,8 @@ private:
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud1_;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud2_;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud3_;
     pcl::PointIndicesPtr ground_;
     pcl::PointCloud<pcl::Normal>::Ptr normals_;
     pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne_;
@@ -37,6 +39,8 @@ public:
     {
         cloud_   = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         cloud1_   = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        cloud2_   = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        cloud3_   = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         ground_  = pcl::make_shared<pcl::PointIndices>();
 
         normals_ = pcl::make_shared<pcl::PointCloud<pcl::Normal>>();
@@ -55,25 +59,44 @@ public:
             return ;
         }
         RCLCPP_INFO(this->get_logger(), "file read");
-        //先进行坐标变换，再过滤
-
-        /* //先构造车体中心在地面的投影到雷达坐标系的变换，再求逆
-        // 注意，此处的变换需要与livox_left到base_link的变换一致
-        Eigen::Vector3d translation(0.045, 0.123, 0.20);
-        // 旋转矩阵（通过欧拉角构造）
-        Eigen::Matrix3d rotation;
-        rotation = Eigen::AngleAxisd(-M_PI/4, Eigen::Vector3d::UnitX())  // Roll
-                * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())  // Pitch
-                * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitZ()); //Yaw
-        Eigen::Affine3d transform = Eigen::Affine3d::Identity();
-        transform.translate(translation);
-        transform.rotate(rotation);
+        // 先进行坐标变换，再过滤（参数与 static_transform_publisher 一致）
+        Eigen::Vector3d translation1(0.0, 0.0, 0.0);
+        Eigen::Matrix3d rotation1;
+        rotation1 = Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitX())      // Roll
+            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())             // Pitch
+            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitZ());            // Yaw
+        Eigen::Affine3d transform1 = Eigen::Affine3d::Identity();
+        transform1.translate(translation1);
+        transform1.rotate(rotation1);
         RCLCPP_INFO(this->get_logger(), "start trans");
-        pcl::transformPointCloud(*cloud_, *cloud1_, transform);
+        pcl::transformPointCloud(*cloud_, *cloud2_, transform1);
+        RCLCPP_INFO(this->get_logger(), "end trans");
 
-        RCLCPP_INFO(this->get_logger(), "end trans"); */
+        Eigen::Vector3d translation2(0.0, 0.0, 0.0);
+        Eigen::Affine3d transform2 = Eigen::Affine3d::Identity();
+        transform2.translate(translation2);
+        Eigen::Matrix3d rotation2;
+        rotation2 = Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX())      // Roll
+            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())             // Pitch
+            * Eigen::AngleAxisd(-1.5708, Eigen::Vector3d::UnitZ());        // Yaw
+        transform2.rotate(rotation2);
+        RCLCPP_INFO(this->get_logger(), "start trans");
+        pcl::transformPointCloud(*cloud2_, *cloud3_, transform2);
+        RCLCPP_INFO(this->get_logger(), "end trans");
 
-        ne_.setInputCloud(cloud_); 
+        Eigen::Vector3d translation3(0.2, 0.0, 0.05);
+        Eigen::Matrix3d rotation3;
+        rotation3 = Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX())      // Roll
+            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())             // Pitch
+            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitZ());            // Yaw
+        Eigen::Affine3d transform3 = Eigen::Affine3d::Identity();
+        transform3.translate(translation3);
+        transform3.rotate(rotation3);
+        RCLCPP_INFO(this->get_logger(), "start trans");
+        pcl::transformPointCloud(*cloud3_, *cloud1_, transform3);
+        RCLCPP_INFO(this->get_logger(), "end trans");
+
+        ne_.setInputCloud(cloud1_); 
         ne_.setSearchMethod(tree_);
         ne_.setRadiusSearch(0.1);
         ne_.compute(*normals_);
@@ -89,7 +112,7 @@ public:
             j++;
         }
 
-        extract_.setInputCloud(cloud_); 
+        extract_.setInputCloud(cloud1_); 
         extract_.setIndices(Indices_);
         extract_.setNegative(false); // 设置提取反操作以删除indices中的点
         extract_.filter(*output_); // 最后得到的就是删除梯度过小的点的点云数据

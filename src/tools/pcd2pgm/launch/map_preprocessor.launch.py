@@ -13,8 +13,8 @@ def generate_launch_description():
                 {'voxel_leaf': 0.1},
                 {'z_min': -0.3},
                 {'z_max': 25.0},
-                {'lidar_pos': [0.045, 0.123, 0.31]},
-                {'lidar_rot': [-0.383, 0.0, 0.0, 0.924]}
+                {'lidar_pos': [0.2, 0.0, 0.1]},
+                {'lidar_rot': [-0.1749, -0.1749, -0.6851, -0.6851]}  # 对应 RPY(0.5, 0.0, 1.5708)，顺序为 [x,y,z,w]
             ],
             output='screen'
         )
