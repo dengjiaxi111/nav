@@ -69,6 +69,9 @@ add_executable(nav_server ${NAV_SERVER_SOURCES})
 ament_target_dependencies(nav_server ${DEPS})
 target_link_libraries(nav_server yaml-cpp)
 
+add_executable(two_point_patrol src/two_point_patrol_node.cpp)
+ament_target_dependencies(two_point_patrol ${DEPS})
+
 target_include_directories(nav_server
   PRIVATE
     /usr/local/include
@@ -86,7 +89,7 @@ if(HAS_NMPC)
     )
 endif()
 
-install(TARGETS nav_server DESTINATION lib/${PROJECT_NAME})
+install(TARGETS nav_server two_point_patrol DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
 # 安装 NMPC 配置文件

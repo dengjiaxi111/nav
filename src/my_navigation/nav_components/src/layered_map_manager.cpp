@@ -47,9 +47,17 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
         return;
     }
 
-    if (stair_layer_cfg_.clear_perp_dist_m <= 0.0) {
-        RCLCPP_WARN(logger_, "stair_layer clear_perp_dist_m<=0, 自动修正为0.1m");
-        stair_layer_cfg_.clear_perp_dist_m = 0.1;
+    if (stair_layer_cfg_.clear_perp_dist_m < 0.0) {
+        RCLCPP_WARN(logger_, "stair_layer clear_perp_dist_m<0, 自动修正为0.0m");
+        stair_layer_cfg_.clear_perp_dist_m = 0.0;
+    }
+    if (stair_layer_cfg_.clear_perp_high_dist_m < -1e-9) {
+        RCLCPP_WARN(logger_, "stair_layer clear_perp_high_dist_m<0, 采用 clear_perp_dist_m");
+        stair_layer_cfg_.clear_perp_high_dist_m = -1.0;
+    }
+    if (stair_layer_cfg_.clear_perp_low_dist_m < -1e-9) {
+        RCLCPP_WARN(logger_, "stair_layer clear_perp_low_dist_m<0, 采用 clear_perp_dist_m");
+        stair_layer_cfg_.clear_perp_low_dist_m = -1.0;
     }
 
     rebuildStairLayerCache();
@@ -273,11 +281,35 @@ void LayeredMapManager::rebuildStairLayerCache() {
     }
 
     std::unordered_set<int> clear_idx_set;
-    clear_idx_set.reserve((bidir_black_cells.size() + oneway_black_cells.size()) * 4);
+    clear_idx_set.reserve((bidir_black_cells.size() + oneway_black_cells.size()) * 8);
 
     const int search_r = std::max(1, stair_layer_cfg_.pair_search_radius_cells);
-    const int clear_steps =
-        std::max(1, static_cast<int>(std::ceil(stair_layer_cfg_.clear_perp_dist_m / resolution_)));
+    const double clear_high_m = std::max(
+        0.0,
+        (stair_layer_cfg_.clear_perp_high_dist_m >= 0.0)
+            ? stair_layer_cfg_.clear_perp_high_dist_m
+            : stair_layer_cfg_.clear_perp_dist_m);
+    const double clear_low_m = std::max(
+        0.0,
+        (stair_layer_cfg_.clear_perp_low_dist_m >= 0.0)
+            ? stair_layer_cfg_.clear_perp_low_dist_m
+            : stair_layer_cfg_.clear_perp_dist_m);
+    const int clear_high_steps =
+        std::max(0, static_cast<int>(std::ceil(clear_high_m / resolution_)));
+    const int clear_low_steps =
+        std::max(0, static_cast<int>(std::ceil(clear_low_m / resolution_)));
+
+    auto add_clear_sample = [&](double wx, double wy, double nx, double ny) {
+        int global_idx = -1;
+        if (worldToGlobalIndex(wx, wy, global_idx)) {
+            clear_idx_set.insert(global_idx);
+            if (global_idx >= 0 && global_idx < static_cast<int>(stair_normal_valid_.size())) {
+                stair_normal_x_[global_idx] += static_cast<float>(nx);
+                stair_normal_y_[global_idx] += static_cast<float>(ny);
+                stair_normal_valid_[global_idx] = 1;
+            }
+        }
+    };
 
     auto process_stair_type = [&](const std::vector<std::pair<int, int>>& black_cells,
                                   uint8_t gray_class,
@@ -328,19 +360,26 @@ void LayeredMapManager::rebuildStairLayerCache() {
             nx /= norm;
             ny /= norm;
 
-            for (int s = 0; s <= clear_steps; ++s) {
-                double wx = bwx + nx * (s * resolution_);
-                double wy = bwy + ny * (s * resolution_);
-                int global_idx = -1;
-                if (worldToGlobalIndex(wx, wy, global_idx)) {
-                    clear_idx_set.insert(global_idx);
-                    if (global_idx >= 0 &&
-                        global_idx < static_cast<int>(stair_normal_valid_.size())) {
-                        stair_normal_x_[global_idx] += static_cast<float>(nx);
-                        stair_normal_y_[global_idx] += static_cast<float>(ny);
-                        stair_normal_valid_[global_idx] = 1;
-                    }
-                }
+            // 1) 完整清除已匹配的高低像素对：灰侧->黑侧连线（包含两端）
+            const double pair_dist = std::hypot(bwx - gwx, bwy - gwy);
+            const int pair_steps = std::max(1, static_cast<int>(std::ceil(pair_dist / resolution_)));
+            for (int s = 0; s <= pair_steps; ++s) {
+                const double t = static_cast<double>(s) / static_cast<double>(pair_steps);
+                const double wx = gwx + (bwx - gwx) * t;
+                const double wy = gwy + (bwy - gwy) * t;
+                add_clear_sample(wx, wy, nx, ny);
+            }
+
+            // 2) 沿法向扩展清除（高侧 +n，低侧 -n），距离可调
+            for (int s = 1; s <= clear_high_steps; ++s) {
+                const double wx = bwx + nx * (s * resolution_);
+                const double wy = bwy + ny * (s * resolution_);
+                add_clear_sample(wx, wy, nx, ny);
+            }
+            for (int s = 1; s <= clear_low_steps; ++s) {
+                const double wx = gwx - nx * (s * resolution_);
+                const double wy = gwy - ny * (s * resolution_);
+                add_clear_sample(wx, wy, nx, ny);
             }
 
             if (build_oneway_forbidden) {

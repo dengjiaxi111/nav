@@ -6,7 +6,7 @@ nav_server:
     use_static_map_odom: false
     
     # 地图路径由 navigation.launch.py 注入
-    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
+    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map3.pgm"
     control_rate: 50.0
     goal_timeout: 60.0
     goal_tolerance: 0.1
@@ -30,16 +30,16 @@ nav_server:
 
     # ============ 路径持久化/复用 ============
     path_io:
-      enable_save_planned_path: false  # true: 每次规划成功后保存平滑路径
+      enable_save_planned_path: false   # true: 每次规划成功后保存平滑路径
       planned_path_file: "/tmp/nav_planned_path.yaml"
-      use_prior_path: true            # true: 规划阶段优先读取先验路径并直接送入控制器
+      use_prior_path: false            # true: 规划阶段优先读取先验路径并直接送入控制器
       prior_path_file: "/tmp/nav_planned_path.yaml"
       validate_prior_path: false        # 读取后先做障碍物校验
       fallback_to_planner: false        # 先验路径不可用时回退到在线规划
     
     # ============ 分层地图系统 ============
     # 静态层: 从yaml/pgm文件加载的全局地图
-    enable_static_layer: false   # 启用静态层（默认启用）
+    enable_static_layer: true   # 启用静态层（默认启用）
     # 说明: 
     #   - 启用时: 从map_file加载pgm/yaml静态地图
     #   - 禁用时: 自动创建50x50m空白地图框架（纯动态SLAM模式）
@@ -52,9 +52,11 @@ nav_server:
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
-      enable_stair_layer: false
-      stair_mask_yaml: ""   # 由 navigation.launch.py 注入
-      stair_clear_perp_dist_m: 0.5
+      enable_stair_layer: true
+      stair_mask_yaml: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"   # 由 navigation.launch.py 注入
+      stair_clear_perp_dist_m: 0.05 # 台阶边沿清理距离(米)，清除台阶边沿一定宽度内的障碍物标记，防止过于靠近边沿导致误判无法通过
+      stair_clear_perp_high_dist_m: -1.0  # 高侧法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
+      stair_clear_perp_low_dist_m: -1.0   # 低侧反法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
       # 双向台阶像素范围（高侧=black，低侧=gray）
       black_min: 1
       black_max: 25
@@ -72,10 +74,17 @@ nav_server:
       # 台阶模式输出（发布 stair_mode: 0=正常, 1=准备/执行跨阶）
       enable_stair_mode_detection: true
       stair_mode_trigger_distance_m: 1.0
-      stair_mode_lookahead_dist_m: 3.0
+      stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
-      stair_mode_uphill_dot_min: 0.6  # 仅当路径方向·台阶法向 >= 该值时触发(低->高)
-      stair_mode_release_grace_cycles: 5
+      stair_mode_uphill_dot_min: 0.6  # 仅当路径方向·台阶法向 <= -该值时触发(上台阶)
+      stair_mode_release_grace_cycles: 2
+      # stair_mode=1 时采用固定速度，越过台阶段后自动回到 NMPC
+      enable_stair_fixed_velocity_strategy: true
+      stair_fixed_velocity_trigger_distance_m: 1.2  # 固定速度启用距离(米)，可与 stair_mode_trigger_distance_m 分离
+      stair_fixed_linear_vel: 1.4
+      stair_fixed_heading_kp: 1.8
+      stair_fixed_max_angular_vel: 0.8
+      stair_fixed_heading_deadband: 0.05
     
     # ============ 地图更新性能日志 ============
     enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)
@@ -145,15 +154,15 @@ nav_server:
       # 下方 Q/R/ESDF/contouring 参数已接入运行时注入，修改 YAML 可直接生效
       
       # === 运动约束 ===
-      max_linear_vel: 2.5        # 最大线速度 (m/s) 
-      max_angular_vel: 3.0       # 最大角速度 (rad/s)
-      max_linear_accel: 2.0      # 最大线加速度 (m/s²)
+      max_linear_vel: 2.8        # 最大线速度 (m/s) 
+      max_angular_vel: 3.5       # 最大角速度 (rad/s)
+      max_linear_accel: 1.0      # 最大线加速度 (m/s²)
       max_angular_accel: 4.0     # 最大角加速度 (rad/s²) 
       allow_reverse: false       # 倒车
       
       # === 局部参考轨迹提取 ===
       horizon_length: 1.2        # 前向提取距离 (米) - 缩短以增强近端跟踪
-      desired_velocity: 1.5      # 期望跟踪速度 (m/s) - 降低以更稳定
+      desired_velocity: 2.2      # 期望跟踪速度 (m/s) - 降低以更稳定
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_decel_start_dist: 2.5  # 距终点开始减速距离 (m)
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
@@ -163,14 +172,14 @@ nav_server:
       goal_speed_guard_abs_floor: 0.5    # 安全刹车最小减速度 (m/s^2)
       pivot_turn_heading_thresh: 1.57  # 航向误差>该值时原地转向 (rad)
       heading_slowdown_start: 0.785       # 航向误差>该值开始降速 (rad)
-      heading_slowdown_min_factor: 0.1  # 航向降速最小倍率
+      heading_slowdown_min_factor: 0.3  # 航向降速最小倍率
       enable_curvature_speed_decay: true  # 高曲率路段启用参考速度衰减
-      curvature_decay_kappa_ref: 0.4      # 曲率参考值(1/m)，越小衰减越明显
-      curvature_decay_min_factor: 0.3    # 曲率衰减最小倍率
+      curvature_decay_kappa_ref: 5.0      # 曲率参考值(1/m)，越小衰减越明显
+      curvature_decay_min_factor: 0.9    # 曲率衰减最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
-      vel_lag_tau: 0.6           # 线速度一阶滞后时间常数(s)
-      omega_lag_tau: 0.6         # 角速度一阶滞后时间常数(s)
-      lateral_error_threshold: 0.15  # 横向误差阈值 (m)，超过时启用速度缩减策略
+      vel_lag_tau: 0.5           # 线速度一阶滞后时间常数(s)
+      omega_lag_tau: 0.15         # 角速度一阶滞后时间常数(s)
+      lateral_error_threshold: 0.1  # 横向误差阈值 (m)，超过时启用速度缩减策略
 
       # === 代价权重（运行时生效） ===
       Q_position: 25.0           # 位置(x,y)跟踪权重
@@ -182,7 +191,7 @@ nav_server:
       # === ESDF/轮廓代价（运行时生效） ===
       esdf_weight: 1e-3         # ESDF 违反代价权重
       esdf_safe_dist: 0.8        # ESDF 安全距离阈值(m)
-      contouring_weight: 1e-3    # 路径横向偏离(contouring)权重
+      contouring_weight: 0.1    # 路径横向偏离(contouring)权重
 
       # === 权重缩放/ESDF开关（运行时生效） ===
       terminal_multiplier: 2.0   # 终端代价
@@ -203,7 +212,7 @@ nav_server:
     # 脱困系统 (ESCAPING 状态)
     escape:
       # 触发条件
-      trigger_costmap_threshold: 98   # Costmap 触发阈值，起点 cost >= 此值时触发脱困
+      trigger_costmap_threshold: 99   # Costmap 触发阈值，起点 cost >= 此值时触发脱困
       target_safe_esdf: 0.3           # 目标 ESDF 距离 (m)，搜索大于此值的安全点
       
       # 搜索参数
@@ -217,3 +226,14 @@ nav_server:
       
       # 超时保护
       timeout: 10.0                   # 脱困最大时长 (秒)，超时进入 RECOVERY
+
+two_point_patrol:
+  ros__parameters:
+    goal_topic: "goal_pose"                 # RViz 2D Goal 默认话题
+    navigate_action_name: "navigate"        # nav_server action 名称
+    goal_frame: "map"
+    check_period_s: 0.1
+    near_goal_distance_m: 0.3               # 距目标小于该值即视为“到达附近”
+    switch_delay_s: 0.8                      # 到达附近后延时切换到另一个目标
+    save_file: "/tmp/nav_two_goal_points.txt"
+    auto_start: true                        # true: 读取到2点后自动开始循环

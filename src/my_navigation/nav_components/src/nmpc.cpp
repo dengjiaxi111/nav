@@ -540,8 +540,9 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     // 查找最近点并剪枝:只保留从最近点到终点的路径
     nearest_idx_ = findNearestPathPoint(current_pose);
     
-    // 提前终止:如果最近点已经接近路径末尾,直接使用剩余路径
-    size_t pruned_start_idx = (nearest_idx_ > 5) ? (nearest_idx_ - 5) : 0;
+    // 提前终止: 如果最近点已经接近路径末尾，保留一个小回看窗口，
+    // 防止最近点偶发前跳导致“剩余距离骤减->参考速度骤降”。
+    size_t pruned_start_idx = (nearest_idx_ > 8) ? (nearest_idx_ - 8) : 0;
     
     // 沿路径前向采样 N+1 个点 (在 odom 坐标系下)
     double dt = T_horizon_ / N_horizon_;
@@ -549,8 +550,12 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     // 计算到终点的总距离（用于渐进减速）
     double total_dist_to_goal = 0.0;
     const auto& goal_pos = global_path_.poses.back().pose.position;
-    const auto& nearest_pos = global_path_.poses[nearest_idx_].pose.position;
-    for (size_t k = nearest_idx_; k < global_path_.poses.size() - 1; ++k) {
+    const double dist_to_goal_now = std::hypot(
+        goal_pos.x - current_pose.position.x,
+        goal_pos.y - current_pose.position.y);
+    const double terminal_ref_v =
+        (dist_to_goal_now > xy_tolerance_) ? params_.goal_crawl_speed : 0.0;
+    for (size_t k = pruned_start_idx; k < global_path_.poses.size() - 1; ++k) {
         auto& p1 = global_path_.poses[k].pose.position;
         auto& p2 = global_path_.poses[k + 1].pose.position;
         total_dist_to_goal += std::hypot(p2.x - p1.x, p2.y - p1.y);
@@ -565,7 +570,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     }
     
     // 记住上一个找到的索引，确保参考轨迹单调递增
-    int last_found_idx = nearest_idx_;
+    int last_found_idx = static_cast<int>(pruned_start_idx);
     double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
     
     const double robot_theta_now = tf2::getYaw(current_pose.orientation);
@@ -736,7 +741,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 last.position.x, 
                 last.position.y,
                 tf2::getYaw(last.orientation),
-                0.0,  // 终点速度为0
+                terminal_ref_v,
                 0.0
             });
             // 到达终点后，后续所有参考点都是终点
@@ -751,7 +756,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
             last.position.x, 
             last.position.y,
             tf2::getYaw(last.orientation),
-            0.0,
+            terminal_ref_v,
             0.0
         });
     }

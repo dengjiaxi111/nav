@@ -31,7 +31,7 @@
     # 在三阶段 NDT 前，以用户给定 yaw 为中心，在 [yaw0-Δ, yaw0+Δ] 范围批量尝试候选朝向，
     # 用粗分辨率 NDT 少量迭代快速评分，选最优 yaw 作为三阶段 NDT 的初始值。
     # 🔴 调参提示：step_deg 越小越精确但越慢。Δ=15°/step=2° → 15个候选，约 2~4 秒。
-    yaw_seed_enable: true             # 是否启用 yaw 多假设验证
+    yaw_seed_enable: false             # 是否启用 yaw 多假设验证
     yaw_seed_half_range_deg: 8.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
     yaw_seed_step_deg: 1.0            # 搜索步长（度），越小越精确
     yaw_seed_ndt_resolution: 1.20     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）

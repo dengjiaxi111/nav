@@ -130,6 +130,9 @@ public:
         bool enable{false};
         std::string mask_yaml_path{};
         double clear_perp_dist_m{0.4};
+        // 兼容旧参数：<0 时分别回退到 clear_perp_dist_m
+        double clear_perp_high_dist_m{-1.0};
+        double clear_perp_low_dist_m{-1.0};
         int black_min{0};
         int black_max{40};
         int gray_min{90};
