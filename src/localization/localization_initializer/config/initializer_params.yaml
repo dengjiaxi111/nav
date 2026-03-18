@@ -96,7 +96,3 @@
     filter_z_min: -0.52   # 试试改成 0.1，过滤掉整个下半部分干扰
     filter_z_max: 2.5     # 试试改成 1.5，过滤掉高层杂点
 
-    # ==================== Patchwork++ 地面分割 ====================
-    patchwork_enable: false
-    patchwork_sensor_height: 0.18
-    patchwork_verbose: false

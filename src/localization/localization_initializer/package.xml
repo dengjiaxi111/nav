@@ -32,7 +32,6 @@
   
   <!-- 自建包 -->
   <depend>pclomp</depend>
-  <depend>patchworkpp</depend>
   
   <!-- 系统依赖 -->
   <build_depend>eigen</build_depend>

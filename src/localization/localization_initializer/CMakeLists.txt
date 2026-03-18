@@ -46,8 +46,6 @@ find_package(Eigen3 REQUIRED)
 # pclomp (自建包)
 find_package(PCLOMP REQUIRED)
 
-# Patchwork++ (地面分割)
-find_package(patchworkpp REQUIRED)
 
 # ==================== 可执行文件 ====================
 add_executable(localization_initializer_node
@@ -64,7 +62,6 @@ target_include_directories(localization_initializer_node PUBLIC
 target_link_libraries(localization_initializer_node
   ${PCL_LIBRARIES}
   pclomp::registration
-  patchworkpp::ground_seg_cores
 )
 
 ament_target_dependencies(localization_initializer_node

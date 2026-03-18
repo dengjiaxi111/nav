@@ -43,8 +43,6 @@
 #include <pclomp/ndt_omp.h>
 #include <pclomp/gicp_omp.h>
 
-#include <patchwork/patchworkpp.h>
-
 #include <Eigen/Dense>
 #include <chrono>
 #include <random>
@@ -102,11 +100,6 @@ public:
         declare_parameter("filter_y_max", 100.0);               // Y 轴最大值（米），过滤右侧
         declare_parameter("filter_z_min", -1.0);                // Z 轴最小值（米），过滤地面/低处
         declare_parameter("filter_z_max", 3.0);                 // Z 轴最大值（米），过滤天花板
-        
-        // Patchwork++ 地面分割参数
-        declare_parameter("patchwork_enable", true);                          // 是否启用 Patchwork++ 地面分割
-        declare_parameter("patchwork_sensor_height", 0.5);                    // 传感器离地高度（米）
-        declare_parameter("patchwork_verbose", false);                        // 是否输出详细信息
         
         // 动态物体过滤参数
         declare_parameter("dynamic_filter_enable", true);                     // 是否启用动态物体过滤
@@ -203,21 +196,6 @@ public:
         
         publishMapCloud();
         
-        // ==================== 初始化 Patchwork++ ====================
-        bool patchwork_enable = get_parameter("patchwork_enable").as_bool();
-        if (patchwork_enable) {
-            patchwork::Params patchwork_params;
-            patchwork_params.verbose = get_parameter("patchwork_verbose").as_bool();
-            patchwork_params.sensor_height = get_parameter("patchwork_sensor_height").as_double();
-            patchwork_params.enable_RNR = false;  // 禁用 RNR（Livox 雷达的 intensity 格式不兼容）
-            patchwork_params.enable_RVPF = true;  // 启用垂直结构滤除
-            patchwork_params.enable_TGR = true;   // 启用地形变化鲁棒性
-            
-            patchwork_ = std::make_unique<patchwork::PatchWorkpp>(patchwork_params);
-            RCLCPP_INFO(get_logger(), "✅ Patchwork++ 地面分割已初始化 (传感器高度=%.2fm)", 
-                       patchwork_params.sensor_height);
-        }
-        
         RCLCPP_INFO(get_logger(), "✅ 定位初始化节点启动成功");
         if (!auto_initialize_) {
             RCLCPP_INFO(get_logger(), "⏳ 请在 RViz 中使用 '2D Pose Estimate' 工具设置初始位姿");
@@ -234,12 +212,7 @@ public:
         if (map_publish_timer_) {
             map_publish_timer_->cancel();
         }
-        
-        // 显式释放 Patchwork++（避免退出时崩溃）
-        if (patchwork_) {
-            patchwork_.reset();
-        }
-        
+
         RCLCPP_INFO(get_logger(), " 定位初始化节点已安全关闭");
     }
     
@@ -378,11 +351,10 @@ private:
         
         RCLCPP_INFO(get_logger(), "   📦 降采样: %zu → %zu 点", scan_cloud->size(), scan_downsampled->size());
         
-        // Patchwork++ 地面分割（在特征提取之前）
-        pcl::PointCloud<pcl::PointXYZI>::Ptr processed_cloud = removeGroundPatchwork(scan_downsampled);
-        
-    // 仅进行空间过滤（移除特征提取与墙壁过滤）
-    processed_cloud = applySpatialFilter(processed_cloud);
+        pcl::PointCloud<pcl::PointXYZI>::Ptr processed_cloud = scan_downsampled;
+
+        // 仅进行空间过滤（移除特征提取与墙壁过滤）
+        processed_cloud = applySpatialFilter(processed_cloud);
         
         // Yaw 多假设验证（在三阶段 NDT 前搜索最优 yaw）
         Eigen::Matrix4f optimized_guess = yawSeedSearch(processed_cloud, user_initial_guess_);
@@ -500,21 +472,6 @@ private:
         RCLCPP_INFO(get_logger(), "   ✅ 点云处理完成: %zu 点 (已完成空间过滤+动态过滤+降采样)", 
                    processed_cloud->size());
         publishStatus("开始配准 (使用处理后的累积点云)...");
-        
-        // Patchwork++ 地面分割（可选,通常已被空间过滤替代）
-        bool patchwork_enable = get_parameter("patchwork_enable").as_bool();
-        if (patchwork_enable) {
-            RCLCPP_INFO(get_logger(), "   🔧 应用 Patchwork++ 地面分割...");
-            auto patchwork_cloud = removeGroundPatchwork(processed_cloud);
-            
-            // 安全检查
-            if (!patchwork_cloud || patchwork_cloud->empty()) {
-                RCLCPP_WARN(get_logger(), "⚠️ Patchwork++ 返回空点云，使用原点云");
-            } else {
-                processed_cloud = patchwork_cloud;
-                RCLCPP_INFO(get_logger(), "   ✅ Patchwork++ 完成: %zu 点", processed_cloud->size());
-            }
-        }
         
         // Yaw 多假设验证（在三阶段 NDT 前搜索最优 yaw）
         Eigen::Matrix4f optimized_guess = yawSeedSearch(processed_cloud, user_initial_guess_);
@@ -737,97 +694,6 @@ private:
     ) {
         // 不做任何过滤，直接返回原始点云
         return scan_cloud;
-    }
-    
-    // ==================== Patchwork++ 地面分割 ====================
-    pcl::PointCloud<pcl::PointXYZI>::Ptr removeGroundPatchwork(
-        const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud
-    ) {
-        bool patchwork_enable = get_parameter("patchwork_enable").as_bool();
-        
-        if (!patchwork_enable || !patchwork_) {
-            return cloud;  // 未启用或未初始化
-        }
-        
-        if (cloud->empty()) {
-            RCLCPP_WARN(get_logger(), "⚠️ 输入点云为空，跳过地面分割");
-            return cloud;
-        }
-        
-        try {
-            auto start = std::chrono::high_resolution_clock::now();
-            
-            // PCL → Eigen
-            Eigen::MatrixXf cloud_matrix(cloud->size(), 3);
-            std::vector<float> intensity_backup(cloud->size());  // 备份 intensity
-            
-            for (size_t i = 0; i < cloud->size(); ++i) {
-                cloud_matrix(i, 0) = cloud->points[i].x;
-                cloud_matrix(i, 1) = cloud->points[i].y;
-                cloud_matrix(i, 2) = cloud->points[i].z;
-                intensity_backup[i] = cloud->points[i].intensity;
-            }
-            
-            // 执行地面分割
-            patchwork_->estimateGround(cloud_matrix);
-            
-            // 🔧 关键修复：立即复制索引到 std::vector（避免 Eigen 生命周期问题）
-            Eigen::VectorXi eigen_indices = patchwork_->getNongroundIndices();
-            
-            if (eigen_indices.size() == 0) {
-                RCLCPP_WARN(get_logger(), "⚠️ Patchwork++ 没有返回非地面点，使用原始点云");
-                return cloud;
-            }
-            
-            // 立即复制到 std::vector，完全脱离 Patchwork++ 内存
-            std::vector<int> nonground_indices(eigen_indices.size());
-            for (int i = 0; i < eigen_indices.size(); ++i) {
-                nonground_indices[i] = eigen_indices(i);
-            }
-            // eigen_indices 不再使用，可以安全释放
-            
-            // 深拷贝点云
-            pcl::PointCloud<pcl::PointXYZI>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZI>());
-            filtered->points.resize(nonground_indices.size());
-            filtered->width = nonground_indices.size();
-            filtered->height = 1;
-            filtered->is_dense = false;
-            
-            // 深拷贝 header
-            filtered->header.stamp = cloud->header.stamp;
-            filtered->header.frame_id = std::string(cloud->header.frame_id);
-            filtered->header.seq = cloud->header.seq;
-            
-            // 使用索引复制点（保留 intensity）
-            for (size_t i = 0; i < nonground_indices.size(); ++i) {
-                int idx = nonground_indices[i];
-                if (idx >= 0 && idx < static_cast<int>(cloud->size())) {
-                    filtered->points[i].x = cloud->points[idx].x;
-                    filtered->points[i].y = cloud->points[idx].y;
-                    filtered->points[i].z = cloud->points[idx].z;
-                    filtered->points[i].intensity = intensity_backup[idx];
-                }
-            }
-            
-            auto end = std::chrono::high_resolution_clock::now();
-            double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
-            
-            RCLCPP_INFO(get_logger(), "   🌱 Patchwork++ 地面分割: %zu → %zu 点 (去除 %.1f%%, %.1fms)",
-                       cloud->size(), filtered->size(),
-                       100.0 * (cloud->size() - filtered->size()) / cloud->size(),
-                       time_ms);
-            
-            // 添加调试：确认返回前状态正常
-            RCLCPP_INFO(get_logger(), "   🔧 [DEBUG] 准备返回 filtered 点云，size=%zu, width=%u, height=%u",
-                       filtered->size(), filtered->width, filtered->height);
-            
-            return filtered;
-            
-        } catch (const std::exception& e) {
-            RCLCPP_ERROR(get_logger(), "❌ Patchwork++ 执行失败: %s", e.what());
-            RCLCPP_WARN(get_logger(), "   回退到原始点云");
-            return cloud;
-        }
     }
     
     // ==================== Yaw 多假设验证 (Yaw Seed Search) ====================
@@ -1325,9 +1191,6 @@ private:
     bool has_initial_guess_ = false;
     bool localization_initialized_ = false;
     bool auto_initialize_ = false;
-    
-    // Patchwork++ 地面分割
-    std::unique_ptr<patchwork::PatchWorkpp> patchwork_;
     
     // 多帧累积缓冲区（需要互斥锁保护并发访问）
     std::mutex scan_buffer_mutex_;
