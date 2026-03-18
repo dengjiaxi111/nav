@@ -16,17 +16,18 @@ namespace SentryConstants {
     }
     
     // 坐标点定义（单位：厘米）
-    const geometry_msgs::msg::Point RED_FORTRESS = createPoint(690.0, 746.0);
+    const geometry_msgs::msg::Point RED_BASE_GAIN = createPoint(-90.0, -30.0);
     const geometry_msgs::msg::Point RED_RAMP_POINT = createPoint(1070.0, 94.0);
     const geometry_msgs::msg::Point RED_OUTPOST_GAIN = createPoint(1172.0, 378.0);
-    const geometry_msgs::msg::Point RED_ENERGY_POINT = createPoint(1152.0, 992.0);
-    const geometry_msgs::msg::Point RED_SUPPLY = createPoint(176.0, 262.0);
-    const geometry_msgs::msg::Point RED_BASE_GAIN = createPoint(412.0, 754.0);
+    const geometry_msgs::msg::Point RED_ENERGY_POINT = createPoint(-580.0, -130.0);
+    const geometry_msgs::msg::Point RED_SUPPLY = createPoint(-480.0, 120.0);
+    const geometry_msgs::msg::Point RED_FORTRESS = createPoint(408.0, 742.0);
     const geometry_msgs::msg::Point ENEMY_FORTRESS_OCCUPY = createPoint(2118.0, 744.0);
-    const geometry_msgs::msg::Point ENEMY_OUTPOST_ATTACK = createPoint(1642.0, 1146.0);
+    const geometry_msgs::msg::Point ENEMY_OUTPOST_ATTACK = createPoint(-190.0, -380.0);
     const geometry_msgs::msg::Point ENEMY_BASE_ATTACK = createPoint(2744.0, 1164.0);
     const geometry_msgs::msg::Point CENTRAL_HIGHLAND_GAIN = createPoint(1220.0, 1092.0);
     const geometry_msgs::msg::Point TRAPEZOID_HIGHLAND_GAIN = createPoint(430.0, 1108.0);
+    
     
     // 区域分界线
     const double HALF_MAP_X = 1400.0;

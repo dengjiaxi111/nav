@@ -79,7 +79,7 @@ std::shared_ptr<BTNode> TreeBuilder::buildMainDecisionTree() {
     fortress_occupy_seq->addChild(check_fortress_condition);
     fortress_occupy_seq->addChild(set_fortress_occupy);
     fortress_decision_selector->addChild(fortress_occupy_seq);
-    
+
     auto base_defense_fallback_seq = std::make_shared<BTSequence>();
     auto set_base_defense_fallback = std::make_shared<SetBaseDefenseTarget>();
     base_defense_fallback_seq->addChild(set_base_defense_fallback);
@@ -145,7 +145,7 @@ std::shared_ptr<BTNode> TreeBuilder::buildMainDecisionTree() {
     gain_point_seq->addChild(evaluate_gain);
     gain_point_seq->addChild(dynamic_gain_action);
     root->addChild(gain_point_seq);
-    
+
     // 10. 基地防御（最低优先级）
     auto base_defense_seq = std::make_shared<BTSequence>();
     auto set_base_defense_default = std::make_shared<SetBaseDefenseTarget>();

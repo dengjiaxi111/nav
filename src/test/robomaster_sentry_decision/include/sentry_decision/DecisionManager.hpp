@@ -101,6 +101,7 @@ private:
     // 初始化流程控制标志
     bool init_energy_started_;   // 打符是否已开始
     bool init_outpost_started_;  // 打前哨站是否已开始
+    bool post_central_outpost_started_;  // 占领中央高地后转前哨站是否已触发
     
     // 初始化流程
     bool executeInitialization();

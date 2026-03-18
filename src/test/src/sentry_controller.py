@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-哨兵移动控制器 - 修复版本
+哨兵移动控制器 - 修复版本（增加坐标映射功能）
 订阅决策系统的目标点，控制7号机器人移动
 """
 import json
@@ -14,6 +14,7 @@ from std_msgs.msg import String
 from sentry_decision.msg import SentryControl
 from datetime import datetime
 import math
+from config import LOGICAL_TO_REAL_MAP  # 导入坐标映射表
 
 class SentryController(Node):
     def __init__(self, game_state):
@@ -54,7 +55,7 @@ class SentryController(Node):
         self.debug_message = ""
         
         # 移动速度 (cm/s) - 与决策系统一致
-        self.move_speed = 100.0  # 每秒100厘米
+        self.move_speed = 200.0  # 每秒200厘米
         
         # 姿态名称映射
         self.posture_names = {
@@ -84,31 +85,51 @@ class SentryController(Node):
         
         print("✓ 哨兵移动控制器已启动")
         print("✓ 订阅话题: /sentry/target_position, /sentry/control, /sentry/debug")
+        print("✓ 坐标映射已启用，逻辑点将转换为真实坐标")
         
     def target_callback(self, msg):
-        """目标点回调函数"""
+        """目标点回调函数（增加坐标映射）"""
         try:
-            # 决策系统发布的是米，但内部使用厘米
-            # 将米转换为厘米（决策系统发布的是米，但模拟器使用厘米）
-            x = msg.point.x * 100.0  # 米 -> 厘米
-            y = msg.point.y * 100.0  # 米 -> 厘米
+            # 接收到的逻辑坐标（单位：米）
+            logic_x = msg.point.x
+            logic_y = msg.point.y
             
-            self.current_target = (x, y)
+            # 默认处理：将米转换为厘米（如果未映射则使用此方式）
+            real_x_cm = logic_x * 100.0
+            real_y_cm = logic_y * 100.0
+            
+            # 检查是否在映射表中
+            mapped_coords = LOGICAL_TO_REAL_MAP.get((logic_x, logic_y))
+            if mapped_coords is not None:
+                mapped_x, mapped_y = mapped_coords
+                # 如果映射值不为None，则使用映射坐标
+                if mapped_x is not None and mapped_y is not None:
+                    real_x_cm = mapped_x
+                    real_y_cm = mapped_y
+                    print(f"坐标映射: 逻辑点 ({logic_x}, {logic_y}) -> 真实点 ({real_x_cm:.1f}, {real_y_cm:.1f}) cm")
+                else:
+                    # 映射存在但值为None，提示用户未配置
+                    print(f"警告: 逻辑点 ({logic_x}, {logic_y}) 映射未配置，将按米坐标处理")
+            else:
+                # 不在映射表中，按米坐标处理
+                print(f"逻辑点 ({logic_x}, {logic_y}) 未在映射表中，按米坐标处理")
+            
+            self.current_target = (real_x_cm, real_y_cm)
             self.target_timestamp = time.time()
             self.last_target_time = time.time()
             
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 收到目标点: ({x:.1f}, {y:.1f}) cm")
-            print(f"    原始ROS消息: ({msg.point.x:.2f}, {msg.point.y:.2f}) m")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 收到目标点: ({real_x_cm:.1f}, {real_y_cm:.1f}) cm")
+            print(f"    原始ROS消息: ({logic_x:.2f}, {logic_y:.2f}) m")
             
             # 立即设置目标点
             if self.sentry_robot:
                 # 设置新目标点
-                self.sentry_robot.target_x = x
-                self.sentry_robot.target_y = y
+                self.sentry_robot.target_x = real_x_cm
+                self.sentry_robot.target_y = real_y_cm
                 self.sentry_robot.has_target = True
                 self.sentry_robot.is_moving = True
                 
-                print(f"开始移动到目标点: ({x:.1f}, {y:.1f}) cm")
+                print(f"开始移动到目标点: ({real_x_cm:.1f}, {real_y_cm:.1f}) cm")
                 
         except Exception as e:
             print(f"目标点回调错误: {e}")

@@ -800,6 +800,14 @@ class ControlPanel:
         try:
             with open(status_file, "r", encoding='utf-8') as f:
                 status = json.load(f)
+        except json.JSONDecodeError:
+            # 允许读取到写入中的临时文件内容，下一帧重试即可
+            return
+        except Exception as e:
+            print(f"同步状态时出错: {e}")
+            return
+        
+        try:
             
             # 更新机器人位置（总是同步位置）
             for team in ['red', 'blue']:

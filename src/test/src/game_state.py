@@ -712,7 +712,9 @@ class GameState:
                 self.stage = game_state_data.get('stage', self.stage)
                 self.stage_remaining_time = game_state_data.get('stage_remaining_time', self.stage_remaining_time)
                 self.is_running = game_state_data.get('is_running', self.is_running)
-                
+        except json.JSONDecodeError:
+            # 文件可能正被另一个进程写入，跳过本次读取
+            return
         except Exception as e:
             print(f"加载状态文件时出错: {e}")
     

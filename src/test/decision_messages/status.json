@@ -1,7 +1,7 @@
 {
   "game_state": {
     "stage": 4,
-    "stage_remaining_time": 129.00529217720032,
+    "stage_remaining_time": 380.78241300582886,
     "is_running": true,
     "competition_type": 1
   },
@@ -31,34 +31,34 @@
       "allowance": 0
     },
     "7": {
-      "x": 1770.1603207243713,
-      "y": 453.93813208183315,
+      "x": 698.0,
+      "y": 756.0,
       "hp": 400,
       "allowance": 300
     }
   },
   "blue_robots": {
     "1": {
-      "x": 2294,
-      "y": 1182,
+      "x": 2682,
+      "y": 1414,
       "hp": 200,
       "allowance": 0
     },
     "2": {
-      "x": 2416,
-      "y": 950,
+      "x": 2398,
+      "y": 688,
       "hp": 250,
       "allowance": 0
     },
     "3": {
-      "x": 2518,
-      "y": 946,
+      "x": 2558,
+      "y": 624,
       "hp": 150,
       "allowance": 0
     },
     "4": {
-      "x": 2664,
-      "y": 1006,
+      "x": 2634,
+      "y": 654,
       "hp": 150,
       "allowance": 0
     },
@@ -73,7 +73,7 @@
     "supply_zone_occupation": 0,
     "central_highland_occupation": 0,
     "trapezoid_highland_occupation": 0,
-    "fortress_gain_point_occupation": 0,
+    "fortress_gain_point_occupation": 1,
     "outpost_gain_point_occupation": 0,
     "base_gain_point_occupation": 1
   }

@@ -1,4 +1,5 @@
-# src/config.py - 完整版配置
+# src/config.py - 完整版配置（新增坐标映射配置）
+
 try:
     from std_msgs.msg import String  # String从std_msgs导入
     from geometry_msgs.msg import PointStamped
@@ -215,3 +216,18 @@ GAIN_ZONE_DISPLAY_NAMES = {
     'outpost_gain_point_occupation': '前哨站增益点',
     'base_gain_point_occupation': '基地增益点'
 }
+
+# ==================== 新增坐标映射配置 ====================
+# 逻辑坐标到真实坐标的映射（用于实车调试）
+# 决策系统通过 /sentry/target_position 发送的逻辑坐标 (x, y)（单位：逻辑单位，通常为米）
+# 该映射将逻辑坐标转换为地图上的真实坐标（单位：厘米）
+# 请根据实际场地填写真实坐标 (x_cm, y_cm)
+LOGICAL_TO_REAL_MAP = {
+    # 逻辑坐标 (x, y)  -> 真实坐标 (x_cm, y_cm)
+    # 以下预留三种情况，真实坐标请自行填写（当前为None表示未配置）
+    (-5.8, -1.3): (1152.0, 992.0),  
+    (-1.9, -3.8): (1642.0, 1146.0),  
+    (-0.9, -0.3): (698.0, 756.0), 
+    (-4.8, 1.2): (176.0, 262.0),  
+}
+# ========================================================

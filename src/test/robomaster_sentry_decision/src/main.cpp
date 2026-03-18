@@ -118,45 +118,20 @@ private:
     }
     
     void publishControl(const sentry_decision::msg::SentryControl& control_msg) {
-        auto msg = std::make_shared<sentry_decision::msg::SentryControl>(control_msg);
-        control_pub_->publish(*msg);
-        
-        // 精简输出：只显示姿态切换
-        std::string gimbal_mode_str, spin_mode_str, posture_str, ramp_mode_str;
-        
-        switch (control_msg.gimbal_mode) {
-            case 0: gimbal_mode_str = "打符"; break;
-            case 1: gimbal_mode_str = "打人"; break;
-            case 2: gimbal_mode_str = "打前哨站"; break;
-            case 3: gimbal_mode_str = "不动"; break;
-            default: gimbal_mode_str = "未知";
-        }
-        
-        switch (control_msg.spin_mode) {
-            case 0: spin_mode_str = "不动"; break;
-            case 1: spin_mode_str = "低速转"; break;
-            case 2: spin_mode_str = "变速转"; break;
-            case 3: spin_mode_str = "高速转"; break;
-            default: spin_mode_str = "未知";
-        }
-        
-        switch (control_msg.posture) {
-            case 1: posture_str = "进攻姿态"; break;
-            case 2: posture_str = "防御姿态"; break;
-            case 3: posture_str = "移动姿态"; break;
-            default: posture_str = "未知姿态";
-        }
-        
-        switch (control_msg.ramp_mode) {
-            case 0: ramp_mode_str = "不飞坡"; break;
-            case 1: ramp_mode_str = "飞坡"; break;
-            default: ramp_mode_str = "未知";
-        }
-        
-        std::cout << "[CONTROL] 姿态切换: " << gimbal_mode_str << ", " 
-                  << spin_mode_str << ", " << posture_str << ", " 
-                  << ramp_mode_str << std::endl;
+    auto msg = std::make_shared<sentry_decision::msg::SentryControl>(control_msg);
+    control_pub_->publish(*msg);
+    
+    // 只处理姿态信息
+    std::string posture_str;
+    switch (control_msg.posture) {
+        case 1: posture_str = "进攻姿态"; break;
+        case 2: posture_str = "防御姿态"; break;
+        case 3: posture_str = "移动姿态"; break;
+        default: posture_str = "未知姿态";
     }
+    
+    std::cout << "[CONTROL] " << posture_str << std::endl;
+}
     
     void publishStopControl() {
         // 发布停止的控制消息

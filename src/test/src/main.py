@@ -8,19 +8,25 @@ import subprocess
 # 添加工作空间的Python包路径
 def setup_python_path():
     """设置Python路径以包含ROS2消息包"""
-    # 获取当前工作目录
-    workspace_path = os.path.dirname(os.path.abspath(__file__))
+    # 获取当前脚本路径并推断工作空间根目录（.../navigation2026）
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    workspace_root = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
     
     # 可能的Python包路径
     possible_paths = [
         # install目录中的Python包
-        os.path.join(workspace_path, "..", "install", "decision_messages", "local", "lib", "python3.10", "dist-packages"),
-        os.path.join(workspace_path, "..", "install", "decision_messages", "lib", "python3.10", "site-packages"),
+        os.path.join(workspace_root, "install", "decision_messages", "local", "lib", "python3.10", "dist-packages"),
+        os.path.join(workspace_root, "install", "decision_messages", "lib", "python3.10", "site-packages"),
         # build目录中的Python包
-        os.path.join(workspace_path, "..", "build", "decision_messages", "rosidl_generator_py"),
+        os.path.join(workspace_root, "build", "decision_messages", "rosidl_generator_py"),
         # sentry_decision包的Python路径
-        os.path.join(workspace_path, "..", "install", "sentry_decision", "local", "lib", "python3.10", "dist-packages"),
-        os.path.join(workspace_path, "..", "install", "sentry_decision", "lib", "python3.10", "site-packages"),
+        os.path.join(workspace_root, "install", "sentry_decision", "local", "lib", "python3.10", "dist-packages"),
+        os.path.join(workspace_root, "install", "sentry_decision", "lib", "python3.10", "site-packages"),
+        # Jazzy / Python 3.12 兼容路径
+        os.path.join(workspace_root, "install", "decision_messages", "local", "lib", "python3.12", "dist-packages"),
+        os.path.join(workspace_root, "install", "decision_messages", "lib", "python3.12", "site-packages"),
+        os.path.join(workspace_root, "install", "sentry_decision", "local", "lib", "python3.12", "dist-packages"),
+        os.path.join(workspace_root, "install", "sentry_decision", "lib", "python3.12", "site-packages"),
     ]
     
     # 添加存在的路径到sys.path
@@ -98,7 +104,7 @@ if __name__ == "__main__":
                 print(f"错误: 无法导入决策系统消息类型: {e}")
                 print("请确保已构建sentry_decision包:")
                 print("  colcon build --packages-select sentry_decision")
-                sys.exit(1)
+                print("  source install/setup.bash")
                 sys.exit(1)
             
             from map_ui import MapUI
@@ -124,9 +130,7 @@ if __name__ == "__main__":
             game_state.set_sentry_controller(sentry_controller)
             
             # 创建地图UI
-            map_ui = MapUI(game_state, msg_interface)
-            # 将哨兵控制器传递给地图UI
-            map_ui.sentry_controller = sentry_controller
+            map_ui = MapUI(game_state, msg_interface, sentry_controller=sentry_controller)
             
             try:
                 map_ui.run()
@@ -135,31 +139,19 @@ if __name__ == "__main__":
             finally:
                 sentry_controller.destroy_node()
                 msg_interface.destroy_node()
-                rclpy.shutdown()
+                if rclpy.ok():
+                    rclpy.shutdown()
             
         elif mode == "control":
             print("启动控制面板...")
-            
-            # 尝试导入必要的模块
-            try:
-                import rclpy
-                rclpy.init()
-                print("✓ 已初始化rclpy")
-            except Exception as e:
-                print(f"警告: 无法初始化rclpy: {e}")
-                print("控制面板将使用文件系统同步，ROS2功能受限")
-            
+
             from control_panel import ControlPanel
             from game_state import GameState
-            from msg_interface import MessageInterface
-            
-            try:
-                msg_interface = MessageInterface()
-                print("✓ 已创建消息接口")
-            except Exception as e:
-                print(f"警告: 无法创建消息接口: {e}")
-                print("控制面板将仅使用文件系统同步")
-                msg_interface = None
+
+            # 关键修复：控制面板默认只使用文件同步，不创建ROS2消息接口。
+            # 否则在 both 模式下会出现两个进程同时发布/覆盖状态，导致 stage 来回跳变。
+            msg_interface = None
+            print("✓ 控制面板使用文件系统同步（不创建ROS2消息接口）")
             
             game_state = GameState()
             if msg_interface:

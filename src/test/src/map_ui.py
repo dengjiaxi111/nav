@@ -13,7 +13,7 @@ from sentry_controller import SentryController
 from sentry_subscriber import SentryStatusDisplay
 
 class MapUI:
-    def __init__(self, game_state, msg_interface):
+    def __init__(self, game_state, msg_interface, sentry_controller=None):
         pygame.init()
         
         # 创建窗口
@@ -25,7 +25,8 @@ class MapUI:
         self.msg_interface = msg_interface
         
         # 添加哨兵控制器（作为ROS2节点，只订阅不发布）
-        self.sentry_controller = SentryController(game_state)
+        # 如果外部已创建，则复用，避免同名节点重复注册
+        self.sentry_controller = sentry_controller if sentry_controller is not None else SentryController(game_state)
         
         # 加载地图图片
         try:
@@ -87,6 +88,10 @@ class MapUI:
         # 哨兵状态更新时间
         self.last_sentry_update = 0
         self.sentry_update_interval = 0.5
+
+        # 文件反向同步（控制面板 -> 地图进程）
+        self.last_file_sync = 0
+        self.file_sync_interval = 0.2
         
         # 时间相关
         self.last_time = time.time()
@@ -178,6 +183,48 @@ class MapUI:
             
         except Exception as e:
             print(f"地图UI保存状态时出错: {e}")
+
+    def sync_control_panel_edits(self):
+        """仅同步控制面板的编辑字段，避免覆盖地图进程中的实时位置。"""
+        status_file = os.path.join("decision_messages", "status.json")
+        if not os.path.exists(status_file):
+            return
+
+        try:
+            with open(status_file, "r", encoding='utf-8') as f:
+                status = json.load(f)
+        except json.JSONDecodeError:
+            # 文件可能在被另一个进程写入，下一帧再读
+            return
+        except Exception as e:
+            print(f"地图UI同步状态时出错: {e}")
+            return
+
+        # 仅同步会影响决策但不应影响实时轨迹的字段
+        for team in ['red', 'blue']:
+            robots_key = f'{team}_robots'
+            if robots_key in status:
+                for robot_id_str, robot_data in status[robots_key].items():
+                    robot = self.game_state.get_robot(team, int(robot_id_str))
+                    if robot:
+                        if 'hp' in robot_data:
+                            robot.hp = robot_data['hp']
+                        if 'allowance' in robot_data:
+                            robot.allowance = robot_data['allowance']
+
+        # 场地与经济状态
+        self.game_state.red_outpost_hp = status.get('red_outpost_hp', self.game_state.red_outpost_hp)
+        self.game_state.blue_outpost_hp = status.get('blue_outpost_hp', self.game_state.blue_outpost_hp)
+        self.game_state.red_base_hp = status.get('red_base_hp', self.game_state.red_base_hp)
+        self.game_state.blue_base_hp = status.get('blue_base_hp', self.game_state.blue_base_hp)
+        self.game_state.red_gold_coins = status.get('red_gold_coins', self.game_state.red_gold_coins)
+        self.game_state.blue_gold_coins = status.get('blue_gold_coins', self.game_state.blue_gold_coins)
+
+        # 阶段信息（由地图和控制面板共享）
+        game_state_data = status.get('game_state', {})
+        self.game_state.stage = game_state_data.get('stage', self.game_state.stage)
+        self.game_state.stage_remaining_time = game_state_data.get('stage_remaining_time', self.game_state.stage_remaining_time)
+        self.game_state.is_running = game_state_data.get('is_running', self.game_state.is_running)
     
     def draw_ui(self):
         """Draw the entire UI"""
@@ -674,6 +721,11 @@ class MapUI:
                 
                 # 处理事件
                 self.handle_events()
+
+                # 从文件同步控制面板修改（仅非位置字段，避免轨迹闪烁）
+                if current_time - self.last_file_sync > self.file_sync_interval:
+                    self.sync_control_panel_edits()
+                    self.last_file_sync = current_time
                 
                 # 更新游戏状态（包括增益区占领检测）
                 if self.game_state.is_running:

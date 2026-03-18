@@ -9,13 +9,10 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <iostream>
 
-
 // ROS2消息类型
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/enemy_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
-
-// 包含自定义消息类型
 #include "sentry_decision/msg/sentry_control.hpp"
 
 using OurRobotState = decision_messages::msg::OurRobotState;
@@ -25,50 +22,32 @@ using SentryControl = sentry_decision::msg::SentryControl;
 
 // 行为状态枚举
 enum class BehaviorState {
-    IDLE,               // 空闲
-    MOVING,             // 移动中
-    EXECUTING,          // 执行中（到达目标点后）
-    COMPLETED           // 行为完成
+    IDLE, MOVING, EXECUTING, COMPLETED
 };
 
 // 行为类型枚举
 enum class BehaviorType {
-    NONE,
-    MOVE_TO_ENERGY,     // 前往能量机关
-    ACTIVATE_ENERGY,    // 激活能量机关
-    MOVE_TO_OUTPOST,    // 前往前哨站
-    ATTACK_OUTPOST,     // 攻击前哨站
-    MOVE_TO_SUPPLY,     // 前往补给点
-    SUPPLY,             // 补给
-    MOVE_TO_GAIN_POINT, // 前往增益点
-    DEFEND_GAIN_POINT,  // 防守增益点
-    MOVE_TO_HERO,       // 前往攻击英雄
-    ATTACK_HERO,        // 攻击英雄
-    MOVE_TO_BASE,       // 前往基地
-    DEFEND_BASE,        // 防守基地
-    MOVE_TO_FORTRESS,   // 前往堡垒
-    OCCUPY_FORTRESS,    // 占领堡垒
-    RESURRECTION,       // 复活
-    RAMP_PROCESS        // 飞坡流程（新增加）
+    NONE, MOVE_TO_ENERGY, ACTIVATE_ENERGY, MOVE_TO_OUTPOST, ATTACK_OUTPOST,
+    MOVE_TO_SUPPLY, SUPPLY, MOVE_TO_GAIN_POINT, DEFEND_GAIN_POINT,
+    MOVE_TO_HERO, ATTACK_HERO, MOVE_TO_BASE, DEFEND_BASE,
+    MOVE_TO_FORTRESS, OCCUPY_FORTRESS, RESURRECTION, RAMP_PROCESS
 };
 
 struct EnemyInfo {
     std::string id;
     std::string type;
-    double x = 0.0;          // cm
-    double y = 0.0;          // cm
-    double hp = 0.0;         // 血量
-    double allowance = 0.0;  // 弹量
-    bool visible = false;    // 是否可见
+    double x = 0.0;
+    double y = 0.0;
+    double hp = 0.0;
+    double allowance = 0.0;
+    bool visible = false;
     double last_update_time = 0.0;
-    
-    EnemyInfo(const std::string& id_val, const std::string& type_val) 
-        : id(id_val), type(type_val) {}
+    EnemyInfo(const std::string& id_val, const std::string& type_val) : id(id_val), type(type_val) {}
 };
 
 struct GainPointStatus {
     std::string name;
-    geometry_msgs::msg::Point position;  // cm
+    geometry_msgs::msg::Point position;
     double defense_gain = 0.0;
     bool occupied_by_us = false;
     bool occupied_by_enemy = false;
@@ -78,36 +57,32 @@ struct GainPointStatus {
 struct BehaviorInfo {
     BehaviorType type = BehaviorType::NONE;
     BehaviorState state = BehaviorState::IDLE;
-    geometry_msgs::msg::Point target;
+    geometry_msgs::msg::Point target;          // 原始目标点（用于发布）
+    geometry_msgs::msg::Point real_target;     // 真实目标点（用于内部计算）
     double start_time = -1.0;
-    double execution_start_time = -1.0;  // 执行开始时间（到达目标点后）
-    double execution_duration = 0.0;     // 执行持续时间
-    bool target_published = false;       // 目标点是否已发布
-    bool control_published = false;      // 控制消息是否已发布
-    bool control_updated = false;        // 控制消息是否已更新
+    double execution_start_time = -1.0;
+    double execution_duration = 0.0;
+    bool target_published = false;
+    bool control_published = false;
+    bool control_updated = false;
 };
 
 class Blackboard {
 public:
     Blackboard();
     
-    // ROS消息更新接口
     void updateOurState(const OurRobotState::SharedPtr msg);
     void updateEnemyState(const EnemyRobotState::SharedPtr msg);
     void updateGameState(const GameState::SharedPtr msg);
-    
-    // 重置函数（用于比赛重新开始）
     void resetForNewMatch();
-    
-    // 获取控制消息
     std::shared_ptr<SentryControl> getControlMsg() const { return control_msg_; }
     
     // 自身状态
     double current_hp = 400.0;
     double max_hp = 400.0;
     double allowance_17mm = 300.0;
-    double x = 0.0;  // cm
-    double y = 0.0;  // cm
+    double x = 0.0;
+    double y = 0.0;
     uint32_t rfid_status = 0;
     
     // 全局状态
@@ -141,11 +116,11 @@ public:
     std::string current_target_id;
     double attack_start_time = -1.0;
     
-    // 飞坡相关 - 修改
+    // 飞坡相关
     geometry_msgs::msg::Point original_target_before_ramp;
     bool at_ramp_point = false;
     bool ramp_mode_active = false;
-    bool ramp_in_process = false;  // 新增：是否在飞坡流程中
+    bool ramp_in_process = false;
     
     // 状态标志
     bool resurrection_flag = false;
@@ -166,7 +141,7 @@ public:
     // 目标点到达状态
     bool at_current_target = false;
     double target_arrival_time = -1.0;
-    double min_stay_duration = 3.0;  // 最小停留时间（秒）
+    double min_stay_duration = 3.0;
     
     // 增益点列表
     std::vector<GainPointStatus> gain_points;
@@ -185,14 +160,12 @@ public:
     void updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode, 
                          uint8_t posture, uint8_t ramp_mode);
     
-    // 目标点管理
     void setTargetReached(bool reached);
     bool shouldLeaveTarget() const;
     
-    // 行为管理
     void startBehavior(BehaviorType type, const geometry_msgs::msg::Point& target, double duration = 0.0);
     void updateBehaviorState(BehaviorState state);
-    void startExecutionTime();  // 开始执行计时（到达目标点时调用）
+    void startExecutionTime();
     void completeCurrentBehavior();
     void resetCurrentBehavior();
     
@@ -201,108 +174,65 @@ public:
                current_behavior.state != BehaviorState::COMPLETED; 
     }
     
-    // 检查是否在飞坡过程中
-    bool isInRampProcess() const {
-        return ramp_in_process;
-    }
+    bool isInRampProcess() const { return ramp_in_process; }
     
-    // 获取行为执行已用时间（从到达目标点开始）
     double getExecutionElapsedTime() const {
-        if (current_behavior.execution_start_time < 0) {
-            return 0.0;
-        }
+        if (current_behavior.execution_start_time < 0) return 0.0;
         return current_time - current_behavior.execution_start_time;
     }
     
-    // 设置目标点发布状态
-    void setTargetPublished(bool published) { 
-        current_behavior.target_published = published; 
-        target_published_ = published;
-    }
+    void setTargetPublished(bool published) { current_behavior.target_published = published; }
     bool isTargetPublished() const { return current_behavior.target_published; }
     
-    // 设置控制消息发布状态
-    void setControlPublished(bool published) { 
-        current_behavior.control_published = published; 
-        control_published_ = published;
-    }
+    void setControlPublished(bool published) { current_behavior.control_published = published; }
     bool isControlPublished() const { return current_behavior.control_published; }
     
-    // 设置控制消息更新状态
-    void setControlUpdated(bool updated) { 
-        current_behavior.control_updated = updated; 
-        control_updated_ = updated;
-    }
+    void setControlUpdated(bool updated) { current_behavior.control_updated = updated; }
     bool isControlUpdated() const { return current_behavior.control_updated; }
     
-    // 重置所有发布状态
     void resetAllPublishStates() {
         setTargetPublished(false);
         setControlPublished(false);
         setControlUpdated(false);
     }
     
-    // 飞坡锁相关方法（新增）
+    // 飞坡锁相关
     enum RampLockState {
-        RAMP_LOCK_INACTIVE = 0,      // 飞坡锁未激活
-        RAMP_LOCK_PENDING,           // 飞坡判定已触发，等待执行
-        RAMP_LOCK_ACTIVE,            // 飞坡行为执行中
-        RAMP_LOCK_COMPLETING         // 飞坡即将完成，但仍需锁定
+        RAMP_LOCK_INACTIVE = 0,
+        RAMP_LOCK_PENDING,
+        RAMP_LOCK_ACTIVE,
+        RAMP_LOCK_COMPLETING
     };
     
-    void activateRampLock() { 
-        ramp_lock_state_ = RAMP_LOCK_PENDING; 
-        std::cout << "[RAMP_LOCK] 激活飞坡锁: PENDING" << std::endl;
-    }
-    
-    void setRampLockActive() { 
-        ramp_lock_state_ = RAMP_LOCK_ACTIVE; 
-        std::cout << "[RAMP_LOCK] 设置飞坡锁: ACTIVE" << std::endl;
-    }
-    
-    void setRampLockCompleting() { 
-        ramp_lock_state_ = RAMP_LOCK_COMPLETING; 
-        std::cout << "[RAMP_LOCK] 设置飞坡锁: COMPLETING" << std::endl;
-    }
-    
-    void deactivateRampLock() { 
-        ramp_lock_state_ = RAMP_LOCK_INACTIVE; 
-        std::cout << "[RAMP_LOCK] 解除飞坡锁: INACTIVE" << std::endl;
-    }
-    
-    bool isRampLockActive() const { 
-        return ramp_lock_state_ == RAMP_LOCK_ACTIVE || 
-               ramp_lock_state_ == RAMP_LOCK_COMPLETING; 
-    }
-    
-    bool isRampLockPending() const { 
-        return ramp_lock_state_ == RAMP_LOCK_PENDING; 
-    }
-    
-    bool isRampLockInactive() const { 
-        return ramp_lock_state_ == RAMP_LOCK_INACTIVE; 
-    }
-    
+    void activateRampLock() { ramp_lock_state_ = RAMP_LOCK_PENDING; }
+    void setRampLockActive() { ramp_lock_state_ = RAMP_LOCK_ACTIVE; }
+    void setRampLockCompleting() { ramp_lock_state_ = RAMP_LOCK_COMPLETING; }
+    void deactivateRampLock() { ramp_lock_state_ = RAMP_LOCK_INACTIVE; }
+    bool isRampLockActive() const { return ramp_lock_state_ == RAMP_LOCK_ACTIVE || ramp_lock_state_ == RAMP_LOCK_COMPLETING; }
+    bool isRampLockPending() const { return ramp_lock_state_ == RAMP_LOCK_PENDING; }
+    bool isRampLockInactive() const { return ramp_lock_state_ == RAMP_LOCK_INACTIVE; }
     RampLockState getRampLockState() const { return ramp_lock_state_; }
     
+    // 新增：获取原始目标点（用于发布）
+    geometry_msgs::msg::Point getOriginalTarget() const { return current_behavior.target; }
+
 private:
     void updateEnemyInfo(EnemyInfo& info, double x, double y, double hp, double allowance);
     void initializeGainPoints();
     void updateGainPointStatus();
     
-    // 控制消息
-    std::shared_ptr<SentryControl> control_msg_;
+    // 新增：逻辑坐标到真实坐标的转换
+    geometry_msgs::msg::Point convertToReal(const geometry_msgs::msg::Point& logical) const;
     
-    // 发布状态
+    std::shared_ptr<SentryControl> control_msg_;
     bool target_published_ = false;
     bool control_published_ = false;
     bool control_updated_ = false;
-    
-    // 比赛状态跟踪
     uint8_t last_stage_ = 0;
-    
-    // 飞坡锁状态（新增）
     RampLockState ramp_lock_state_ = RAMP_LOCK_INACTIVE;
+    
+    // 新增：逻辑坐标到真实坐标的映射表
+    static std::vector<std::pair<geometry_msgs::msg::Point, geometry_msgs::msg::Point>> LOGICAL_TO_REAL_MAP;
 };
 
 #endif // BLACKBOARD_HPP

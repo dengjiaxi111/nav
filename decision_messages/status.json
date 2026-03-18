@@ -1,7 +1,7 @@
 {
   "game_state": {
     "stage": 4,
-    "stage_remaining_time": 252.29290890693665,
+    "stage_remaining_time": 142.11341667175293,
     "is_running": true,
     "competition_type": 1
   },
@@ -31,9 +31,9 @@
       "allowance": 0
     },
     "7": {
-      "x": 2264.0,
-      "y": 638.0,
-      "hp": 400,
+      "x": 176.0,
+      "y": 262.0,
+      "hp": 40,
       "allowance": 300
     }
   },
@@ -70,7 +70,7 @@
     }
   },
   "gain_zone_occupation": {
-    "supply_zone_occupation": 0,
+    "supply_zone_occupation": 1,
     "central_highland_occupation": 0,
     "trapezoid_highland_occupation": 0,
     "fortress_gain_point_occupation": 0,
