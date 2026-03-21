@@ -190,6 +190,14 @@ namespace pclomp
 			search_method = method;
 		}
 
+		inline void setEnableTrilinearInterpolation(bool enable) {
+			trilinear_interpolation_ = enable;
+		}
+
+		inline bool getEnableTrilinearInterpolation() const {
+			return trilinear_interpolation_;
+		}
+
 		/** \brief Get the registration alignment probability.
 		  * \return transformation probability
 		  */
@@ -497,6 +505,7 @@ namespace pclomp
 
 	public:
 		NeighborSearchMethod search_method;
+		bool trilinear_interpolation_;
 
 		EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 	};

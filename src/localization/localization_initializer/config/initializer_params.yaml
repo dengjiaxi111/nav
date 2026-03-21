@@ -57,10 +57,18 @@
     ndt_transformation_epsilon: 0.005
     ndt_step_size: 0.03             # 如果容易发散/非局部跳跃，可以调小（如 0.05）
 
-    # 高级优化
-    ndt_enable_trilinear_interp: true 
-    ndt_enable_linked_cells: true     
-    ndt_outlier_ratio: 0.50           
+    # 高级优化（邻域策略）
+    # ndt_enable_linked_cells:
+    #   true  -> DIRECT7（网格链接），速度/稳定性平衡，推荐默认开启
+    #   false -> DIRECT1（仅中心体素），最快但鲁棒性最弱
+    ndt_enable_linked_cells: true
+    #
+    # ndt_enable_trilinear_interp:
+    #   采用 DIRECT26 邻域 + 三线性权重加权（按点到体素中心的归一化距离计算权重并归一化）。
+    #   通常可减少体素边界不连续带来的跳变，但耗时显著增加（常见 2~4x）。
+    #   开启后会覆盖 ndt_enable_linked_cells 的选择。
+    ndt_enable_trilinear_interp: false
+    ndt_outlier_ratio: 0.50
 
     # 性能控制
     ndt_threads: 8                 
@@ -71,7 +79,7 @@
 
     # ==================== 降采样与预处理 ====================
     # 🔴 调参提示：保留重要的边缘与立面。如果 scan_voxel_size 太大，特征会被抹平。
-    map_voxel_size: 0.1
+    map_voxel_size: 0.08
     scan_voxel_size: 0.05
     accumulate_voxel_size: 0.1
 

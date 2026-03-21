@@ -72,6 +72,7 @@ pclomp::NormalDistributionsTransform<PointSource, PointTarget>::NormalDistributi
   max_iterations_ = 35;
 
   search_method = DIRECT7;
+  trilinear_interpolation_ = false;
   num_threads_ = omp_get_max_threads();
 }
 
@@ -250,9 +251,27 @@ pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeDerivativ
 		Eigen::Matrix<double, 6, 1> score_gradient_pt = Eigen::Matrix<double, 6, 1>::Zero();
 		Eigen::Matrix<double, 6, 6> hessian_pt = Eigen::Matrix<double, 6, 6>::Zero();
 
-		for (typename std::vector<TargetGridLeafConstPtr>::iterator neighborhood_it = neighborhood.begin(); neighborhood_it != neighborhood.end(); neighborhood_it++)
+		std::vector<double> trilinear_weights;
+		double trilinear_weight_sum = 0.0;
+		if (trilinear_interpolation_ && !neighborhood.empty()) {
+			trilinear_weights.resize(neighborhood.size(), 0.0);
+			const double inv_resolution = 1.0 / (resolution_ > 1e-6f ? resolution_ : 1e-6f);
+			for (std::size_t ni = 0; ni < neighborhood.size(); ++ni) {
+				const auto& cell_mean = neighborhood[ni]->getMean();
+				const double wx = 1.0 - std::abs(static_cast<double>(x_trans_pt.x) - cell_mean.x()) * inv_resolution;
+				const double wy = 1.0 - std::abs(static_cast<double>(x_trans_pt.y) - cell_mean.y()) * inv_resolution;
+				const double wz = 1.0 - std::abs(static_cast<double>(x_trans_pt.z) - cell_mean.z()) * inv_resolution;
+				if (wx > 0.0 && wy > 0.0 && wz > 0.0) {
+					const double w = wx * wy * wz;
+					trilinear_weights[ni] = w;
+					trilinear_weight_sum += w;
+				}
+			}
+		}
+
+		for (std::size_t ni = 0; ni < neighborhood.size(); ++ni)
 		{
-			cell = *neighborhood_it;
+			cell = neighborhood[ni];
 			x_pt = input_->points[idx];
 			x = Eigen::Vector3d(x_pt.x, x_pt.y, x_pt.z);
 
@@ -266,7 +285,26 @@ pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeDerivativ
 			// Compute derivative of transform function w.r.t. transform vector, J_E and H_E in Equations 6.18 and 6.20 [Magnusson 2009]
 			computePointDerivatives(x, point_gradient_, point_hessian_);
 			// Update score, gradient and hessian, lines 19-21 in Algorithm 2, according to Equations 6.10, 6.12 and 6.13, respectively [Magnusson 2009]
-			score_pt += updateDerivatives(score_gradient_pt, hessian_pt, point_gradient_, point_hessian_, x_trans, c_inv, compute_hessian);
+			double weight = 1.0;
+			if (trilinear_interpolation_) {
+				if (trilinear_weight_sum > 1e-12) {
+					weight = trilinear_weights[ni] / trilinear_weight_sum;
+				} else {
+					weight = 1.0 / static_cast<double>(neighborhood.size());
+				}
+			}
+
+			Eigen::Matrix<double, 6, 1> gradient_before = score_gradient_pt;
+			Eigen::Matrix<double, 6, 6> hessian_before = hessian_pt;
+			const double score_inc = updateDerivatives(score_gradient_pt, hessian_pt, point_gradient_, point_hessian_, x_trans, c_inv, compute_hessian);
+			score_pt += weight * score_inc;
+
+			if (trilinear_interpolation_ && weight != 1.0) {
+				score_gradient_pt = gradient_before + weight * (score_gradient_pt - gradient_before);
+				if (compute_hessian) {
+					hessian_pt = hessian_before + weight * (hessian_pt - hessian_before);
+				}
+			}
 		}
 
 		scores[idx] = score_pt;
@@ -960,9 +998,27 @@ double pclomp::NormalDistributionsTransform<PointSource, PointTarget>::calculate
 			break;
 		}
 
-		for (typename std::vector<TargetGridLeafConstPtr>::iterator neighborhood_it = neighborhood.begin(); neighborhood_it != neighborhood.end(); neighborhood_it++)
+		std::vector<double> trilinear_weights;
+		double trilinear_weight_sum = 0.0;
+		if (trilinear_interpolation_ && !neighborhood.empty()) {
+			trilinear_weights.resize(neighborhood.size(), 0.0);
+			const double inv_resolution = 1.0 / (resolution_ > 1e-6f ? resolution_ : 1e-6f);
+			for (std::size_t ni = 0; ni < neighborhood.size(); ++ni) {
+				const auto& cell_mean = neighborhood[ni]->getMean();
+				const double wx = 1.0 - std::abs(static_cast<double>(x_trans_pt.x) - cell_mean.x()) * inv_resolution;
+				const double wy = 1.0 - std::abs(static_cast<double>(x_trans_pt.y) - cell_mean.y()) * inv_resolution;
+				const double wz = 1.0 - std::abs(static_cast<double>(x_trans_pt.z) - cell_mean.z()) * inv_resolution;
+				if (wx > 0.0 && wy > 0.0 && wz > 0.0) {
+					const double w = wx * wy * wz;
+					trilinear_weights[ni] = w;
+					trilinear_weight_sum += w;
+				}
+			}
+		}
+
+		for (std::size_t ni = 0; ni < neighborhood.size(); ++ni)
 		{
-			TargetGridLeafConstPtr cell = *neighborhood_it;
+			TargetGridLeafConstPtr cell = neighborhood[ni];
 
 			Eigen::Vector3d x_trans = Eigen::Vector3d(x_trans_pt.x, x_trans_pt.y, x_trans_pt.z);
 
@@ -975,8 +1031,17 @@ double pclomp::NormalDistributionsTransform<PointSource, PointTarget>::calculate
 			double e_x_cov_x = exp(-gauss_d2_ * x_trans.dot(c_inv * x_trans) / 2);
 			// Calculate probability of transformed points existence, Equation 6.9 [Magnusson 2009]
 			double score_inc = -gauss_d1_ * e_x_cov_x - gauss_d3_;
-
-			score += score_inc / neighborhood.size();
+			if (trilinear_interpolation_) {
+				double weight = 0.0;
+				if (trilinear_weight_sum > 1e-12) {
+					weight = trilinear_weights[ni] / trilinear_weight_sum;
+				} else {
+					weight = 1.0 / static_cast<double>(neighborhood.size());
+				}
+				score += score_inc * weight;
+			} else {
+				score += score_inc / neighborhood.size();
+			}
 		}
 	}
 	return (score) / static_cast<double> (trans_cloud.size());

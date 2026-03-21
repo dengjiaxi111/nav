@@ -69,18 +69,14 @@ public:
         declare_parameter("ndt_step_size", 0.1);                // 论文建议值
         declare_parameter("ndt_threads", 8);
         declare_parameter("ndt_outlier_ratio", 0.55);           // 论文建议 0.5-0.6
-        declare_parameter("ndt_enable_linked_cells", true);     // 网格链接
-        declare_parameter("ndt_enable_trilinear_interp", false); // 三线性插值
+        declare_parameter("ndt_enable_linked_cells", true);     // 网格链接 (DIRECT7)
+        declare_parameter("ndt_enable_trilinear_interp", false); // 三线性插值加权（基于邻域体素）
         
         // GICP 参数 (可选,默认禁用)
         declare_parameter("enable_gicp", false);                // 禁用 GICP
-        declare_parameter("gicp_max_iterations", 30);
-        declare_parameter("gicp_max_correspondence_distance", 0.8);
-        declare_parameter("gicp_transformation_epsilon", 1e-6);
         
         // 质量评估阈值
         declare_parameter("ndt_fitness_threshold", 1.0);
-        declare_parameter("gicp_fitness_threshold", 0.3);
         
         // 降采样参数 (VoxelGrid - 空间均匀分布)
         declare_parameter("map_voxel_size", 0.1);
@@ -100,21 +96,6 @@ public:
         declare_parameter("filter_y_max", 100.0);               // Y 轴最大值（米），过滤右侧
         declare_parameter("filter_z_min", -1.0);                // Z 轴最小值（米），过滤地面/低处
         declare_parameter("filter_z_max", 3.0);                 // Z 轴最大值（米），过滤天花板
-        
-        // 动态物体过滤参数
-        declare_parameter("dynamic_filter_enable", true);                     // 是否启用动态物体过滤
-        declare_parameter("sor_mean_k", 50);                                  // SOR邻域点数
-        declare_parameter("sor_stddev_mul_thresh", 1.0);                      // SOR标准差倍数
-        declare_parameter("cluster_tolerance", 0.3);                          // 聚类距离(米)
-        declare_parameter("cluster_min_size", 100);                           // 最小簇大小
-        declare_parameter("cluster_max_size", 100000);                        // 最大簇大小
-        declare_parameter("large_cluster_threshold", 500);                    // 大簇阈值
-        
-        // 曲率特征提取参数 (LOAM 风格)
-        declare_parameter("curvature_feature_enable", false);                 // 是否启用曲率特征提取
-        declare_parameter("edge_curvature_threshold", 0.5);                   // 边缘点曲率阈值
-        declare_parameter("surf_curvature_threshold", 0.1);                   // 平面点曲率阈值
-        declare_parameter("curvature_neighbor_dist", 0.1);                    // 曲率计算邻域距离
         
         // Yaw 多假设验证参数
         declare_parameter("yaw_seed_enable", false);
@@ -197,6 +178,7 @@ public:
         publishMapCloud();
         
         RCLCPP_INFO(get_logger(), "✅ 定位初始化节点启动成功");
+        logNdtSearchConfig("启动时");
         if (!auto_initialize_) {
             RCLCPP_INFO(get_logger(), "⏳ 请在 RViz 中使用 '2D Pose Estimate' 工具设置初始位姿");
         } else {
@@ -292,6 +274,15 @@ private:
     
     // ==================== 初始位姿回调 ====================
     void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+        bool was_initialized = localization_initialized_;
+        if (was_initialized) {
+            RCLCPP_WARN(get_logger(), "🔄 收到新的初始位姿，重置初始化状态并重新配准");
+        }
+
+        // 无论是否已完成初始化，只要收到新的初始位姿，就重新开始当前会话的配准流程
+        localization_initialized_ = false;
+        clearScanBuffer();
+
         user_initial_guess_ = poseToMatrix(msg->pose.pose);
         has_initial_guess_ = true;
         
@@ -301,7 +292,11 @@ private:
                    msg->pose.pose.position.y,
                    yaw * 180.0 / M_PI);
         
-        publishStatus("初始位姿已接收，等待扫描数据...");
+        if (was_initialized) {
+            publishStatus("🔄 已接收新的初始位姿，开始重新定位...");
+        } else {
+            publishStatus("初始位姿已接收，等待扫描数据...");
+        }
     }
     
     // ==================== 扫描回调 ====================
@@ -458,18 +453,17 @@ private:
         // ✅ mergeAccumulatedScans() 内部已完成:
         //    1. 原始合并
         //    2. 空间过滤 (去除地面/天花板)
-        //    3. 动态物体过滤 (去除人体)
-        //    4. 降采样
+        //    3. 降采样
         auto processed_cloud = mergeAccumulatedScans();
         
         if (!processed_cloud || processed_cloud->empty()) {
             RCLCPP_ERROR(get_logger(), "❌ 点云合并/过滤失败");
-            scan_buffer_.clear();
+            clearScanBuffer();
             has_initial_guess_ = false;
             return;
         }
         
-        RCLCPP_INFO(get_logger(), "   ✅ 点云处理完成: %zu 点 (已完成空间过滤+动态过滤+降采样)", 
+        RCLCPP_INFO(get_logger(), "   ✅ 点云处理完成: %zu 点 (已完成空间过滤+降采样)", 
                    processed_cloud->size());
         publishStatus("开始配准 (使用处理后的累积点云)...");
         
@@ -496,7 +490,7 @@ private:
             publishStatus("❌ 配准失败，请重新设置初始位姿");
             
             // 清空缓冲区，允许重新累积
-            scan_buffer_.clear();
+            clearScanBuffer();
             has_initial_guess_ = false;
         }
     }
@@ -562,10 +556,7 @@ private:
         }
         
         RCLCPP_INFO(get_logger(), "   清空缓冲区...");
-        {
-            std::lock_guard<std::mutex> lock(scan_buffer_mutex_);
-            scan_buffer_.clear();
-        }
+        clearScanBuffer();
         
         RCLCPP_INFO(get_logger(), "   ✅ 合并完成，返回点云");
         return final_cloud;
@@ -750,12 +741,14 @@ private:
         
         // 创建一个粗分辨率 NDT 用于快速评分
         // NDT 对象只创建一次，每次只改 initial_guess
+        logNdtSearchConfig("Yaw-seed 评分");
         pclomp::NormalDistributionsTransform<pcl::PointXYZI, pcl::PointXYZI>::Ptr ndt_seed(
             new pclomp::NormalDistributionsTransform<pcl::PointXYZI, pcl::PointXYZI>()
         );
         ndt_seed->setResolution(seed_resolution);
         ndt_seed->setNumThreads(get_parameter("ndt_threads").as_int());
-        ndt_seed->setNeighborhoodSearchMethod(pclomp::DIRECT7);
+        ndt_seed->setNeighborhoodSearchMethod(getNdtSearchMethod());
+        ndt_seed->setEnableTrilinearInterpolation(get_parameter("ndt_enable_trilinear_interp").as_bool());
         ndt_seed->setMaximumIterations(seed_max_iter);
         ndt_seed->setTransformationEpsilon(0.01);  // 宽松收敛，快速退出
         ndt_seed->setStepSize(0.2);                // 大步长，粗略搜索
@@ -872,6 +865,7 @@ private:
         
         RCLCPP_INFO(get_logger(), "✅ [SAFETY] 安全检查通过: scan=%zu点, map=%zu点",
                    scan_cloud->size(), map_cloud_->size());
+        logNdtSearchConfig("三阶段配准");
         
         auto start_time = std::chrono::high_resolution_clock::now();
         
@@ -893,7 +887,8 @@ private:
         
         // 🔹 网格链接 (Linked Cells) - 论文建议!
         // 作用: 点落在空格子时,搜索最近的有效格子 (鲁棒性↑15%, 耗时仅↑2%)
-        ndt_stage1->setNeighborhoodSearchMethod(pclomp::DIRECT7);  // 7邻域搜索
+        ndt_stage1->setNeighborhoodSearchMethod(getNdtSearchMethod());
+        ndt_stage1->setEnableTrilinearInterpolation(get_parameter("ndt_enable_trilinear_interp").as_bool());
         
         // 🔹 离群点处理 - 论文建议 0.5-0.6
         ndt_stage1->setOulierRatio(get_parameter("ndt_outlier_ratio").as_double());
@@ -957,7 +952,8 @@ private:
         // 📚 Magnusson 论文优化: 中配准阶段参数
         ndt_stage2->setResolution(get_parameter("ndt_stage2_resolution").as_double());
         ndt_stage2->setNumThreads(get_parameter("ndt_threads").as_int());
-        ndt_stage2->setNeighborhoodSearchMethod(pclomp::DIRECT7);  // 保持网格链接
+        ndt_stage2->setNeighborhoodSearchMethod(getNdtSearchMethod());
+        ndt_stage2->setEnableTrilinearInterpolation(get_parameter("ndt_enable_trilinear_interp").as_bool());
         ndt_stage2->setOulierRatio(get_parameter("ndt_outlier_ratio").as_double());
         
         // 🔧 固定使用配置文件参数（不做动态调整）
@@ -1005,7 +1001,8 @@ private:
             // 📚 Magnusson 论文优化: 精配准阶段参数
             ndt_stage3->setResolution(get_parameter("ndt_stage3_resolution").as_double());
             ndt_stage3->setNumThreads(get_parameter("ndt_threads").as_int());
-            ndt_stage3->setNeighborhoodSearchMethod(pclomp::DIRECT7);  // 保持网格链接
+            ndt_stage3->setNeighborhoodSearchMethod(getNdtSearchMethod());
+            ndt_stage3->setEnableTrilinearInterpolation(get_parameter("ndt_enable_trilinear_interp").as_bool());
             ndt_stage3->setOulierRatio(get_parameter("ndt_outlier_ratio").as_double());
             
             // 🔧 固定使用配置文件参数（不做动态调整）
@@ -1181,6 +1178,52 @@ private:
         double roll, pitch, yaw;
         mat.getRPY(roll, pitch, yaw);
         return yaw;
+    }
+
+    void clearScanBuffer() {
+        std::lock_guard<std::mutex> lock(scan_buffer_mutex_);
+        scan_buffer_.clear();
+    }
+
+    pclomp::NeighborSearchMethod getNdtSearchMethod() {
+        // 说明：
+        // 开启三线性插值时使用 DIRECT26 邻域，并在 pclomp 内部启用加权评分。
+        if (get_parameter("ndt_enable_trilinear_interp").as_bool()) {
+            return pclomp::DIRECT26;
+        }
+        if (get_parameter("ndt_enable_linked_cells").as_bool()) {
+            return pclomp::DIRECT7;
+        }
+        return pclomp::DIRECT1;
+    }
+
+    std::string getNdtSearchMethodName() {
+        auto method = getNdtSearchMethod();
+        switch (method) {
+            case pclomp::DIRECT26:
+                return "DIRECT26 (trilinear-weighted)";
+            case pclomp::DIRECT7:
+                return "DIRECT7 (linked-cells)";
+            case pclomp::DIRECT1:
+                return "DIRECT1";
+            case pclomp::KDTREE:
+                return "KDTREE";
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    void logNdtSearchConfig(const std::string& stage) {
+        bool trilinear_interp = get_parameter("ndt_enable_trilinear_interp").as_bool();
+        bool linked_cells = get_parameter("ndt_enable_linked_cells").as_bool();
+        RCLCPP_INFO(
+            get_logger(),
+            "🔧 [%s] NDT 邻域配置: ndt_enable_trilinear_interp=%s, ndt_enable_linked_cells=%s -> 生效模式=%s",
+            stage.c_str(),
+            trilinear_interp ? "true" : "false",
+            linked_cells ? "true" : "false",
+            getNdtSearchMethodName().c_str()
+        );
     }
     
     // ==================== 成员变量 ====================
