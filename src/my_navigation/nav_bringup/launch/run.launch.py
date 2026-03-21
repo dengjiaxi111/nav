@@ -33,6 +33,7 @@ def generate_launch_description():
     
     # ==================== 配置文件 ====================
     nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
+    loc_init_config = os.path.join(loc_init_dir, 'config', 'initializer_params.yaml')
     
     # === 解析 YAML 获取默认的 use_static_map_odom 状态 ===
     default_use_static_map_odom = 'false'
@@ -47,10 +48,20 @@ def generate_launch_description():
     except Exception as e:
         print(f"[Warning] Failed to parse nav_params.yaml for static map->odom toggle: {e}")
 
+    # === 解析 initialize_params.yaml 获取点云地图路径 ===
+    default_pcd_map_file = ''
+    try:
+        with open(loc_init_config, 'r') as f:
+            loc_dict = yaml.safe_load(f)
+            if loc_dict and '/**' in loc_dict:
+                ros_params = loc_dict['/**'].get('ros__parameters', {})
+                default_pcd_map_file = ros_params.get('map_file', '')
+    except Exception as e:
+        print(f"[Warning] Failed to parse initializer_params.yaml for pcd map_file: {e}")
+
     rog_map_config = os.path.join(rog_map_dir, 'config', 'rog_map_config.yaml')
     projector_params = os.path.join(rog_map_dir, 'config', 'projector_params.yaml')
     stair_detector_params = os.path.join(rog_map_dir, 'config', 'stair_detector_params.yaml')
-    loc_init_config = os.path.join(loc_init_dir, 'config', 'initializer_params.yaml')
     
     # RViz 配置 - 使用导航专用配置
     rviz_config_file = os.path.join(nav_bringup_dir, 'rviz', 'navigation_full.rviz')
@@ -123,16 +134,29 @@ def generate_launch_description():
         ]
     )
 
+    # 使用自定义的静态重定位脚本，接收 RViz 的 /initialpose 并转换为 map->odom static TF
     static_tf_map_odom = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_map_odom',
+        package='nav_bringup',
+        executable='static_relocator.py',
+        name='static_relocator',
         condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
-        arguments=[
-            '--x', '0', '--y', '0', '--z', '0.3',
-            '--roll', '0', '--pitch', '0', '--yaw', '0',
-            '--frame-id', 'map', '--child-frame-id', 'odom'
+        output='screen'
+    )
+
+    # 静态重定位模式下，依然需要发布点云地图以便在 RViz 中查看
+    pcd_map_publisher_node = Node(
+        package='pcl_ros',
+        executable='pcd_to_pointcloud',
+        name='pcd_publisher',
+        condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
+        parameters=[{
+            'file_name': default_pcd_map_file,
+            'tf_frame': 'map',
+            'use_sim_time': LaunchConfiguration('use_sim_time')
+        }],
+        remappings=[
+            ('cloud_pcd', '/localization/map_cloud')
         ],
         output='screen'
     )
@@ -199,7 +223,8 @@ def generate_launch_description():
         # 启动节点 (按依赖顺序)
         small_point_lio_launch,    # 1. LIO 里程计 (odom → base_link)
         localization_init_node,    # 2a. NDT 重定位 (map → odom)
-        static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0)
+        static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0 等待 RViz)
+        pcd_map_publisher_node,    # 2b. 静态 TF 模式下发布地图点云
         integration_node,          # 3. ROG-Map (3D地图 + 2D投影 + 台阶检测)
         navigation_launch,         # 4. 导航服务器 (规划 + NMPC)
         rviz_node,                 # 5. RViz (含 2D Pose Estimate)
