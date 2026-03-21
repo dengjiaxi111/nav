@@ -236,7 +236,6 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
 
 void NMPC::setMap(nav_core::MapInterface::Ptr map) {
     map_ = map;
-    // 尝试向下转型为 LayeredMapManager 以获取 ESDF 查询接口
     map_manager_ = std::dynamic_pointer_cast<LayeredMapManager>(map);
     if (map_manager_) {
         RCLCPP_INFO(node_->get_logger(), 
@@ -311,7 +310,7 @@ nav_core::ControlResult NMPC::computeVelocity(
     // 3. 提取局部参考轨迹
     auto yref_sequence = extractLocalReference(current_pose.pose, params_.horizon_length);
     
-    // ✅ FIX: 验证参考轨迹质量
+    // 验证参考轨迹质量
     if (yref_sequence.size() < static_cast<size_t>(N_horizon_ + 1)) {
         RCLCPP_WARN(node_->get_logger(), 
             "NMPC: 参考轨迹点不足 (%zu < %d)", 
@@ -321,7 +320,7 @@ nav_core::ControlResult NMPC::computeVelocity(
         return nav_core::ControlResult::FAILED;
     }
     
-    // ✅ FIX: 检查参考轨迹连续性（防止跳变）
+    // 检查参考轨迹连续性（防止跳变）
     for (size_t i = 1; i < yref_sequence.size(); ++i) {
         double dx = yref_sequence[i][0] - yref_sequence[i-1][0];
         double dy = yref_sequence[i][1] - yref_sequence[i-1][1];
@@ -785,7 +784,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 }
                 
                 // 角速度参考
-                // 默认关闭路径导数 omega_ref，避免离散路径带来的尖峰噪声干扰回正
+                // 默认关闭路径导数 omega_ref
                 double omega_ref = 0.0;
                 if (params_.use_omega_ref_from_path && !yref.empty()) {
                     double dtheta = theta - yref.back()[2];

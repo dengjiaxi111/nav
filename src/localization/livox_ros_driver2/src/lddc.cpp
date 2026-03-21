@@ -59,6 +59,8 @@ Lddc::Lddc(int format, int multi_topic, int data_src, int output_type,
   global_imu_pub_ = nullptr;
   cur_node_ = nullptr;
   bag_ = nullptr;
+  timestamp_log_buffer_count_ = 0;
+  timestamp_log_flush_interval_ = 100;
 }
 #elif defined BUILDING_ROS2
 Lddc::Lddc(int format, int multi_topic, int data_src, int output_type,
@@ -73,6 +75,8 @@ Lddc::Lddc(int format, int multi_topic, int data_src, int output_type,
   lds_ = nullptr;
   enable_timestamp_logging_ = false;
   test_start_time_ = 0;
+  timestamp_log_buffer_count_ = 0;
+  timestamp_log_flush_interval_ = 100;
 #if 0
   bag_ = nullptr;
 #endif
@@ -318,20 +322,17 @@ void Lddc::InitPointcloud2Msg(const StoragePacket& pkg, PointCloud2& cloud, uint
       cloud.header.stamp = rclcpp::Time(timestamp);
   #endif
 
-  std::vector<LivoxPointXyzrtlt> points;
-  for (size_t i = 0; i < pkg.points_num; ++i) {
-    LivoxPointXyzrtlt point;
-    point.x = pkg.points[i].x;
-    point.y = pkg.points[i].y;
-    point.z = pkg.points[i].z;
-    point.reflectivity = pkg.points[i].intensity;
-    point.tag = pkg.points[i].tag;
-    point.line = pkg.points[i].line;
-    point.timestamp = static_cast<double>(pkg.points[i].offset_time);
-    points.push_back(std::move(point));
-  }
   cloud.data.resize(pkg.points_num * sizeof(LivoxPointXyzrtlt));
-  memcpy(cloud.data.data(), points.data(), pkg.points_num * sizeof(LivoxPointXyzrtlt));
+  LivoxPointXyzrtlt* dst_points = reinterpret_cast<LivoxPointXyzrtlt*>(cloud.data.data());
+  for (size_t i = 0; i < pkg.points_num; ++i) {
+    dst_points[i].x = pkg.points[i].x;
+    dst_points[i].y = pkg.points[i].y;
+    dst_points[i].z = pkg.points[i].z;
+    dst_points[i].reflectivity = pkg.points[i].intensity;
+    dst_points[i].tag = pkg.points[i].tag;
+    dst_points[i].line = pkg.points[i].line;
+    dst_points[i].timestamp = static_cast<double>(pkg.points[i].offset_time);
+  }
 }
 
 void Lddc::PublishPointcloud2Data(const uint8_t index, const uint64_t timestamp, const PointCloud2& cloud) {
@@ -404,20 +405,17 @@ void Lddc::InitCustomMsg(CustomMsg& livox_msg, const StoragePacket& pkg, uint8_t
 void Lddc::FillPointsToCustomMsg(CustomMsg& livox_msg, const StoragePacket& pkg) {
   uint32_t points_num = pkg.points_num;
   const std::vector<PointXyzlt>& points = pkg.points;
-  
-  // 预分配
-  livox_msg.points.reserve(points_num);
-  
+
+  livox_msg.points.resize(points_num);
+
   for (uint32_t i = 0; i < points_num; ++i) {
-    CustomPoint point;
-    point.x = points[i].x;
-    point.y = points[i].y;
-    point.z = points[i].z;
-    point.reflectivity = points[i].intensity;
-    point.tag = points[i].tag;
-    point.line = points[i].line;
-    point.offset_time = static_cast<uint32_t>(points[i].offset_time - pkg.base_time);
-    livox_msg.points.push_back(std::move(point));
+    livox_msg.points[i].x = points[i].x;
+    livox_msg.points[i].y = points[i].y;
+    livox_msg.points[i].z = points[i].z;
+    livox_msg.points[i].reflectivity = points[i].intensity;
+    livox_msg.points[i].tag = points[i].tag;
+    livox_msg.points[i].line = points[i].line;
+    livox_msg.points[i].offset_time = static_cast<uint32_t>(points[i].offset_time - pkg.base_time);
   }
 }
 
@@ -739,9 +737,12 @@ void Lddc::CreateBagFile(const std::string &file_name) {
 }
 
 void Lddc::EnableTimestampLogging(bool enable, const std::string& output_file) {
+  std::lock_guard<std::mutex> lock(timestamp_log_mutex_);
   enable_timestamp_logging_ = enable;
   if (enable) {
     timestamp_log_file_ = output_file;
+    timestamp_log_buffer_count_ = 0;
+    timestamp_log_flush_interval_ = 100;
     if (timestamp_log_stream_.is_open()) {
       timestamp_log_stream_.close();
     }
@@ -764,7 +765,12 @@ void Lddc::EnableTimestampLogging(bool enable, const std::string& output_file) {
 }
 
 void Lddc::RecordTimestampData(uint64_t hardware_timestamp, uint64_t publish_timestamp, const char* data_type) {
-  if (!enable_timestamp_logging_ || !timestamp_log_stream_.is_open()) {
+  if (!enable_timestamp_logging_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(timestamp_log_mutex_);
+  if (!timestamp_log_stream_.is_open()) {
     return;
   }
 
@@ -783,7 +789,11 @@ void Lddc::RecordTimestampData(uint64_t hardware_timestamp, uint64_t publish_tim
                         << publish_timestamp << ","
                         << latency_ms << ","
                         << data_type << "\n";
-  timestamp_log_stream_.flush();
+  ++timestamp_log_buffer_count_;
+  if (timestamp_log_buffer_count_ >= timestamp_log_flush_interval_) {
+    timestamp_log_stream_.flush();
+    timestamp_log_buffer_count_ = 0;
+  }
 }
 
 }  // namespace livox_ros

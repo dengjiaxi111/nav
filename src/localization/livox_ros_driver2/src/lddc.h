@@ -32,6 +32,7 @@
 
 #include <fstream>
 #include <chrono>
+#include <mutex>
 
 namespace livox_ros {
 
@@ -152,6 +153,9 @@ class Lddc final {
   std::string timestamp_log_file_;
   std::ofstream timestamp_log_stream_;
   uint64_t test_start_time_;
+  uint32_t timestamp_log_buffer_count_;
+  uint32_t timestamp_log_flush_interval_;
+  std::mutex timestamp_log_mutex_;
 
 #ifdef BUILDING_ROS1
   bool enable_lidar_bag_;
