@@ -207,6 +207,8 @@ private:
     // 终点减速锁存：进入减速区后只允许参考速度上限递减，避免速度回跳
     bool goal_brake_latched_ = false;
     double goal_brake_speed_cap_ = 1e9;
+    bool pivot_turn_active_ = false;
+    double pivot_turn_heading_error_ = 0.0;
 };
 
 }  // namespace nav_components
