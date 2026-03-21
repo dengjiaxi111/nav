@@ -366,6 +366,8 @@ void LidarPubHandler::SetLidarsExtParam(LidarExtParameter lidar_param) {
 void LidarPubHandler::ProcessCartesianHighPoint(RawPacket & pkt) {
   LivoxLidarCartesianHighRawPoint* raw = (LivoxLidarCartesianHighRawPoint*)pkt.raw_data.data();
   PointXyzlt point = {};
+  std::vector<PointXyzlt> points_batch;
+  points_batch.reserve(pkt.point_num);
   for (uint32_t i = 0; i < pkt.point_num; i++) {
     if (pkt.extrinsic_enable) {
       point.x = raw[i].x / 1000.0;
@@ -386,14 +388,20 @@ void LidarPubHandler::ProcessCartesianHighPoint(RawPacket & pkt) {
     point.line = i % pkt.line_num;
     point.tag = raw[i].tag;
     point.offset_time = pkt.time_stamp + i * pkt.point_interval;
+    points_batch.push_back(point);
+  }
+
+  {
     std::lock_guard<std::mutex> lock(mutex_);
-    points_clouds_.push_back(point);
+    points_clouds_.insert(points_clouds_.end(), points_batch.begin(), points_batch.end());
   }
 }
 
 void LidarPubHandler::ProcessCartesianLowPoint(RawPacket & pkt) {
   LivoxLidarCartesianLowRawPoint* raw = (LivoxLidarCartesianLowRawPoint*)pkt.raw_data.data();
   PointXyzlt point = {};
+  std::vector<PointXyzlt> points_batch;
+  points_batch.reserve(pkt.point_num);
   for (uint32_t i = 0; i < pkt.point_num; i++) {
     if (pkt.extrinsic_enable) {
       point.x = raw[i].x / 100.0;
@@ -414,14 +422,20 @@ void LidarPubHandler::ProcessCartesianLowPoint(RawPacket & pkt) {
     point.line = i % pkt.line_num;
     point.tag = raw[i].tag;
     point.offset_time = pkt.time_stamp + i * pkt.point_interval;
+    points_batch.push_back(point);
+  }
+
+  {
     std::lock_guard<std::mutex> lock(mutex_);
-    points_clouds_.push_back(point);
+    points_clouds_.insert(points_clouds_.end(), points_batch.begin(), points_batch.end());
   }
 }
 
 void LidarPubHandler::ProcessSphericalPoint(RawPacket& pkt) {
   LivoxLidarSpherPoint* raw = (LivoxLidarSpherPoint*)pkt.raw_data.data();
   PointXyzlt point = {};
+  std::vector<PointXyzlt> points_batch;
+  points_batch.reserve(pkt.point_num);
   for (uint32_t i = 0; i < pkt.point_num; i++) {
     double radius = raw[i].depth / 1000.0;
     double theta = raw[i].theta / 100.0 / 180 * PI;
@@ -449,8 +463,12 @@ void LidarPubHandler::ProcessSphericalPoint(RawPacket& pkt) {
     point.line = i % pkt.line_num;
     point.tag = raw[i].tag;
     point.offset_time = pkt.time_stamp + i * pkt.point_interval;
+    points_batch.push_back(point);
+  }
+
+  {
     std::lock_guard<std::mutex> lock(mutex_);
-    points_clouds_.push_back(point);
+    points_clouds_.insert(points_clouds_.end(), points_batch.begin(), points_batch.end());
   }
 }
 
