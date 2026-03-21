@@ -172,7 +172,7 @@ nav_server:
       goal_speed_guard_abs_floor: 0.6    # 安全刹车最小减速度 (m/s^2)
       pivot_turn_heading_thresh: 1.57  # 航向误差>该值时原地转向 (rad)
       heading_slowdown_start: 0.785       # 航向误差>该值开始降速 (rad)
-      heading_slowdown_min_factor: 0.3  # 航向降速最小倍率
+      heading_slowdown_min_factor: 0.4  # 航向降速最小倍率
       enable_curvature_speed_decay: true  # 高曲率路段启用参考速度衰减
       curvature_decay_kappa_ref: 5.0      # 曲率参考值(1/m)，越小衰减越明显
       curvature_decay_min_factor: 0.9    # 曲率衰减最小倍率

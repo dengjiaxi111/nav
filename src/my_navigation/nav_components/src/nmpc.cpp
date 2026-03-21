@@ -395,23 +395,42 @@ nav_core::ControlResult NMPC::computeVelocity(
     double alpha_cmd = u_opt[1];
     double v_cmd = x0[5] + a_cmd * dt;
     double omega_cmd = x0[6] + alpha_cmd * dt;
+    const double ref_v0 = yref_sequence.front()[3];
+    const double ref_omega0 = yref_sequence.front()[4];
+    const double v_cmd_before_latch = v_cmd;
+    bool goal_speed_guard_active = false;
+    double guard_dist = params_.goal_decel_start_dist * params_.goal_speed_guard_dist_scale;
+    double v_safe = params_.max_linear_vel;
 
     // 近终点安全保护：进入减速锁存后，线速度只允许下降不允许回升
     if (goal_brake_latched_) {
-        v_cmd = std::min(v_cmd, last_state_[3]);
+        v_cmd = std::min(v_cmd, goal_brake_speed_cap_);
+        if (std::abs(v_cmd - v_cmd_before_latch) > 1e-4) {
+            RCLCPP_INFO_THROTTLE(
+                node_->get_logger(), *node_->get_clock(), 500,
+                "NMPC latch clamp: dist=%.3f ref_v0=%.3f raw_v=%.3f speed_cap=%.3f clamped_v=%.3f",
+                dist, ref_v0, v_cmd_before_latch, goal_brake_speed_cap_, v_cmd);
+        }
     }
 
     // 近终点绝对安全包络：无论参考或权重如何抖动，速度上限都受 sqrt(2ad) 约束
     if (params_.enable_goal_speed_guard) {
-        double guard_dist = params_.goal_decel_start_dist * params_.goal_speed_guard_dist_scale;
         if (dist < guard_dist) {
+            goal_speed_guard_active = true;
             double a_guard = std::max(params_.goal_speed_guard_abs_floor,
                                       params_.max_linear_accel * params_.goal_speed_guard_decel_scale);
-            double v_safe = std::sqrt(std::max(0.0, 2.0 * a_guard * dist));
+            v_safe = std::sqrt(std::max(0.0, 2.0 * a_guard * dist));
+            const double v_cmd_before_guard = v_cmd;
             if (params_.allow_reverse) {
                 v_cmd = std::clamp(v_cmd, -v_safe, v_safe);
             } else {
                 v_cmd = std::clamp(v_cmd, 0.0, v_safe);
+            }
+            if (std::abs(v_cmd - v_cmd_before_guard) > 1e-4) {
+                RCLCPP_WARN_THROTTLE(
+                    node_->get_logger(), *node_->get_clock(), 500,
+                    "NMPC goal_speed_guard: dist=%.3f guard_dist=%.3f ref_v0=%.3f raw_v=%.3f v_safe=%.3f clamped_v=%.3f",
+                    dist, guard_dist, ref_v0, v_cmd_before_guard, v_safe, v_cmd);
             }
         }
     }
@@ -425,6 +444,15 @@ nav_core::ControlResult NMPC::computeVelocity(
     
     cmd_vel.linear.x = v_cmd;
     cmd_vel.angular.z = omega_cmd;
+
+    if (std::abs(v_cmd) < 1e-3 && std::abs(omega_cmd) > 0.1) {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 500,
+            "NMPC zero linear cmd: dist=%.3f ref_v0=%.3f ref_w0=%.3f a_cmd=%.3f alpha_cmd=%.3f "
+            "x0_v=%.3f x0_vcmd=%.3f latch=%d guard=%d v_safe=%.3f nearest_idx=%d",
+            dist, ref_v0, ref_omega0, a_cmd, alpha_cmd,
+            x0[3], x0[5], goal_brake_latched_, goal_speed_guard_active, v_safe, nearest_idx_);
+    }
     
     // 更新状态
     last_state_ = x0;
@@ -566,6 +594,26 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         if (!goal_brake_latched_) {
             goal_brake_latched_ = true;
             goal_brake_speed_cap_ = params_.desired_velocity;
+            RCLCPP_INFO(node_->get_logger(),
+                "NMPC: 进入终点减速锁存 total_dist_to_goal=%.3f, dist_to_goal_now=%.3f, init_cap=%.3f",
+                total_dist_to_goal, dist_to_goal_now, goal_brake_speed_cap_);
+        }
+    }
+    if (goal_brake_latched_) {
+        const double aggressive_decel = params_.max_linear_accel * 1.2;
+        double current_brake_cap = std::sqrt(
+            std::max(0.0, 2.0 * aggressive_decel * dist_to_goal_now));
+        current_brake_cap = std::min(params_.desired_velocity, current_brake_cap);
+        if (dist_to_goal_now <= 0.05) {
+            current_brake_cap = 0.0;
+        }
+        const double prev_brake_cap = goal_brake_speed_cap_;
+        goal_brake_speed_cap_ = std::min(goal_brake_speed_cap_, current_brake_cap);
+        if (std::abs(goal_brake_speed_cap_ - prev_brake_cap) > 1e-4) {
+            RCLCPP_INFO_THROTTLE(
+                node_->get_logger(), *node_->get_clock(), 500,
+                "NMPC brake cap update: dist_goal=%.3f total_dist=%.3f current_cap=%.3f latched_cap=%.3f",
+                dist_to_goal_now, total_dist_to_goal, current_brake_cap, goal_brake_speed_cap_);
         }
     }
     
@@ -609,6 +657,11 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 // 终点平滑刹车：靠近目标时将参考速度连续收敛到 0
                 double remaining_dist = std::max(0.0, total_dist_to_goal - dist);
                 double desired_v = params_.desired_velocity;
+                bool remaining_dist_stop = false;
+                bool pivot_turn_stop = false;
+                double heading_speed_factor = 1.0;
+                double curvature_decay = 1.0;
+                double lateral_shrink_ratio = 1.0;
 
 
                 // 1. 计算运动学刹车所需的极限速度
@@ -625,6 +678,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 // 当距离小于 0.05m 时，直接给 0，消除末端积分漂移
                 if (remaining_dist <= 0.05) {
                     desired_v = 0.0;
+                    remaining_dist_stop = true;
                 }
 
 
@@ -635,12 +689,15 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 double heading_err = std::abs(d_theta);
                 if (heading_err > params_.pivot_turn_heading_thresh) {
                     desired_v = 0.0;
+                    pivot_turn_stop = true;
                 } else if (heading_err > params_.heading_slowdown_start) {
                     double denom = std::max(1e-3,
                         params_.pivot_turn_heading_thresh - params_.heading_slowdown_start);
-                    double speed_factor =
+                    heading_speed_factor =
                         1.0 - (heading_err - params_.heading_slowdown_start) / denom;
-                    desired_v *= std::max(params_.heading_slowdown_min_factor, speed_factor);
+                    heading_speed_factor = std::max(params_.heading_slowdown_min_factor,
+                                                    heading_speed_factor);
+                    desired_v *= heading_speed_factor;
                 }
 
                 // 高曲率路段速度衰减：v *= clamp(1 / (1 + |kappa| / kappa_ref), min_factor, 1)
@@ -648,17 +705,16 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     double seg_len = std::hypot(p2.x - p1.x, p2.y - p1.y);
                     if (seg_len > 1e-3) {
                         double kappa = std::abs(theta_diff) / seg_len;
-                        double decay = 1.0 / (1.0 + kappa / params_.curvature_decay_kappa_ref);
-                        decay = std::clamp(decay,
-                                           params_.curvature_decay_min_factor,
-                                           1.0);
-                        desired_v *= decay;
+                        curvature_decay = 1.0 / (1.0 + kappa / params_.curvature_decay_kappa_ref);
+                        curvature_decay = std::clamp(curvature_decay,
+                                                     params_.curvature_decay_min_factor,
+                                                     1.0);
+                        desired_v *= curvature_decay;
                     }
                 }
 
                 if (goal_brake_latched_) {
                     desired_v = std::min(desired_v, goal_brake_speed_cap_);
-                    goal_brake_speed_cap_ = std::min(goal_brake_speed_cap_, desired_v);
                 }
                 
                 // ========== 横向误差自适应速度缩减 (首次规划 i=0 时) ==========
@@ -696,19 +752,36 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     
                     // 速度缩减系数：当 e_cross 较大时，通过 α 降低纵向速度
                     if (e_cross > params_.lateral_error_threshold) {
-                        double shrink_ratio = std::max(0.0, 
+                        lateral_shrink_ratio = std::max(0.0,
                             (v_prim_norm * std::cos(alpha)) / (v_ref_norm + 1e-6)
                         );
-                        shrink_ratio = std::clamp(shrink_ratio, 0.3, 1.0);  // 限制最低 30% 速度
-                        desired_v *= shrink_ratio;
+                        lateral_shrink_ratio = std::clamp(lateral_shrink_ratio, 0.3, 1.0);
+                        desired_v *= lateral_shrink_ratio;
                         
                         if (stats_.solve_count % 20 == 0) {
                             RCLCPP_INFO(node_->get_logger(),
                                 "NMPC: 横向误差=%.2fm > %.2f, α=%.1f°, 速度缩减至%.2f (%.0f%%)",
                                 e_cross, params_.lateral_error_threshold,
-                                alpha * 180.0 / M_PI, desired_v, shrink_ratio * 100.0);
+                                alpha * 180.0 / M_PI, desired_v, lateral_shrink_ratio * 100.0);
                         }
                     }
+                }
+
+                if (i == 0 &&
+                    (dist_to_goal_now < params_.goal_decel_start_dist * params_.goal_speed_guard_dist_scale ||
+                     desired_v < 0.05 || goal_brake_latched_ ||
+                     heading_err > params_.heading_slowdown_start)) {
+                    RCLCPP_INFO_THROTTLE(
+                        node_->get_logger(), *node_->get_clock(), 500,
+                        "NMPC ref[0]: dist_goal=%.3f remain=%.3f v_ref=%.3f v_limit=%.3f "
+                        "heading_err=%.1fdeg heading_factor=%.2f pivot_stop=%d remain_stop=%d "
+                        "curvature_decay=%.2f lateral_ratio=%.2f latch=%d cap_before=%.3f cap_after=%.3f idx=%d",
+                        dist_to_goal_now, remaining_dist, desired_v, v_limit,
+                        heading_err * 180.0 / M_PI, heading_speed_factor,
+                        pivot_turn_stop, remaining_dist_stop,
+                        curvature_decay, lateral_shrink_ratio,
+                        goal_brake_latched_, goal_brake_speed_cap_, goal_brake_speed_cap_,
+                        nearest_idx_);
                 }
                 
                 // 角速度参考
