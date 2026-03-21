@@ -81,7 +81,7 @@ private:
     // 新增：路径缓存和复用
     nav_msgs::msg::Path cached_path_;  // 缓存的路径
     geometry_msgs::msg::PoseStamped cached_goal_;  // 缓存的目标
-    double goal_tolerance_ = 0.2;  // 目标变化阈值(米)
+    double goal_change_tolerance_ = 0.2;  // 目标变化阈值(米)
     double obstacle_check_threshold_ = 95;  // 障碍物检查阈值
     double esdf_warn_min_safe_dist_ = 0.12;  // 平滑后ESDF预警最小安全距离(米)
     double start_deviation_threshold_ = 1.0;  // 起点偏离缓存路径阈值(米)

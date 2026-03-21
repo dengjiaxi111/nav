@@ -16,7 +16,7 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     
     enable_path_cache_ = node_->declare_parameter("planner.enable_path_cache", true);
     enable_auto_prune_ = node_->declare_parameter("planner.enable_auto_prune", true);
-    goal_tolerance_ = node_->declare_parameter("planner.goal_tolerance", 0.2);
+    goal_change_tolerance_ = node_->declare_parameter("planner.goal_change_tolerance", 0.2);
     obstacle_check_threshold_ = node_->declare_parameter("planner.obstacle_check_threshold", 95);
     esdf_warn_min_safe_dist_ = node_->declare_parameter("planner.esdf_warn_min_safe_dist", 0.12);
     start_deviation_threshold_ = node_->declare_parameter("planner.start_deviation_threshold", 1.0);
@@ -593,7 +593,7 @@ bool SimplePlanner::goalChanged(const geometry_msgs::msg::PoseStamped& new_goal)
     double dy = new_goal.pose.position.y - cached_goal_.pose.position.y;
     double dist = std::hypot(dx, dy);
     
-    return dist > goal_tolerance_;
+    return dist > goal_change_tolerance_;
 }
 
 nav_msgs::msg::Path SimplePlanner::prunePath(

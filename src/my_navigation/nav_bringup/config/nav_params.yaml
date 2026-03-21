@@ -112,7 +112,7 @@ nav_server:
       # 路径复用和剪枝
       enable_path_cache: true         # 启用路径缓存和复用
       enable_auto_prune: true         # 启用自动剪枝已驶过部分
-      goal_tolerance: 0.2             # 目标变化阈值(米), 小于此值则认为目标未变化
+      goal_change_tolerance: 0.2      # 目标变化阈值(米), 小于此值则认为目标未变化
       obstacle_check_threshold: 99    # 障碍物检查阈值, 路径上代价值 >= 此值视为障碍物
       esdf_warn_min_safe_dist: 0.12   # 平滑后ESDF预警最小安全距离(米)
       start_deviation_threshold: 1.0  # 起点偏离缓存路径阈值(米), 超过则强制重规划

@@ -32,9 +32,9 @@
     # 用粗分辨率 NDT 少量迭代快速评分，选最优 yaw 作为三阶段 NDT 的初始值。
     # 🔴 调参提示：step_deg 越小越精确但越慢。Δ=15°/step=2° → 15个候选，约 2~4 秒。
     yaw_seed_enable: false             # 是否启用 yaw 多假设验证
-    yaw_seed_half_range_deg: 8.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
-    yaw_seed_step_deg: 1.0            # 搜索步长（度），越小越精确
-    yaw_seed_ndt_resolution: 1.20     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）
+    yaw_seed_half_range_deg: 15.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
+    yaw_seed_step_deg: 2.0            # 搜索步长（度），越小越精确
+    yaw_seed_ndt_resolution: 1.05     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）
     yaw_seed_ndt_max_iter: 10          # 评分用的 NDT 最大迭代次数（少量迭代够了）
     # 评分置信度阈值：所有候选的 best_score 都高于此值时，说明评分不可信（点云质量差/位置偏差太大）
     # 此时放弃 yaw-seed 结果，保留用户原始给定的 yaw，直接进入三阶段 NDT
@@ -48,9 +48,9 @@
     # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
     # 导致被地面、天花板或外围噪点带偏。
     # 尝试把 stage1_resolution 改小（比如 0.8 或 0.6），防止大网格吸收过多错误特征。
-    ndt_stage1_resolution: 1.20
-    ndt_stage2_resolution: 0.60    
-    ndt_stage3_resolution: 0.2     
+    ndt_stage1_resolution: 1.00
+    ndt_stage2_resolution: 0.70    
+    ndt_stage3_resolution: 0.3     
 
     # 收敛参数
     ndt_max_iterations: 80
@@ -82,8 +82,7 @@
     accumulate_frames: 4
     accumulate_duration: 2.5
 
-    # ==================== 空间过滤 (按雷达底盘坐标系) ====================
-    # 🔴 调参提示【极大概率是这里的问题】：
+    # ==================== 空间过滤 (按雷达底盘坐标系) ===================
     # 很多室内场地的地图没有天花板或者地面标高与雷达真实高度不一致！
     # 如果 filter_z_min 太高或 filter_z_max 过大，导致把地面的点和地图的立柱对齐，或者把天花板对齐进去，就会把正确的初值带飞。
     # - 强烈建议：将 filter_z_min 调到 0.0 或更高（比如 0.3），也就是切掉所有地面和人的腿部。
