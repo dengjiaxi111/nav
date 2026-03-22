@@ -644,39 +644,6 @@ private:
         publishFeedback();
     }
 
-    bool queryStairNormalIn3x3Neighborhood(double wx, double wy, double& nx, double& ny) const {
-        if (!map_manager_) {
-            return false;
-        }
-
-        if (map_manager_->getStairTraverseNormal(wx, wy, nx, ny)) {
-            return true;
-        }
-
-        const double res = std::max(1e-3, map_manager_->resolution());
-        for (int dy = -1; dy <= 1; ++dy) {
-            for (int dx = -1; dx <= 1; ++dx) {
-                if (dx == 0 && dy == 0) {
-                    continue;
-                }
-
-                double local_nx = 0.0;
-                double local_ny = 0.0;
-                if (map_manager_->getStairTraverseNormal(
-                        wx + dx * res,
-                        wy + dy * res,
-                        local_nx,
-                        local_ny)) {
-                    nx = local_nx;
-                    ny = local_ny;
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
     bool detectUpcomingStairDistance(double& dist_to_stair_m) const {
         dist_to_stair_m = std::numeric_limits<double>::infinity();
 
@@ -727,7 +694,7 @@ private:
                 double wy = p0.y + seg_dy * t;
                 double nx = 0.0;
                 double ny = 0.0;
-                if (queryStairNormalIn3x3Neighborhood(wx, wy, nx, ny)) {
+                if (map_manager_->getStairTraverseNormal(wx, wy, nx, ny)) {
                     const double dot = dir_x * nx + dir_y * ny;
                     // 仅在“上台阶”方向触发（下台阶不触发）
                     // 法向定义为 n = black - gray（低侧 -> 高侧），
