@@ -161,8 +161,24 @@ nav_server:
       allow_reverse: false       # 倒车
       
       # === 局部参考轨迹提取 ===
-      horizon_length: 1.2        # 前向提取距离 (米) - 缩短以增强近端跟踪
-      desired_velocity: 1.5      # 期望跟踪速度 (m/s) - 降低以更稳定
+      # horizon_length 与 desired_velocity 共同决定参考轨迹的运动学一致性：
+      #   直道下：v_ref_implicit = horizon_length / T_horizon = desired_velocity
+      #   故推荐 horizon_length = desired_velocity * T_horizon_solver (= 1.5 * 1.5 = 2.25m)
+      # 速度一致性补丁（代码中已实施）：desired_v = min(desired_v, step_dist/dt)，
+      #   确保速度参考不超过位置间距隐含的速度上限，消除代价函数内耗
+      horizon_length: 2.25       # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
+      desired_velocity: 1.5      # 期望巡航速度 (m/s)
+
+      # 曲率自适应 horizon：effective_horizon = horizon_length / (1 + kappa_scale * kappa_max)
+      # 同时自动压缩位置间距和速度参考上限（运动学一致），一致降低弯道速度
+      # 典型效果（kappa_scale=0.5, horizon=2.25m）：
+      #   κ=0/m (直道): horizon=2.25m → v_implicit=1.50 m/s
+      #   κ=1/m       : horizon=1.50m → v_implicit=1.00 m/s
+      #   κ=2/m       : horizon=1.12m → v_implicit=0.75 m/s
+      #   κ=3/m       : horizon=0.90m → v_implicit=0.60 m/s
+      enable_curvature_horizon_adapt: true
+      horizon_kappa_scale: 0.5   # 压缩强度
+      horizon_min_length: 0.75   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_decel_start_dist: 2.5  # 距终点开始减速距离 (m)
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
@@ -177,21 +193,24 @@ nav_server:
       curvature_decay_kappa_ref: 5.0      # 曲率参考值(1/m)，越小衰减越明显
       curvature_decay_min_factor: 0.9    # 曲率衰减最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
-      vel_lag_tau: 0.6           # 线速度一阶滞后时间常数(s)
-      omega_lag_tau: 0.15         # 角速度一阶滞后时间常数(s)
+      # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
+      vel_lag_tau: 0.5           # 线速度一阶滞后时间常数(s)
+      omega_lag_tau: 0.15        # 角速度一阶滞后时间常数(s)
       lateral_error_threshold: 0.1  # 横向误差阈值 (m)，超过时启用速度缩减策略
 
       # === 代价权重（运行时生效） ===
-      Q_position: 25.0           # 位置(x,y)跟踪权重
+      Q_position: 20.0           # 位置(x,y)跟踪权重
       Q_orientation: 8.0         # 航向角(theta)跟踪权重
-      Q_velocity: 5.0            # 速度跟踪权重（v+omega）
-      R_linear: 0.02              # 线加速度平滑权重
+      Q_velocity: 5.0            # 线速度跟踪权重
+      Q_omega: 5.0               # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
+      R_linear: 0.02             # 线加速度平滑权重
       R_angular: 0.01            # 角加速度平滑权重
+      contouring_weight: 10.0   # 路径横向偏离(contouring)权重
+
 
       # === ESDF/轮廓代价（运行时生效） ===
       esdf_weight: 1e-3         # ESDF 违反代价权重
       esdf_safe_dist: 0.8        # ESDF 安全距离阈值(m)
-      contouring_weight: 0.1    # 路径横向偏离(contouring)权重
 
       # === 权重缩放/ESDF开关（运行时生效） ===
       terminal_multiplier: 2.0   # 终端代价

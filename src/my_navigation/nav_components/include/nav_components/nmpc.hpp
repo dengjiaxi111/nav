@@ -88,14 +88,22 @@ private:
 
     /**
      * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
-      * 参数格式 p = [xref(7), d_esdf, weight_scale,
-      *               q_pos, q_theta, q_vel, r_lin, r_ang,
-      *               esdf_weight, esdf_safe_dist, contouring_weight,
-      *               vel_lag_tau, omega_lag_tau]
+     * 参数格式 p = [xref(7), d_esdf, weight_scale,
+     *               q_pos, q_theta, q_vel, r_lin, r_ang,
+     *               esdf_weight, esdf_safe_dist, contouring_weight,
+     *               vel_lag_tau, omega_lag_tau, q_omega]
      * @param yref 参考轨迹（用于查询位置）
      */
     void injectEsdfParameters(const std::vector<std::vector<double>>& yref,
                               const std::vector<double>& theta_adjusted);
+
+    /**
+     * @brief 计算路径指定段的最大曲率
+     * @param start_idx 起始路径点索引
+     * @param num_points 向前检查的路径点数量
+     * @return 最大曲率 (1/m)
+     */
+    double computeLocalMaxCurvature(int start_idx, int num_points) const;
     
     // ========== 状态变量 ==========
     rclcpp::Node* node_;
@@ -127,7 +135,8 @@ private:
     int N_horizon_ = 50;
     double T_horizon_ = 1.5;
     
-    static constexpr int NP_PARAM = 19;
+    // 参数总数必须与 model.py 中 self.params 的维度一致（当前 20 = 原19 + q_omega）
+    static constexpr int NP_PARAM = 20;
     
     // ========== 参数配置 ==========
     struct NMPCParams {
@@ -142,6 +151,7 @@ private:
         double Q_position = 10.0;
         double Q_orientation = 5.0;
         double Q_velocity = 1.0;
+        double Q_omega = 5.0;      // 角速度跟踪权重（独立于 Q_velocity）
         double R_linear = 0.1;
         double R_angular = 0.1;
 
@@ -153,10 +163,17 @@ private:
         // ESDF 代价开关
         bool enable_esdf_cost = true;      // 启用 ESDF 代价
 
-        // 局部参考提取
-        double horizon_length = 3.0;       // 提取前方路径长度 (米)
-        double desired_velocity = 1.0;     // 期望速度
-        bool use_omega_ref_from_path = false;  // 是否使用路径导数作为 omega_ref
+        // 局部参考轨迹提取
+        // horizon_length: 参考轨迹覆盖的实际路径弧长 (米)，与 desired_velocity 解耦
+        // desired_velocity: 参考速度基准值，与位置间距无关
+        double horizon_length = 2.0;       // 参考覆盖弧长 (米)
+        double desired_velocity = 1.0;     // 期望巡航速度 (m/s)
+        bool use_omega_ref_from_path = false;
+
+        // 曲率自适应 horizon：弯道时自动缩短覆盖弧长，减少前视距离
+        bool enable_curvature_horizon_adapt = true;
+        double horizon_kappa_scale = 0.5;  // 曲率对 horizon 的压缩系数
+        double horizon_min_length = 0.4;   // horizon 最小值 (米)
 
         // 终点减速与起步对齐（参考轨迹整形）
         double goal_decel_start_dist = 1.5;      // 距终点开始减速距离 (m)

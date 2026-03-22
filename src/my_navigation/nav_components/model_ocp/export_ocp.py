@@ -56,6 +56,7 @@ def export_nmpc_solver():
     q_pos = model_obj.q_pos
     q_theta = model_obj.q_theta
     q_vel = model_obj.q_vel
+    q_omega = model_obj.q_omega
     r_lin = model_obj.r_lin
     r_ang = model_obj.r_ang
     esdf_weight = model_obj.esdf_weight
@@ -89,8 +90,7 @@ def export_nmpc_solver():
         q_pos * (state_err[0] ** 2 + state_err[1] ** 2)
         + q_theta * (state_err[2] ** 2)
         + q_vel * (state_err[3] ** 2)
-        # 强化角速度阻尼，抑制 180° 大转向过冲与直线衰减振荡
-        + 5.0 * (state_err[4] ** 2)
+        + q_omega * (state_err[4] ** 2)
     )
     control_cost = r_lin * (control_err[0] ** 2) + r_ang * (control_err[1] ** 2)
     esdf_cost = esdf_weight * esdf_violation**2
@@ -115,15 +115,16 @@ def export_nmpc_solver():
     # p = [xref(7), d_esdf, weight_scale,
     #      q_pos, q_theta, q_vel, r_lin, r_ang,
     #      esdf_weight, esdf_safe_dist, contouring_weight,
-    #      vel_lag_tau, omega_lag_tau]
+    #      vel_lag_tau, omega_lag_tau, q_omega]
     ocp.parameter_values = np.array([
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-        10.0,
-        1.0,
-        10.0, 5.0, 1.0,
-        0.1, 0.1,
-        20.0, 0.5, 50.0,
-        0.6, 0.6
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # xref [0..6]
+        10.0,                                  # d_esdf [7]
+        1.0,                                   # weight_scale [8]
+        10.0, 5.0, 1.0,                        # q_pos, q_theta, q_vel [9..11]
+        0.1, 0.1,                              # r_lin, r_ang [12..13]
+        20.0, 0.5, 50.0,                       # esdf_weight, esdf_safe_dist, contouring_weight [14..16]
+        0.6, 0.6,                              # vel_lag_tau, omega_lag_tau [17..18]
+        5.0                                    # q_omega [19]
     ])
     
     # ========== 约束 ==========
@@ -172,7 +173,7 @@ def export_nmpc_solver():
     print(f"正在生成 NMPC solver 到 {output_dir}...")
     print(f"  模型类型: {'Lag-augmented' if enable_lag_model else 'Direct-accel(no-lag)'}")
     print(f"  状态维度: nx={nx}, 控制维度: nu={nu}")
-    print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights + lag_tau)")
+    print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights + lag_tau + q_omega)")
     print(f"  成本类型: EXTERNAL (tracking + ESDF + control)")
     print(f"  预测步数: N={N}, 时域: T={T_horizon}s, dt={T_horizon/N}s")
     

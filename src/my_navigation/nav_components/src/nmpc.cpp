@@ -54,6 +54,9 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.enable_curvature_speed_decay", params_.enable_curvature_speed_decay);
     node_->declare_parameter("nmpc.curvature_decay_kappa_ref", params_.curvature_decay_kappa_ref);
     node_->declare_parameter("nmpc.curvature_decay_min_factor", params_.curvature_decay_min_factor);
+    node_->declare_parameter("nmpc.enable_curvature_horizon_adapt", params_.enable_curvature_horizon_adapt);
+    node_->declare_parameter("nmpc.horizon_kappa_scale", params_.horizon_kappa_scale);
+    node_->declare_parameter("nmpc.horizon_min_length", params_.horizon_min_length);
     node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
     node_->declare_parameter("nmpc.vel_lag_tau", params_.vel_lag_tau);
     node_->declare_parameter("nmpc.omega_lag_tau", params_.omega_lag_tau);
@@ -63,6 +66,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.Q_position", params_.Q_position);
     node_->declare_parameter("nmpc.Q_orientation", params_.Q_orientation);
     node_->declare_parameter("nmpc.Q_velocity", params_.Q_velocity);
+    node_->declare_parameter("nmpc.Q_omega", params_.Q_omega);
     node_->declare_parameter("nmpc.R_linear", params_.R_linear);
     node_->declare_parameter("nmpc.R_angular", params_.R_angular);
 
@@ -129,6 +133,12 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.curvature_decay_kappa_ref = std::max(1e-3, params_.curvature_decay_kappa_ref);
     params_.curvature_decay_min_factor =
         std::clamp(params_.curvature_decay_min_factor, 0.05, 1.0);
+    params_.enable_curvature_horizon_adapt =
+        node_->get_parameter("nmpc.enable_curvature_horizon_adapt").as_bool();
+    params_.horizon_kappa_scale =
+        std::max(0.0, node_->get_parameter("nmpc.horizon_kappa_scale").as_double());
+    params_.horizon_min_length =
+        std::max(0.1, node_->get_parameter("nmpc.horizon_min_length").as_double());
     params_.vel_lag_tau = std::max(0.05, node_->get_parameter("nmpc.vel_lag_tau").as_double());
     params_.omega_lag_tau =
         std::max(0.05, node_->get_parameter("nmpc.omega_lag_tau").as_double());
@@ -140,6 +150,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.Q_position = node_->get_parameter("nmpc.Q_position").as_double();
     params_.Q_orientation = node_->get_parameter("nmpc.Q_orientation").as_double();
     params_.Q_velocity = node_->get_parameter("nmpc.Q_velocity").as_double();
+    params_.Q_omega = node_->get_parameter("nmpc.Q_omega").as_double();
     params_.R_linear = node_->get_parameter("nmpc.R_linear").as_double();
     params_.R_angular = node_->get_parameter("nmpc.R_angular").as_double();
 
@@ -200,8 +211,8 @@ void NMPC::initialize(rclcpp::Node* node) {
         "✓ NMPC Controller initialized (N=%d, T=%.2f s, dt=%.3f s)", 
         N_horizon_, T_horizon_, T_horizon_ / static_cast<double>(N_horizon_));
     RCLCPP_INFO(node_->get_logger(),
-        "NMPC 权重: Qp=%.2f Qt=%.2f Qv=%.2f Rl=%.3f Ra=%.3f EsdfW=%.2f EsdfSafe=%.2f Contour=%.2f",
-        params_.Q_position, params_.Q_orientation, params_.Q_velocity,
+        "NMPC 权重: Qp=%.2f Qt=%.2f Qv=%.2f Qw=%.2f Rl=%.3f Ra=%.3f EsdfW=%.2f EsdfSafe=%.2f Contour=%.2f",
+        params_.Q_position, params_.Q_orientation, params_.Q_velocity, params_.Q_omega,
         params_.R_linear, params_.R_angular,
         params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight);
     RCLCPP_INFO(node_->get_logger(),
@@ -330,8 +341,8 @@ nav_core::ControlResult NMPC::computeVelocity(
         double dy = yref_sequence[i][1] - yref_sequence[i-1][1];
         double step_dist = std::hypot(dx, dy);
         
-        // 单步距离不应超过 desired_velocity * dt * 1.5（允许15%误差）
-        double max_step = params_.desired_velocity * (T_horizon_ / N_horizon_) * 1.5;
+        // 单步距离不应超过 step_dist * 1.5（允许50%弹性，兼容路径稀疏段）
+        double max_step = (params_.horizon_length / N_horizon_) * 1.5;
         if (step_dist > max_step) {
             RCLCPP_WARN(node_->get_logger(),
                 "NMPC: 参考轨迹不连续 (step %zu: %.2f m > %.2f m)",
@@ -631,6 +642,20 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         }
     }
     
+    // 曲率自适应 horizon：弯道时缩短参考覆盖弧长，避免 solver 跨弯道求捷径
+    double effective_horizon = params_.horizon_length;
+    if (params_.enable_curvature_horizon_adapt) {
+        double max_kappa = computeLocalMaxCurvature(nearest_idx_, 30);
+        effective_horizon /= (1.0 + params_.horizon_kappa_scale * max_kappa);
+        effective_horizon = std::max(params_.horizon_min_length, effective_horizon);
+    }
+
+    // 参考点位置间距：horizon 均匀分配到 N_horizon 个节点
+    // 注意：step_dist 与 desired_velocity 完全解耦
+    //   - step_dist 决定 solver 能"看到"多远的路径（空间前视距离）
+    //   - desired_velocity 只影响每个节点的速度参考值
+    const double step_dist = effective_horizon / N_horizon_;
+
     // 记住上一个找到的索引，确保参考轨迹单调递增
     int last_found_idx = static_cast<int>(pruned_start_idx);
     double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
@@ -638,10 +663,9 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     const double robot_theta_now = tf2::getYaw(current_pose.orientation);
 
     for (int i = 0; i <= N_horizon_; ++i) {
-        // 计算期望的前向距离
-        double forward_dist = params_.desired_velocity * i * dt;
+        double forward_dist = step_dist * i;
         
-        // ✅ 从上一个点继续搜索（保证单调性）
+        // 从上一个点继续搜索（保证单调性）
         int idx = last_found_idx;
         double dist = accumulated_dist;
         
@@ -802,8 +826,14 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                         nearest_idx_);
                 }
                 
-                // 角速度参考
-                // 默认关闭路径导数 omega_ref
+                // 运动学一致性约束：速度参考不得超过位置参考间距所隐含的速度上限
+                // implicit_v = step_dist / dt_solver
+                // 若 desired_v > implicit_v，则位置代价（Q_position*||e_pos||²）与速度代价
+                // （Q_velocity*(v-v_ref)²）方向相反，会造成代价函数内耗，实际速度被过度压低
+                const double implicit_v = step_dist / dt;
+                desired_v = std::min(desired_v, implicit_v);
+
+                // 角速度参考（默认关闭，避免离散路径噪声引入尖峰）
                 double omega_ref = 0.0;
                 if (params_.use_omega_ref_from_path && !yref.empty()) {
                     double dtheta = theta - yref.back()[2];
@@ -959,19 +989,23 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
                               const std::vector<double>& theta_adjusted) {
     if (!acados_ocp_capsule_) return;
 
-    // 参数布局:
-    // [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
-    //  d_esdf, weight_scale,
-    //  q_pos, q_theta, q_vel, r_lin, r_ang,
-    //  esdf_weight, esdf_safe_dist, contouring_weight,
-    //  vel_lag_tau, omega_lag_tau]
+    // 参数布局（与 model.py self.params 顺序严格对应）:
+    // [0..6]  xref: x, y, theta, v, omega, a, alpha
+    // [7]     d_esdf
+    // [8]     weight_scale
+    // [9..11] q_pos, q_theta, q_vel
+    // [12..13] r_lin, r_ang
+    // [14..16] esdf_weight, esdf_safe_dist, contouring_weight
+    // [17..18] vel_lag_tau, omega_lag_tau
+    // [19]    q_omega
     double p_default[NP_PARAM] = {
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         10.0, 1.0,
         params_.Q_position, params_.Q_orientation, params_.Q_velocity,
         params_.R_linear, params_.R_angular,
         params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight,
-        params_.vel_lag_tau, params_.omega_lag_tau
+        params_.vel_lag_tau, params_.omega_lag_tau,
+        params_.Q_omega
     };
 
     bool has_esdf = params_.enable_esdf_cost && map_manager_ && map_manager_->hasEsdf();
@@ -1027,6 +1061,7 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
         p_values[16] = params_.contouring_weight;
         p_values[17] = params_.vel_lag_tau;
         p_values[18] = params_.omega_lag_tau;
+        p_values[19] = params_.Q_omega;
 
         // ESDF 查询 (仅距离)
         double dist = 10.0;
@@ -1083,6 +1118,35 @@ void NMPC::publishPredictedPath(const std_msgs::msg::Header& header, const std::
     }
     
     predicted_path_pub_->publish(predicted_path);
+}
+
+double NMPC::computeLocalMaxCurvature(int start_idx, int num_points) const {
+    if (global_path_.poses.size() < 2) return 0.0;
+
+    double max_kappa = 0.0;
+    int end = std::min(start_idx + num_points,
+                       static_cast<int>(global_path_.poses.size()) - 1);
+
+    for (int k = start_idx; k < end; ++k) {
+        const auto& p1 = global_path_.poses[k].pose;
+        const auto& p2 = global_path_.poses[k + 1].pose;
+
+        double dx = p2.position.x - p1.position.x;
+        double dy = p2.position.y - p1.position.y;
+        double seg_len = std::hypot(dx, dy);
+
+        if (seg_len < 1e-4) continue;
+
+        double t1 = tf2::getYaw(p1.orientation);
+        double t2 = tf2::getYaw(p2.orientation);
+        double dtheta = t2 - t1;
+        while (dtheta >  M_PI) dtheta -= 2.0 * M_PI;
+        while (dtheta < -M_PI) dtheta += 2.0 * M_PI;
+
+        double kappa = std::abs(dtheta) / seg_len;
+        max_kappa = std::max(max_kappa, kappa);
+    }
+    return max_kappa;
 }
 
 }  // namespace nav_components
