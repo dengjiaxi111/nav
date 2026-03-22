@@ -75,6 +75,9 @@ class WheellegModel:
         # 底层闭环一阶滞后时间常数（运行时注入）
         self.vel_lag_tau = ca.SX.sym('vel_lag_tau')
         self.omega_lag_tau = ca.SX.sym('omega_lag_tau')
+
+        # 角速度跟踪权重（独立于 q_vel，运行时注入）
+        self.q_omega = ca.SX.sym('q_omega')
         
         self.params = ca.vertcat(
             self.x_ref, self.y_ref, self.theta_ref, self.v_ref, self.omega_ref,
@@ -83,7 +86,8 @@ class WheellegModel:
             self.q_pos, self.q_theta, self.q_vel,
             self.r_lin, self.r_ang,
             self.esdf_weight, self.esdf_safe_dist, self.contouring_weight,
-            self.vel_lag_tau, self.omega_lag_tau
+            self.vel_lag_tau, self.omega_lag_tau,
+            self.q_omega
         )
         self.np = self.params.shape[0]
         

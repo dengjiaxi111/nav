@@ -39,7 +39,7 @@
 #define WHEELLEG_NMPC_NX     7
 #define WHEELLEG_NMPC_NZ     0
 #define WHEELLEG_NMPC_NU     2
-#define WHEELLEG_NMPC_NP     19
+#define WHEELLEG_NMPC_NP     20
 #define WHEELLEG_NMPC_NP_GLOBAL     0
 #define WHEELLEG_NMPC_NBX    4
 #define WHEELLEG_NMPC_NBX0   7

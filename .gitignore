@@ -13,8 +13,23 @@ bin-release/
 *.ipa
 *.apk
 *.pcd
-# py environments
+
+# C/C++ 
+*.o
+*.so
+*.a
+*.dylib
+*.dll
+[Oo]bj/
+[Bb]in/
+
+# Python & Acados env
+/.venv
 venv_acados/
+__pycache__/
+*.py[cod]
+*$py.class
+acados_ocp.json
 
 #ROS 
 build/

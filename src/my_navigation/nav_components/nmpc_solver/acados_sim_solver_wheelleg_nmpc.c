@@ -194,6 +194,7 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
     p[16] = 50;
     p[17] = 0.6;
     p[18] = 0.6;
+    p[19] = 5;
 
     wheelleg_nmpc_acados_sim_update_params(capsule, p, np);
     free(p);

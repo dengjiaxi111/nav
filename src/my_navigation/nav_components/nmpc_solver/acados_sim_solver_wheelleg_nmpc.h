@@ -37,7 +37,7 @@
 #define WHEELLEG_NMPC_NX     7
 #define WHEELLEG_NMPC_NZ     0
 #define WHEELLEG_NMPC_NU     2
-#define WHEELLEG_NMPC_NP     19
+#define WHEELLEG_NMPC_NP     20
 
 #ifdef __cplusplus
 extern "C" {
