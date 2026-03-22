@@ -221,6 +221,8 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
         global_path_.poses.clear();
         goal_brake_latched_ = false;
         goal_brake_speed_cap_ = 1e9;
+        pivot_turn_active_ = false;
+        pivot_turn_heading_error_ = 0.0;
         return;
     }
     
@@ -229,6 +231,8 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
     nearest_idx_ = 0;
     goal_brake_latched_ = false;
     goal_brake_speed_cap_ = 1e9;
+    pivot_turn_active_ = false;
+    pivot_turn_heading_error_ = 0.0;
     
     RCLCPP_INFO(node_->get_logger(), 
         "NMPC: 接收新路径, %zu 个点", path.poses.size());
@@ -440,6 +444,15 @@ nav_core::ControlResult NMPC::computeVelocity(
     }
     v_cmd = std::clamp(v_cmd, -params_.max_linear_vel, params_.max_linear_vel);
     omega_cmd = std::clamp(omega_cmd, -params_.max_angular_vel, params_.max_angular_vel);
+    if (pivot_turn_active_) {
+        if (std::abs(v_cmd) > 1e-4) {
+            RCLCPP_INFO_THROTTLE(
+                node_->get_logger(), *node_->get_clock(), 500,
+                "NMPC pivot hold: forcing v_cmd %.3f -> 0.000, heading_err=%.1fdeg, dist=%.3f",
+                v_cmd, pivot_turn_heading_error_ * 180.0 / M_PI, dist);
+        }
+        v_cmd = 0.0;
+    }
     
     cmd_vel.linear.x = v_cmd;
     cmd_vel.angular.z = omega_cmd;
@@ -561,6 +574,8 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     double horizon_length)
 {
     std::vector<std::vector<double>> yref;
+    pivot_turn_active_ = false;
+    pivot_turn_heading_error_ = 0.0;
     
     if (global_path_.poses.empty()) return yref;
     
@@ -697,6 +712,10 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     heading_speed_factor = std::max(params_.heading_slowdown_min_factor,
                                                     heading_speed_factor);
                     desired_v *= heading_speed_factor;
+                }
+                if (i == 0) {
+                    pivot_turn_active_ = pivot_turn_stop;
+                    pivot_turn_heading_error_ = heading_err;
                 }
 
                 // 高曲率路段速度衰减：v *= clamp(1 / (1 + |kappa| / kappa_ref), min_factor, 1)
