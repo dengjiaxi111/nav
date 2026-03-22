@@ -5,7 +5,7 @@
   ros__parameters:
     # ==================== 地图与初始位姿 ====================
     # 官方提供的 PCD 地图文件路径（绝对路径）
-    map_file: "/home/nuc/navigation2026/2025RMUC_real.pcd"
+    map_file: "/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd"
 
     # 手动设置初始位姿（如果 auto_initialize=true）
     initial_x: 0.0
@@ -31,7 +31,7 @@
     # 在三阶段 NDT 前，以用户给定 yaw 为中心，在 [yaw0-Δ, yaw0+Δ] 范围批量尝试候选朝向，
     # 用粗分辨率 NDT 少量迭代快速评分，选最优 yaw 作为三阶段 NDT 的初始值。
     # 🔴 调参提示：step_deg 越小越精确但越慢。Δ=15°/step=2° → 15个候选，约 2~4 秒。
-    yaw_seed_enable: true             # 是否启用 yaw 多假设验证
+    yaw_seed_enable: false             # 是否启用 yaw 多假设验证
     yaw_seed_half_range_deg: 15.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
     yaw_seed_step_deg: 2.0            # 搜索步长（度），越小越精确
     yaw_seed_ndt_resolution: 1.05     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）
@@ -48,7 +48,7 @@
     # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
     # 导致被地面、天花板或外围噪点带偏。
     # 尝试把 stage1_resolution 改小（比如 0.8 或 0.6），防止大网格吸收过多错误特征。
-    ndt_stage1_resolution: 1.20
+    ndt_stage1_resolution: 1.00
     ndt_stage2_resolution: 0.75    
     ndt_stage3_resolution: 0.40     
 
