@@ -6,7 +6,7 @@ nav_server:
     use_static_map_odom: false
     
     # 地图路径由 navigation.launch.py 注入
-    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map4.pgm"
+    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
     control_rate: 50.0
     goal_timeout: 60.0
     goal_tolerance: 0.1
