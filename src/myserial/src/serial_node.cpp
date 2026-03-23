@@ -5,6 +5,21 @@
 
 namespace rm
 {
+namespace
+{
+// 裁判系统机器人 ID -> 决策层阵营 ID（0:红方, 1:蓝方）
+uint8_t to_decision_team_id(uint8_t referee_robot_id)
+{
+    if (referee_robot_id >= 1 && referee_robot_id <= 11) {
+        return 0;
+    }
+    if (referee_robot_id >= 101 && referee_robot_id <= 111) {
+        return 1;
+    }
+    // 异常/未定义值兜底：按蓝方编号规则（>=100）判断，其余默认为红方
+    return (referee_robot_id >= 100) ? 1 : 0;
+}
+}  // namespace
 
 // 初始化logger
 void SerialNode::logger_init()
@@ -302,52 +317,16 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     // ============================================================
 
     // ---------- OurRobotState ----------
-    // 本机性能
-    our_state_.robot_id   = msg._robot_id;
-    our_state_.current_hp = msg._my_HP;   // TODO: 串口帧暂无当前血量，等电控扩展
-    our_state_.max_hp     = 0;   // TODO: 同上
+    // 按 robots_msgs/msg/decision_messages/OurRobotState.msg 填充
+    our_state_.robot_id   = to_decision_team_id(msg._robot_id);
+    our_state_.current_hp = msg._my_HP;
+    our_state_.max_hp     = 400;
     our_state_.x          = msg._x;
     our_state_.y          = msg._y;
     our_state_.yaw        = msg._angle;
-    // 增益（uint8 → float32，百分比语义一致）
-    our_state_.hp_recovery_buff      = static_cast<float>(msg._recovery_buff);
-    our_state_.defense_buff          = static_cast<float>(msg._defence_buff);
-    our_state_.negative_defense_buff = static_cast<float>(msg._vulnerability_buff);
-    our_state_.attack_buff           = static_cast<float>(msg._attack_buff);
-    // 弹药 / 金币
-    our_state_.allowance_17mm        = msg._projectile_allowance_17mm;
-    our_state_.remaining_gold_coins  = msg._remaining_gold_coin;
-    our_state_.reserve_allowance_17mm = msg._sentry_info & 0x07FF;  // bit0-10
-    our_state_.rfid_status           = msg._rfid_status;
-    // 己方队伍血量（my_HP 是本机哨兵血量，其余同队机器人当前帧无单独字段）
-    our_state_.sentry_hp   = msg._my_HP;
-    our_state_.outpost_hp  = msg._my_outpost_HP;
-    our_state_.base_hp     = msg._my_base_HP;
-    our_state_.hero_hp     = 0;   // TODO: 串口帧无己方英雄血量
-    our_state_.engineer_hp = 0;   // TODO: 同上
-    our_state_.infantry3_hp = 0;  // TODO: 同上
-    our_state_.infantry4_hp = 0;  // TODO: 同上
-    // 己方机器人位置（当前帧只有英雄，单位 m）
-    our_state_.hero_x      = game_status_.our_hero_x;
-    our_state_.hero_y      = game_status_.our_hero_y;
-    our_state_.engineer_x  = 0.0f;  // TODO: 需电控扩展串口帧
-    our_state_.engineer_y  = 0.0f;
-    our_state_.infantry3_x = 0.0f;
-    our_state_.infantry3_y = 0.0f;
-    our_state_.infantry4_x = 0.0f;
-    our_state_.infantry4_y = 0.0f;
+    our_state_.allowance_17mm = msg._projectile_allowance_17mm;
 
     our_state_pub_->publish(our_state_);
-
-    // ---------- EnemyRobotState ----------
-    enemy_state_.enemy_hero_hp      = msg._enemy_1_robot_HP;
-    enemy_state_.enemy_engineer_hp  = msg._enemy_2_robot_HP;
-    enemy_state_.enemy_infantry3_hp = msg._enemy_3_robot_HP;
-    enemy_state_.enemy_infantry4_hp = msg._enemy_4_robot_HP;
-    enemy_state_.enemy_sentry_hp    = msg._enemy_7_robot_HP;
-    // TODO: 对方位置/增益/发弹量需电控扩展串口帧后填入
-
-    enemy_state_pub_->publish(enemy_state_);
 
     // ---------- GameState ----------
     {
@@ -355,27 +334,6 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
         gs.competition_type     = msg._game_type;
         gs.stage                = msg._game_process;
         gs.stage_remaining_time = static_cast<double>(msg._stage_remain_time);
-        // 场地事件（与 GameStatus 解析对齐）
-        gs.supply_zone_no_overlap            = (msg._event_data)       & 0x01;
-        gs.supply_zone_overlap               = (msg._event_data >> 1)  & 0x01;
-        gs.supply_zone_occupation            = (msg._event_data >> 2)  & 0x01;
-        gs.small_energy_mechanism_activation = (msg._event_data >> 3)  & 0x01;
-        gs.large_energy_mechanism_activation = (msg._event_data >> 4)  & 0x01;
-        gs.fortress_gain_point_occupation    = (msg._event_data >> 23) & 0x03;
-        // 哨兵自主决策信息
-        gs.exchanged_allowance         = msg._sentry_info & 0x07FF;
-        gs.free_resurrection_available = (msg._sentry_info >> 19) & 0x01;
-        gs.sentry_posture              = 0;   // TODO: 串口帧暂无姿态字段
-        // TODO: 以下字段需电控扩展串口帧
-        gs.energy_mechanism_status          = 0;
-        gs.central_highland_occupation      = 0;
-        gs.trapezoid_highland_occupation    = 0;
-        gs.dart_hit_time                    = 0;
-        gs.dart_hit_target                  = 0;
-        gs.center_gain_point_occupation     = 0;
-        gs.outpost_gain_point_occupation    = 0;
-        gs.base_gain_point_occupation       = 0;
-        gs.energy_mechanism_activatable     = 0;
         game_state_pub_->publish(gs);
     }
     // ============================================================
