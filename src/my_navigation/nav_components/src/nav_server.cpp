@@ -10,6 +10,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <std_msgs/msg/u_int8.hpp>
@@ -156,6 +157,7 @@ public:
         declare_parameter("special_terrain.stair_mode_sample_step_m", 0.10);
         declare_parameter("special_terrain.stair_mode_uphill_dot_min", 0.1);
         declare_parameter("special_terrain.stair_mode_release_grace_cycles", 5);
+        declare_parameter("special_terrain.stair_mode_min_hold_sec", 0.35);
         declare_parameter("special_terrain.enable_stair_fixed_velocity_strategy", false);
         declare_parameter("special_terrain.stair_fixed_velocity_trigger_distance_m", 0.35);
         declare_parameter("special_terrain.stair_fixed_linear_vel", 0.35);
@@ -208,6 +210,8 @@ public:
             get_parameter("special_terrain.stair_mode_uphill_dot_min").as_double();
         stair_mode_release_grace_cycles_ =
             get_parameter("special_terrain.stair_mode_release_grace_cycles").as_int();
+        stair_mode_min_hold_sec_ =
+            get_parameter("special_terrain.stair_mode_min_hold_sec").as_double();
         enable_stair_fixed_velocity_strategy_ =
             get_parameter("special_terrain.enable_stair_fixed_velocity_strategy").as_bool();
         stair_fixed_velocity_trigger_distance_m_ = get_parameter(
@@ -250,6 +254,12 @@ public:
                         "special_terrain.stair_mode_release_grace_cycles=%d 非法，自动修正为0",
                         stair_mode_release_grace_cycles_);
             stair_mode_release_grace_cycles_ = 0;
+        }
+        if (stair_mode_min_hold_sec_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_min_hold_sec=%.3f 非法，自动修正为0.0",
+                        stair_mode_min_hold_sec_);
+            stair_mode_min_hold_sec_ = 0.0;
         }
         if (stair_fixed_linear_vel_ < 0.0) {
             RCLCPP_WARN(get_logger(),
@@ -319,6 +329,9 @@ public:
         goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
             "goal_pose", 10,
             std::bind(&NavServer::goalPoseCallback, this, std::placeholders::_1));
+        target_position_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
+            "/sentry/target_position", 10,
+            std::bind(&NavServer::targetPositionCallback, this, std::placeholders::_1));
         
         // 地图管理器（使用分层地图管理器）
         map_manager_ = std::make_shared<nav_components::LayeredMapManager>();
@@ -337,12 +350,13 @@ public:
         }
         if (enable_stair_mode_detection_) {
             RCLCPP_INFO(get_logger(),
-                        "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill_dot_min=%.2f, grace=%d",
+                        "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill_dot_min=%.2f, grace=%d, min_hold=%.2fs",
                         stair_mode_trigger_distance_m_,
                         stair_mode_lookahead_dist_m_,
                         stair_mode_sample_step_m_,
                         stair_mode_uphill_dot_min_,
-                        stair_mode_release_grace_cycles_);
+                        stair_mode_release_grace_cycles_,
+                        stair_mode_min_hold_sec_);
         }
         if (enable_stair_fixed_velocity_strategy_) {
             RCLCPP_INFO(get_logger(),
@@ -535,6 +549,24 @@ private:
         start_time_ = std::chrono::steady_clock::now();
         rviz_goal_active_ = true;
     }
+
+    // 决策层目标点桥接：/sentry/target_position (PointStamped) -> goal_pose (PoseStamped)
+    void targetPositionCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
+        auto goal = std::make_shared<geometry_msgs::msg::PoseStamped>();
+        goal->header.stamp = msg->header.stamp;
+        goal->header.frame_id = map_frame_;
+        goal->pose.position.x = msg->point.x;
+        goal->pose.position.y = msg->point.y;
+        goal->pose.position.z = 0.0;
+        goal->pose.orientation.x = 0.0;
+        goal->pose.orientation.y = 0.0;
+        goal->pose.orientation.z = 0.0;
+        goal->pose.orientation.w = 1.0;
+
+        RCLCPP_INFO(get_logger(), "[决策桥接] 目标点 (%.2f, %.2f) -> goal_pose",
+                    msg->point.x, msg->point.y);
+        goalPoseCallback(goal);
+    }
     
     void initComponents() {
         planner_.initialize(this);
@@ -598,7 +630,7 @@ private:
     void controlLoop() {
         // 支持 Action 和 RViz 两种目标来源
         if (!goal_handle_ && !rviz_goal_active_) {
-            publishStairMode(0, true);
+            publishStairMode(0, true, true);
             return;
         }
         
@@ -606,7 +638,7 @@ private:
         if (!updateRobotPose()) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
                 "无法获取 %s -> %s 变换", map_frame_.c_str(), base_frame_.c_str());
-            publishStairMode(0, true);
+            publishStairMode(0, true, true);
             return;
         }
         
@@ -619,7 +651,7 @@ private:
             goal_handle_->canceled(result);
             goal_handle_ = nullptr;
             fsm_.transitionTo(nav_core::NavState::IDLE);
-            publishStairMode(0, true);
+            publishStairMode(0, true, true);
             return;
         }
         
@@ -712,28 +744,42 @@ private:
         return false;
     }
 
-    void publishStairMode(uint8_t mode, bool force_publish) {
+    void publishStairMode(uint8_t mode, bool force_publish, bool bypass_hold = false) {
         if (!stair_mode_pub_) {
             return;
         }
 
-        if (!force_publish && mode == stair_mode_current_) {
+        uint8_t effective_mode = mode;
+        const auto now_tp = std::chrono::steady_clock::now();
+        if (effective_mode == 1) {
+            stair_mode_last_assert_time_ = now_tp;
+        } else if (!bypass_hold &&
+                   stair_mode_current_ == 1 &&
+                   stair_mode_min_hold_sec_ > 0.0) {
+            const double elapsed_since_assert = std::chrono::duration<double>(
+                now_tp - stair_mode_last_assert_time_).count();
+            if (elapsed_since_assert < stair_mode_min_hold_sec_) {
+                effective_mode = 1;
+            }
+        }
+
+        if (!force_publish && effective_mode == stair_mode_current_) {
             return;
         }
 
         std_msgs::msg::UInt8 msg;
-        msg.data = mode;
+        msg.data = effective_mode;
         stair_mode_pub_->publish(msg);
 
-        if (mode != stair_mode_current_) {
-            RCLCPP_INFO(get_logger(), "stair_mode -> %u", static_cast<unsigned>(mode));
-            stair_mode_current_ = mode;
+        if (effective_mode != stair_mode_current_) {
+            RCLCPP_INFO(get_logger(), "stair_mode -> %u", static_cast<unsigned>(effective_mode));
+            stair_mode_current_ = effective_mode;
         }
     }
 
     void updateStairModeDetection() {
         if (!enable_stair_mode_detection_) {
-            publishStairMode(0, true);
+            publishStairMode(0, true, true);
             stair_mode_release_counter_ = 0;
             return;
         }
@@ -1506,6 +1552,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr stair_mode_pub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr dynamic_layer_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr target_position_sub_;
     
     // 定时器
     rclcpp::TimerBase::SharedPtr control_timer_;      // 控制循环
@@ -1535,6 +1582,7 @@ private:
     double stair_mode_sample_step_m_{0.10};
     double stair_mode_uphill_dot_min_{0.1};
     int stair_mode_release_grace_cycles_{5};
+    double stair_mode_min_hold_sec_{0.35};
     bool enable_stair_fixed_velocity_strategy_{false};
     double stair_fixed_velocity_trigger_distance_m_{0.35};
     double stair_fixed_linear_vel_{0.35};
@@ -1543,6 +1591,7 @@ private:
     double stair_fixed_heading_deadband_{0.05};
     uint8_t stair_mode_current_{0};
     int stair_mode_release_counter_{0};
+    std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
 

@@ -492,25 +492,6 @@ void SerialNode::modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg
     _send_frame_.setHiPower(msg->use_capacity);
 }
 
-// 决策层目标点桥接：/sentry/target_position (PointStamped) → goal_pose (PoseStamped)
-void SerialNode::targetPosCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg)
-{
-    geometry_msgs::msg::PoseStamped goal;
-    goal.header.stamp    = msg->header.stamp;
-    goal.header.frame_id = "map";           // nav_server 固定使用 map 坐标系
-    goal.pose.position.x = msg->point.x;
-    goal.pose.position.y = msg->point.y;
-    goal.pose.position.z = 0.0;
-    // 不关注到达朝向，填单位四元数（yaw = 0）
-    goal.pose.orientation.x = 0.0;
-    goal.pose.orientation.y = 0.0;
-    goal.pose.orientation.z = 0.0;
-    goal.pose.orientation.w = 1.0;
-    goal_pose_pub_->publish(goal);
-    RCLCPP_INFO(this->get_logger(), "[决策桥接] 目标点 (%.2f, %.2f) → goal_pose",
-                msg->point.x, msg->point.y);
-}
-
 void SerialNode::monitor(){
     while (running_) {
         if (snd_failed_cnt_ >= 50) {

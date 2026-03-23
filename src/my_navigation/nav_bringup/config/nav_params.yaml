@@ -78,6 +78,7 @@ nav_server:
       stair_mode_sample_step_m: 0.05
       stair_mode_uphill_dot_min: 0.6  # 仅当路径方向·台阶法向 >= 该值时触发(上台阶)
       stair_mode_release_grace_cycles: 2
+      stair_mode_min_hold_sec: 0.30   # 抬腿信号最小保持时间(秒)，用于抑制 1->0 瞬时抖动
       # stair_mode=1 时采用固定速度，越过台阶段后自动回到 NMPC
       enable_stair_fixed_velocity_strategy: true
       stair_fixed_velocity_trigger_distance_m: 1.4  # 固定速度启用距离(米)，可与 stair_mode_trigger_distance_m 分离
