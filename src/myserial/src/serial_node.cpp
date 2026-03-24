@@ -452,11 +452,22 @@ void SerialNode::modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg
 
 void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg)
 {
+    _send_frame_.setAutoDriveMode(true);
     // 按需求：固定云台模式为 1，不使用 msg->gimbal_mode
     _send_frame_.setGimbalMode(1);
     // spin_mode 直接映射到底盘模式（0~3），超范围值进行截断
     const uint8_t spin_mode = (msg->spin_mode > 3) ? 3 : msg->spin_mode;
     _send_frame_.setChassisMode(spin_mode);
+
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(),
+        *this->get_clock(),
+        500,
+        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, auto_drive=%u",
+        static_cast<unsigned>(msg->spin_mode),
+        static_cast<unsigned>(_send_frame_.getChassisMode()),
+        static_cast<unsigned>(_send_frame_.getGimbalMode()),
+        static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
 }
 
 void SerialNode::monitor(){

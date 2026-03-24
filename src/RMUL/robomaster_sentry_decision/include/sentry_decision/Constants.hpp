@@ -14,12 +14,12 @@ namespace SentryConstants {
     }
 
     // 红方攻击点（robot_id=0）
-    const geometry_msgs::msg::Point RED_ATTACK_POINT = createPoint(602.9, 397.9);
+    const geometry_msgs::msg::Point RED_ATTACK_POINT = createPoint(157.0, 31.5);
     // 蓝方攻击点（robot_id=1）
     const geometry_msgs::msg::Point BLUE_ATTACK_POINT = createPoint(602.9, 397.9);  // 实际比赛中会替换为蓝方实际坐标
 
     // 红方补给点（robot_id=0）
-    const geometry_msgs::msg::Point RED_SUPPLY_POINT = createPoint(79.7, 698.3);
+    const geometry_msgs::msg::Point RED_SUPPLY_POINT = createPoint(94.0, 257.0);
     // 蓝方补给点（robot_id=1）
     const geometry_msgs::msg::Point BLUE_SUPPLY_POINT = createPoint(1126.3, 68.1);
 
@@ -38,7 +38,7 @@ namespace SentryConstants {
     const double ARRIVAL_WAIT_TIME = 2.0;
 
     // 补给判断阈值（综合健康度低于此值则需要补给）
-    const double SUPPLY_THRESHOLD = 0.7;
+    const double SUPPLY_THRESHOLD = 0.3;
 }
 
 #endif // CONSTANTS_HPP

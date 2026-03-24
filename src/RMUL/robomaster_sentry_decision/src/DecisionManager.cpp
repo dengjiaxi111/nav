@@ -2,6 +2,7 @@
 #include "sentry_decision/Constants.hpp"
 #include <iostream>
 #include <cmath>
+#include <rclcpp/rclcpp.hpp>
 
 using namespace SentryConstants;
 
