@@ -32,8 +32,9 @@
 #include "play_music/async_audio_player.hpp"
 
 // 决策系统消息（decision_messages）
-#include "robots_msgs/msg/our_robot_state.hpp"
-#include "robots_msgs/msg/game_state.hpp"
+#include "decision_messages/msg/our_robot_state.hpp"
+#include "decision_messages/msg/game_state.hpp"
+#include "sentry_decision/msg/sentry_control.hpp"
 
 
 using namespace std;
@@ -98,6 +99,8 @@ public:
         chassis_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel", 5, std::bind(&SerialNode::chas_cmd_callback, this, std::placeholders::_1));
         path_sub_ = this->create_subscription<nav_msgs::msg::Path>("mypath", 5, std::bind(&SerialNode::path_callback, this, std::placeholders::_1));
         mode_sub_ = this->create_subscription<robots_msgs::msg::ModeCmd>("ModeCmd", 5, std::bind(&SerialNode::modecmd_callback, this, std::placeholders::_1));
+        sentry_control_sub_ = this->create_subscription<sentry_decision::msg::SentryControl>(
+            "/sentry/control", 10, std::bind(&SerialNode::sentry_control_callback, this, std::placeholders::_1));
         priority_sub_ = this->create_subscription<std_msgs::msg::UInt8>("/enemy_priority", 10,
             [this](const std_msgs::msg::UInt8::SharedPtr msg) {
                 enemy_priority_ = msg->data;
@@ -117,8 +120,8 @@ public:
         chassis_odom_pub_ = this->create_publisher<robots_msgs::msg::ChassisOdom>("ChassisOdom", 2);  // 发布电控里程计数据
         enemypose_pub_ = this->create_publisher<robots_msgs::msg::EnemyPose>("EnemyPose", 2);   // 发布自瞄敌人信息
         // 决策系统消息（整合后直接发布，供决策节点订阅）
-        our_state_pub_   = this->create_publisher<robots_msgs::msg::OurRobotState>("/decision_messages/OurRobotState", 10);
-        game_state_pub_  = this->create_publisher<robots_msgs::msg::GameState>("/decision_messages/GameState", 10);
+        our_state_pub_   = this->create_publisher<decision_messages::msg::OurRobotState>("/decision_messages/OurRobotState", 10);
+        game_state_pub_  = this->create_publisher<decision_messages::msg::GameState>("/decision_messages/GameState", 10);
 
         enemy_tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         last_cmd_vel_time_ = this->get_clock()->now();
@@ -225,6 +228,7 @@ private:
     void chas_cmd_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg);
+    void sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg);
 
     bool debug_flag_;
 
@@ -268,16 +272,17 @@ private:
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::EnemyPose>>     enemypose_pub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> enemy_tf_pub_;
     // 决策系统消息发布者
-    rclcpp::Publisher<robots_msgs::msg::OurRobotState>::SharedPtr   our_state_pub_;
-    rclcpp::Publisher<robots_msgs::msg::GameState>::SharedPtr       game_state_pub_;
+    rclcpp::Publisher<decision_messages::msg::OurRobotState>::SharedPtr   our_state_pub_;
+    rclcpp::Publisher<decision_messages::msg::GameState>::SharedPtr       game_state_pub_;
     // 决策消息缓存（跨回调聚合：GameStatus 先收到，RobotStatus 后收到，合并后发布）
-    robots_msgs::msg::OurRobotState   our_state_;
+    decision_messages::msg::OurRobotState   our_state_;
 
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr priority_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr stair_mode_sub_;
     std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::Twist>> chassis_sub_;
     std::shared_ptr<rclcpp::Subscription<nav_msgs::msg::Path>> path_sub_;
     std::shared_ptr<rclcpp::Subscription<robots_msgs::msg::ModeCmd>> mode_sub_;
+    std::shared_ptr<rclcpp::Subscription<sentry_decision::msg::SentryControl>> sentry_control_sub_;
     std::shared_ptr<rclcpp::Subscription<std_msgs::msg::Float64>>    buff_yaw_diff_sub_;
 
     robots_msgs::msg::GameStatus game_status_;

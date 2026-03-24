@@ -1,4 +1,5 @@
 #include "sentry_decision/DecisionManager.hpp"
+#include "sentry_decision/Constants.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -11,6 +12,7 @@
 #include "sentry_decision/msg/sentry_control.hpp"
 
 using namespace std::chrono_literals;
+using namespace SentryConstants;   // 添加命名空间，以便直接使用 GIMBAL_ENEMY 等常量
 
 class SentryDecisionNode : public rclcpp::Node {
 public:
@@ -109,17 +111,19 @@ private:
     void publishControl(const sentry_decision::msg::SentryControl& ctrl) {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>(ctrl);
         control_pub_->publish(*msg);
+        std::string gimbal = (ctrl.gimbal_mode == 1) ? "打人" : "不动";
         std::string spin;
         switch (ctrl.spin_mode) {
             case 0: spin = "不动"; break;
-            case 1: spin = "转动"; break;
+            case 1: spin = "旋转"; break;
             default: spin = "未知";
         }
-        std::cout << "[CONTROL] 小陀螺: " << spin << std::endl;
+        std::cout << "[CONTROL] " << gimbal << ", " << spin << std::endl;
     }
 
     void publishStopControl() {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
+        msg->gimbal_mode = GIMBAL_ENEMY;   // 现在可以直接使用，因为使用了 using namespace SentryConstants
         msg->spin_mode = 0;
         control_pub_->publish(*msg);
     }

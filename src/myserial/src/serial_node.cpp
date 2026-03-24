@@ -317,7 +317,7 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     // ============================================================
 
     // ---------- OurRobotState ----------
-    // 按 robots_msgs/msg/decision_messages/OurRobotState.msg 填充
+    // 按 decision_messages/msg/OurRobotState.msg 填充
     our_state_.robot_id   = to_decision_team_id(msg._robot_id);
     our_state_.current_hp = msg._my_HP;
     our_state_.max_hp     = 400;
@@ -330,7 +330,7 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
 
     // ---------- GameState ----------
     {
-        auto gs = robots_msgs::msg::GameState{};
+        auto gs = decision_messages::msg::GameState{};
         gs.competition_type     = msg._game_type;
         gs.stage                = msg._game_process;
         gs.stage_remaining_time = static_cast<double>(msg._stage_remain_time);
@@ -448,6 +448,15 @@ void SerialNode::modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg
     _send_frame_.setBuyBullet(msg->buy_bullet);
     _send_frame_.setRebirth(msg->rebirth);
     _send_frame_.setHiPower(msg->use_capacity);
+}
+
+void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg)
+{
+    // 按需求：固定云台模式为 1，不使用 msg->gimbal_mode
+    _send_frame_.setGimbalMode(1);
+    // spin_mode 直接映射到底盘模式（0~3），超范围值进行截断
+    const uint8_t spin_mode = (msg->spin_mode > 3) ? 3 : msg->spin_mode;
+    _send_frame_.setChassisMode(spin_mode);
 }
 
 void SerialNode::monitor(){

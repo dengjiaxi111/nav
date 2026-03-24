@@ -7,4 +7,3 @@ double Models::calculateSituationZ(const Blackboard& bb) {
     double ammo_ratio = bb.allowance_17mm / 300.0;
     return 0.5 * hp_ratio + 0.5 * ammo_ratio;
 }
-
