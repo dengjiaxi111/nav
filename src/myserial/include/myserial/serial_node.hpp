@@ -34,6 +34,7 @@
 // 决策系统消息（decision_messages）
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
+#include "sentry_decision/msg/sentry_control.hpp"
 
 
 using namespace std;
@@ -98,6 +99,8 @@ public:
         chassis_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel", 5, std::bind(&SerialNode::chas_cmd_callback, this, std::placeholders::_1));
         path_sub_ = this->create_subscription<nav_msgs::msg::Path>("mypath", 5, std::bind(&SerialNode::path_callback, this, std::placeholders::_1));
         mode_sub_ = this->create_subscription<robots_msgs::msg::ModeCmd>("ModeCmd", 5, std::bind(&SerialNode::modecmd_callback, this, std::placeholders::_1));
+        sentry_control_sub_ = this->create_subscription<sentry_decision::msg::SentryControl>(
+            "/sentry/control", 10, std::bind(&SerialNode::sentry_control_callback, this, std::placeholders::_1));
         priority_sub_ = this->create_subscription<std_msgs::msg::UInt8>("/enemy_priority", 10,
             [this](const std_msgs::msg::UInt8::SharedPtr msg) {
                 enemy_priority_ = msg->data;
@@ -225,6 +228,7 @@ private:
     void chas_cmd_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg);
+    void sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg);
 
     bool debug_flag_;
 
@@ -278,6 +282,7 @@ private:
     std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::Twist>> chassis_sub_;
     std::shared_ptr<rclcpp::Subscription<nav_msgs::msg::Path>> path_sub_;
     std::shared_ptr<rclcpp::Subscription<robots_msgs::msg::ModeCmd>> mode_sub_;
+    std::shared_ptr<rclcpp::Subscription<sentry_decision::msg::SentryControl>> sentry_control_sub_;
     std::shared_ptr<rclcpp::Subscription<std_msgs::msg::Float64>>    buff_yaw_diff_sub_;
 
     robots_msgs::msg::GameStatus game_status_;

@@ -18,6 +18,7 @@
   <depend>geometry_msgs</depend>
   <depend>robots_msgs</depend>
   <depend>decision_messages</depend>
+  <depend>sentry_decision</depend>
   <depend>spdlog</depend>
   <depend>play_music</depend>
   <depend>fmt</depend>

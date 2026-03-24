@@ -12,6 +12,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(robots_msgs REQUIRED)
 find_package(decision_messages REQUIRED)
+find_package(sentry_decision REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -31,7 +32,7 @@ target_link_libraries(myserial
 )
 
 target_include_directories(myserial PUBLIC include)
-ament_target_dependencies(myserial rclcpp robots_msgs decision_messages tf2 tf2_ros tf2_geometry_msgs std_msgs nav_msgs Boost spdlog play_music ament_index_cpp fmt geometry_msgs) 
+ament_target_dependencies(myserial rclcpp robots_msgs decision_messages sentry_decision tf2 tf2_ros tf2_geometry_msgs std_msgs nav_msgs Boost spdlog play_music ament_index_cpp fmt geometry_msgs) 
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
