@@ -23,8 +23,9 @@ namespace SentryConstants {
     // 蓝方补给点（robot_id=1）
     const geometry_msgs::msg::Point BLUE_SUPPLY_POINT = createPoint(1126.3, 68.1);
 
-    // 云台模式
-    const uint8_t GIMBAL_ENEMY = 1;   // 打人
+    // 云台模式：全部设为1
+    const uint8_t GIMBAL_ENEMY = 1;   // 打人模式（也是唯一使用的模式）
+    // 保留原 GIMBAL_IDLE 但不再使用，为避免混淆，此处不定义
 
     // 底盘旋转模式（简化）
     const uint8_t SPIN_OFF = 0;  // 不转

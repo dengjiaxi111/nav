@@ -1,5 +1,5 @@
 #include "sentry_decision/DecisionManager.hpp"
-#include "sentry_decision/Constants.hpp"   // 新增，用于使用 GIMBAL_ENEMY
+#include "sentry_decision/Constants.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -12,6 +12,7 @@
 #include "sentry_decision/msg/sentry_control.hpp"
 
 using namespace std::chrono_literals;
+using namespace SentryConstants;   // 添加命名空间，以便直接使用 GIMBAL_ENEMY 等常量
 
 class SentryDecisionNode : public rclcpp::Node {
 public:
@@ -122,7 +123,7 @@ private:
 
     void publishStopControl() {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
-        msg->gimbal_mode = GIMBAL_ENEMY;   // 使用常量 1
+        msg->gimbal_mode = GIMBAL_ENEMY;   // 现在可以直接使用，因为使用了 using namespace SentryConstants
         msg->spin_mode = 0;
         control_pub_->publish(*msg);
     }
