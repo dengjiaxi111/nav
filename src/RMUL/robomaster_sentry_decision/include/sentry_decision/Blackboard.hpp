@@ -48,18 +48,15 @@ public:
     void updateGameState(const GameState::SharedPtr msg);
     void resetForNewMatch();
 
-    // 通过TF更新坐标（输入单位为米）
     void updatePositionFromTF(double x_m, double y_m);
 
     std::shared_ptr<SentryControl> getControlMsg() const { return control_msg_; }
-    void updateControlMsg(uint8_t spin_mode);   // 仅控制小陀螺
+    void updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode);
 
-    // 获取当前机器人ID和对应点
     uint8_t getRobotId() const { return robot_id_; }
-    geometry_msgs::msg::Point getSupplyPoint() const;  // 根据robot_id返回补给点
-    geometry_msgs::msg::Point getAttackPoint() const;  // 根据robot_id返回攻击点
+    geometry_msgs::msg::Point getSupplyPoint() const;   // 根据robot_id返回补给点
+    geometry_msgs::msg::Point getAttackPoint() const;   // 新增：根据robot_id返回攻击点
 
-    // 状态数据
     double current_hp = 400.0;
     double allowance_17mm = 300.0;
     double x = 0.0, y = 0.0;
