@@ -13,8 +13,6 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(rosidl_default_runtime REQUIRED)
 find_package(decision_messages REQUIRED)
@@ -44,8 +42,6 @@ ament_target_dependencies(sentry_decision_lib
   rclcpp
   geometry_msgs
   std_msgs
-  tf2
-  tf2_ros
   decision_messages
   rosidl_default_runtime
 )
@@ -68,8 +64,6 @@ ament_target_dependencies(sentry_decision_node
   rclcpp
   geometry_msgs
   std_msgs
-  tf2
-  tf2_ros
   decision_messages
   rosidl_default_runtime
 )
@@ -95,8 +89,6 @@ ament_export_dependencies(
   rclcpp
   geometry_msgs
   std_msgs
-  tf2
-  tf2_ros
   decision_messages
   rosidl_default_runtime
 )

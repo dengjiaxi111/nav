@@ -6,6 +6,7 @@ using namespace SentryConstants;
 
 Blackboard::Blackboard() {
     control_msg_ = std::make_shared<SentryControl>();
+    control_msg_->gimbal_mode = GIMBAL_ENEMY;
     control_msg_->spin_mode = SPIN_OFF;
     resetAllPublishStates();
 }
@@ -16,7 +17,7 @@ void Blackboard::resetForNewMatch() {
     resurrection_flag = false;
     at_current_target = false;
     target_arrival_time = -1.0;
-    updateControlMsg(SPIN_OFF);
+    updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
     resetAllPublishStates();
 }
 
@@ -82,8 +83,9 @@ bool Blackboard::isAtTarget(const geometry_msgs::msg::Point& target, double tole
     return std::sqrt(dx*dx + dy*dy) <= tolerance;
 }
 
-void Blackboard::updateControlMsg(uint8_t spin_mode) {
+void Blackboard::updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode) {
     if (!control_msg_) return;
+    control_msg_->gimbal_mode = gimbal_mode;
     control_msg_->spin_mode = spin_mode;
     setControlUpdated(true);
 }
@@ -133,17 +135,17 @@ bool Blackboard::hasWaitedAtTarget(double wait_seconds) const {
 }
 
 geometry_msgs::msg::Point Blackboard::getSupplyPoint() const {
-    if (robot_id_ == 1) { // 蓝方
+    if (robot_id_ == 1) {
         return BLUE_SUPPLY_POINT;
-    } else { // 红方或默认
+    } else {
         return RED_SUPPLY_POINT;
     }
 }
 
 geometry_msgs::msg::Point Blackboard::getAttackPoint() const {
-    if (robot_id_ == 1) { // 蓝方
+    if (robot_id_ == 1) {
         return BLUE_ATTACK_POINT;
-    } else { // 红方或默认
+    } else {
         return RED_ATTACK_POINT;
     }
 }

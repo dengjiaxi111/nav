@@ -1,4 +1,5 @@
 #include "sentry_decision/DecisionManager.hpp"
+#include "sentry_decision/Constants.hpp"   // 新增，用于使用 GIMBAL_ENEMY
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -109,18 +110,19 @@ private:
     void publishControl(const sentry_decision::msg::SentryControl& ctrl) {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>(ctrl);
         control_pub_->publish(*msg);
+        std::string gimbal = (ctrl.gimbal_mode == 1) ? "打人" : "不动";
         std::string spin;
         switch (ctrl.spin_mode) {
             case 0: spin = "不动"; break;
-            case 1: spin = "低速转"; break;
-            case 2: spin = "变速转"; break;
+            case 1: spin = "旋转"; break;
             default: spin = "未知";
         }
-        std::cout << "[CONTROL] 小陀螺: " << spin << std::endl;
+        std::cout << "[CONTROL] " << gimbal << ", " << spin << std::endl;
     }
 
     void publishStopControl() {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
+        msg->gimbal_mode = GIMBAL_ENEMY;   // 使用常量 1
         msg->spin_mode = 0;
         control_pub_->publish(*msg);
     }

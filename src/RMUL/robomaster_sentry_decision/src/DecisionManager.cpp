@@ -49,32 +49,32 @@ void DecisionManager::transitionTo(State new_state) {
     switch (new_state) {
         case State::MOVING_TO_ATTACK:
             blackboard_->startBehavior(BehaviorType::MOVE_TO_ATTACK, blackboard_->getAttackPoint(), 0.0);
-            blackboard_->updateControlMsg(SPIN_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
             break;
         case State::MOVING_TO_SUPPLY:
             blackboard_->startBehavior(BehaviorType::MOVE_TO_SUPPLY, blackboard_->getSupplyPoint(), 0.0);
-            blackboard_->updateControlMsg(SPIN_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
             break;
         case State::ATTACKING:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(SPIN_VARIABLE);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON);
             break;
         case State::SUPPLYING:
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(SPIN_LOW);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON);
             break;
         case State::RESURRECTING:
             blackboard_->current_behavior.type = BehaviorType::RESURRECTION;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(SPIN_LOW);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON);
             break;
         case State::IDLE:
             blackboard_->resetCurrentBehavior();
-            blackboard_->updateControlMsg(SPIN_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
             break;
         default:
             break;
@@ -102,7 +102,7 @@ DecisionOutput DecisionManager::executeDecision() {
         if (current_state_ != State::IDLE) {
             transitionTo(State::IDLE);
         } else {
-            blackboard_->updateControlMsg(SPIN_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
         }
         output.control_msg = *blackboard_->getControlMsg();
         output.decision_reason = "WAITING_FOR_START";

@@ -16,18 +16,21 @@ namespace SentryConstants {
     // 红方攻击点（robot_id=0）
     const geometry_msgs::msg::Point RED_ATTACK_POINT = createPoint(602.9, 397.9);
     // 蓝方攻击点（robot_id=1）
-    const geometry_msgs::msg::Point BLUE_ATTACK_POINT = createPoint(602.9, 397.9);
+    const geometry_msgs::msg::Point BLUE_ATTACK_POINT = createPoint(602.9, 397.9);  // 实际比赛中会替换为蓝方实际坐标
 
     // 红方补给点（robot_id=0）
     const geometry_msgs::msg::Point RED_SUPPLY_POINT = createPoint(79.7, 698.3);
     // 蓝方补给点（robot_id=1）
     const geometry_msgs::msg::Point BLUE_SUPPLY_POINT = createPoint(1126.3, 68.1);
 
-    // 小陀螺模式常量
-    const uint8_t SPIN_OFF      = 0;
-    const uint8_t SPIN_LOW      = 1;
-    const uint8_t SPIN_VARIABLE = 2;
+    // 云台模式
+    const uint8_t GIMBAL_ENEMY = 1;   // 打人
 
+    // 底盘旋转模式（简化）
+    const uint8_t SPIN_OFF = 0;  // 不转
+    const uint8_t SPIN_ON  = 1;  // 旋转
+
+    // 比赛阶段
     const uint8_t STAGE_BATTLE = 4;
 
     // 到达目标点后等待时间（秒）

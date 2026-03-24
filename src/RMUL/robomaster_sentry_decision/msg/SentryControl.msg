@@ -1,1 +1,2 @@
-uint8 spin_mode        # 0:不动, 1:低速转, 2:变速转, 3:高速转 (只用0、1、2)
+uint8 gimbal_mode      
+uint8 spin_mode        # 0:不动, 1:转动
