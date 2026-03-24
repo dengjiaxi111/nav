@@ -155,9 +155,13 @@ public:
         declare_parameter("special_terrain.stair_mode_trigger_distance_m", 1.0);
         declare_parameter("special_terrain.stair_mode_lookahead_dist_m", 3.0);
         declare_parameter("special_terrain.stair_mode_sample_step_m", 0.10);
-        declare_parameter("special_terrain.stair_mode_uphill_dot_min", 0.1);
+        declare_parameter("special_terrain.stair_mode_entry_heading_error_max_rad", 0.35);
         declare_parameter("special_terrain.stair_mode_release_grace_cycles", 5);
         declare_parameter("special_terrain.stair_mode_min_hold_sec", 0.35);
+        declare_parameter("special_terrain.stair_mode_force_release_distance_m", 2.5);
+        declare_parameter("special_terrain.stair_mode_max_assert_sec", 6.0);
+        declare_parameter("special_terrain.stair_mode_omega_limit_rad_s", 0.20);
+        declare_parameter("special_terrain.stair_mode_omega_slew_rate_rad_s2", 1.2);
         declare_parameter("special_terrain.enable_stair_fixed_velocity_strategy", false);
         declare_parameter("special_terrain.stair_fixed_velocity_trigger_distance_m", 0.35);
         declare_parameter("special_terrain.stair_fixed_linear_vel", 0.35);
@@ -206,12 +210,20 @@ public:
             get_parameter("special_terrain.stair_mode_lookahead_dist_m").as_double();
         stair_mode_sample_step_m_ =
             get_parameter("special_terrain.stair_mode_sample_step_m").as_double();
-        stair_mode_uphill_dot_min_ =
-            get_parameter("special_terrain.stair_mode_uphill_dot_min").as_double();
+        stair_mode_entry_heading_error_max_rad_ =
+            get_parameter("special_terrain.stair_mode_entry_heading_error_max_rad").as_double();
         stair_mode_release_grace_cycles_ =
             get_parameter("special_terrain.stair_mode_release_grace_cycles").as_int();
         stair_mode_min_hold_sec_ =
             get_parameter("special_terrain.stair_mode_min_hold_sec").as_double();
+        stair_mode_force_release_distance_m_ =
+            get_parameter("special_terrain.stair_mode_force_release_distance_m").as_double();
+        stair_mode_max_assert_sec_ =
+            get_parameter("special_terrain.stair_mode_max_assert_sec").as_double();
+        stair_mode_omega_limit_rad_s_ =
+            get_parameter("special_terrain.stair_mode_omega_limit_rad_s").as_double();
+        stair_mode_omega_slew_rate_rad_s2_ =
+            get_parameter("special_terrain.stair_mode_omega_slew_rate_rad_s2").as_double();
         enable_stair_fixed_velocity_strategy_ =
             get_parameter("special_terrain.enable_stair_fixed_velocity_strategy").as_bool();
         stair_fixed_velocity_trigger_distance_m_ = get_parameter(
@@ -243,11 +255,12 @@ public:
                         stair_mode_sample_step_m_);
             stair_mode_sample_step_m_ = 0.1;
         }
-        if (stair_mode_uphill_dot_min_ < -1.0 || stair_mode_uphill_dot_min_ > 1.0) {
+        if (stair_mode_entry_heading_error_max_rad_ < 0.0 ||
+            stair_mode_entry_heading_error_max_rad_ > M_PI) {
             RCLCPP_WARN(get_logger(),
-                        "special_terrain.stair_mode_uphill_dot_min=%.3f 超出[-1,1]，自动修正为0.1",
-                        stair_mode_uphill_dot_min_);
-            stair_mode_uphill_dot_min_ = 0.1;
+                        "special_terrain.stair_mode_entry_heading_error_max_rad=%.3f 超出[0,pi]，自动修正为0.35",
+                        stair_mode_entry_heading_error_max_rad_);
+            stair_mode_entry_heading_error_max_rad_ = 0.35;
         }
         if (stair_mode_release_grace_cycles_ < 0) {
             RCLCPP_WARN(get_logger(),
@@ -260,6 +273,30 @@ public:
                         "special_terrain.stair_mode_min_hold_sec=%.3f 非法，自动修正为0.0",
                         stair_mode_min_hold_sec_);
             stair_mode_min_hold_sec_ = 0.0;
+        }
+        if (stair_mode_force_release_distance_m_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_force_release_distance_m=%.3f 非法，自动修正为0.0",
+                        stair_mode_force_release_distance_m_);
+            stair_mode_force_release_distance_m_ = 0.0;
+        }
+        if (stair_mode_max_assert_sec_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_max_assert_sec=%.3f 非法，自动修正为0.0",
+                        stair_mode_max_assert_sec_);
+            stair_mode_max_assert_sec_ = 0.0;
+        }
+        if (stair_mode_omega_limit_rad_s_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_omega_limit_rad_s=%.3f 非法，自动修正为0.0(禁用)",
+                        stair_mode_omega_limit_rad_s_);
+            stair_mode_omega_limit_rad_s_ = 0.0;
+        }
+        if (stair_mode_omega_slew_rate_rad_s2_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "special_terrain.stair_mode_omega_slew_rate_rad_s2=%.3f 非法，自动修正为0.0(禁用)",
+                        stair_mode_omega_slew_rate_rad_s2_);
+            stair_mode_omega_slew_rate_rad_s2_ = 0.0;
         }
         if (stair_fixed_linear_vel_ < 0.0) {
             RCLCPP_WARN(get_logger(),
@@ -350,13 +387,17 @@ public:
         }
         if (enable_stair_mode_detection_) {
             RCLCPP_INFO(get_logger(),
-                        "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill_dot_min=%.2f, grace=%d, min_hold=%.2fs",
+                        "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill(dot>=0), entry_heading_err_max=%.2f rad, grace=%d, min_hold=%.2fs, force_release_dist=%.2fm, max_assert=%.2fs, omega_limit=%.2f rad/s, omega_slew=%.2f rad/s^2",
                         stair_mode_trigger_distance_m_,
                         stair_mode_lookahead_dist_m_,
                         stair_mode_sample_step_m_,
-                        stair_mode_uphill_dot_min_,
+                        stair_mode_entry_heading_error_max_rad_,
                         stair_mode_release_grace_cycles_,
-                        stair_mode_min_hold_sec_);
+                        stair_mode_min_hold_sec_,
+                        stair_mode_force_release_distance_m_,
+                        stair_mode_max_assert_sec_,
+                        stair_mode_omega_limit_rad_s_,
+                        stair_mode_omega_slew_rate_rad_s2_);
         }
         if (enable_stair_fixed_velocity_strategy_) {
             RCLCPP_INFO(get_logger(),
@@ -730,8 +771,8 @@ private:
                     const double dot = dir_x * nx + dir_y * ny;
                     // 仅在“上台阶”方向触发（下台阶不触发）
                     // 法向定义为 n = black - gray（低侧 -> 高侧），
-                    // 因此上台阶应满足 path_dir · n >= stair_mode_uphill_dot_min_
-                    if (dot >= stair_mode_uphill_dot_min_) {
+                    // 因此上台阶应满足 path_dir · n >= 0
+                    if (dot >= 0.0) {
                         dist_to_stair_m = path_dist;
                         return true;
                     }
@@ -773,6 +814,11 @@ private:
 
         if (effective_mode != stair_mode_current_) {
             RCLCPP_INFO(get_logger(), "stair_mode -> %u", static_cast<unsigned>(effective_mode));
+            if (effective_mode == 1) {
+                stair_mode_enter_time_ = now_tp;
+            } else {
+                stair_mode_enter_time_ = std::chrono::steady_clock::time_point{};
+            }
             stair_mode_current_ = effective_mode;
         }
     }
@@ -830,7 +876,7 @@ private:
                 dir_x /= dir_norm;
                 dir_y /= dir_norm;
                 const double dot = dir_x * curr_nx + dir_y * curr_ny;
-                on_stair_now = (dot >= stair_mode_uphill_dot_min_);
+                on_stair_now = (dot >= 0.0);
             }
         }
 
@@ -839,8 +885,24 @@ private:
 
         if (stair_mode_current_ == 0) {
             if (has_upcoming_stair && dist_to_stair_m <= stair_mode_trigger_distance_m_) {
-                stair_mode_release_counter_ = 0;
-                publishStairMode(1, true);
+                double heading_err = 0.0;
+                const bool has_heading_ref = queryHeadingErrorToPathNearRobot(heading_err);
+                const bool heading_aligned = has_heading_ref &&
+                    (std::abs(heading_err) <= stair_mode_entry_heading_error_max_rad_);
+
+                if (heading_aligned) {
+                    stair_mode_release_counter_ = 0;
+                    publishStairMode(1, true);
+                } else {
+                    RCLCPP_INFO_THROTTLE(
+                        get_logger(), *get_clock(), 500,
+                        "stair_mode 延迟进入: 台阶距离=%.2fm 但航向未对齐 (has_ref=%d, |err|=%.3f rad, 阈值=%.2f rad)",
+                        dist_to_stair_m,
+                        has_heading_ref,
+                        has_heading_ref ? std::abs(heading_err) : -1.0,
+                        stair_mode_entry_heading_error_max_rad_);
+                    publishStairMode(0, true);
+                }
             } else {
                 publishStairMode(0, true);
             }
@@ -848,8 +910,34 @@ private:
         }
 
         if (on_stair_now || has_upcoming_stair) {
+            if (stair_mode_max_assert_sec_ > 0.0 &&
+                stair_mode_enter_time_ != std::chrono::steady_clock::time_point{}) {
+                const double assert_elapsed = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - stair_mode_enter_time_).count();
+                if (assert_elapsed > stair_mode_max_assert_sec_) {
+                    stair_mode_release_counter_ = 0;
+                    RCLCPP_WARN(get_logger(),
+                                "stair_mode 强制释放: mode=1 持续 %.2fs 超过上限 %.2fs",
+                                assert_elapsed,
+                                stair_mode_max_assert_sec_);
+                    publishStairMode(0, true, true);
+                    return;
+                }
+            }
             stair_mode_release_counter_ = 0;
             publishStairMode(1, true);
+            return;
+        }
+
+        if (stair_mode_force_release_distance_m_ > 0.0 &&
+            (!has_upcoming_stair || dist_to_stair_m > stair_mode_force_release_distance_m_)) {
+            stair_mode_release_counter_ = 0;
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                                "stair_mode 强制释放: 台阶距离 %.2fm (阈值 %.2fm, has_upcoming=%d)",
+                                dist_to_stair_m,
+                                stair_mode_force_release_distance_m_,
+                                has_upcoming_stair);
+            publishStairMode(0, true, true);
             return;
         }
 
@@ -866,6 +954,50 @@ private:
         while (angle > M_PI) angle -= 2.0 * M_PI;
         while (angle < -M_PI) angle += 2.0 * M_PI;
         return angle;
+    }
+
+    void applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd) {
+        if (stair_mode_current_ != 1) {
+            stair_mode_omega_limiter_initialized_ = false;
+            return;
+        }
+
+        const double raw_omega = cmd.angular.z;
+        double limited_omega = raw_omega;
+
+        if (stair_mode_omega_limit_rad_s_ > 0.0) {
+            limited_omega = std::clamp(
+                limited_omega,
+                -stair_mode_omega_limit_rad_s_,
+                stair_mode_omega_limit_rad_s_);
+        }
+
+        if (stair_mode_omega_slew_rate_rad_s2_ > 0.0) {
+            const double dt = 1.0 / std::max(1.0, control_rate_);
+            const double max_delta = stair_mode_omega_slew_rate_rad_s2_ * dt;
+            if (!stair_mode_omega_limiter_initialized_) {
+                last_stair_mode_limited_omega_ = limited_omega;
+                stair_mode_omega_limiter_initialized_ = true;
+            } else {
+                limited_omega = std::clamp(
+                    limited_omega,
+                    last_stair_mode_limited_omega_ - max_delta,
+                    last_stair_mode_limited_omega_ + max_delta);
+                last_stair_mode_limited_omega_ = limited_omega;
+            }
+        }
+
+        cmd.angular.z = limited_omega;
+
+        if (std::abs(raw_omega - limited_omega) > 1e-4) {
+            RCLCPP_INFO_THROTTLE(
+                get_logger(), *get_clock(), 500,
+                "stair_mode omega limit: raw=%.3f -> limited=%.3f (limit=%.3f, slew=%.3f)",
+                raw_omega,
+                limited_omega,
+                stair_mode_omega_limit_rad_s_,
+                stair_mode_omega_slew_rate_rad_s2_);
+        }
     }
 
     bool queryPathHeadingNearRobot(double& heading_rad) const {
@@ -905,6 +1037,21 @@ private:
         }
 
         heading_rad = std::atan2(dir_y, dir_x);
+        return true;
+    }
+
+    bool queryHeadingErrorToPathNearRobot(double& heading_err_rad) const {
+        double heading_ref = 0.0;
+        if (!queryPathHeadingNearRobot(heading_ref)) {
+            return false;
+        }
+
+        tf2::Quaternion q;
+        tf2::fromMsg(current_pose_.pose.orientation, q);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        heading_err_rad = normalizeAngle(heading_ref - yaw);
         return true;
     }
     
@@ -1394,7 +1541,7 @@ private:
                     const double dir_x = std::cos(heading_ref);
                     const double dir_y = std::sin(heading_ref);
                     const double dot = dir_x * curr_nx + dir_y * curr_ny;
-                    on_stair_uphill_now = (dot >= stair_mode_uphill_dot_min_);
+                    on_stair_uphill_now = (dot >= 0.0);
                 }
             }
 
@@ -1436,6 +1583,8 @@ private:
                     stair_fixed_max_angular_vel_);
             }
 
+            applyStairModeOmegaLimit(stair_cmd);
+
             cmd_vel_pub_->publish(stair_cmd);
             return;
         }
@@ -1445,6 +1594,7 @@ private:
         
         switch (result) {
             case nav_core::ControlResult::RUNNING:
+                applyStairModeOmegaLimit(cmd);
                 cmd_vel_pub_->publish(cmd);
                 break;
             case nav_core::ControlResult::SUCCEEDED:
@@ -1580,9 +1730,13 @@ private:
     double stair_mode_trigger_distance_m_{1.0};
     double stair_mode_lookahead_dist_m_{3.0};
     double stair_mode_sample_step_m_{0.10};
-    double stair_mode_uphill_dot_min_{0.1};
+    double stair_mode_entry_heading_error_max_rad_{0.35};
     int stair_mode_release_grace_cycles_{5};
     double stair_mode_min_hold_sec_{0.35};
+    double stair_mode_force_release_distance_m_{2.5};
+    double stair_mode_max_assert_sec_{6.0};
+    double stair_mode_omega_limit_rad_s_{0.20};
+    double stair_mode_omega_slew_rate_rad_s2_{1.2};
     bool enable_stair_fixed_velocity_strategy_{false};
     double stair_fixed_velocity_trigger_distance_m_{0.35};
     double stair_fixed_linear_vel_{0.35};
@@ -1592,6 +1746,9 @@ private:
     uint8_t stair_mode_current_{0};
     int stair_mode_release_counter_{0};
     std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
+    std::chrono::steady_clock::time_point stair_mode_enter_time_{};
+    bool stair_mode_omega_limiter_initialized_{false};
+    double last_stair_mode_limited_omega_{0.0};
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
 
