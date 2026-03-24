@@ -1,0 +1,147 @@
+#include "sentry_decision/DecisionManager.hpp"
+#include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <std_msgs/msg/string.hpp>
+#include <tf2/exceptions.h>
+#include <tf2/time.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include "decision_messages/msg/our_robot_state.hpp"
+#include "decision_messages/msg/game_state.hpp"
+#include "sentry_decision/msg/sentry_control.hpp"
+
+using namespace std::chrono_literals;
+
+class SentryDecisionNode : public rclcpp::Node {
+public:
+    SentryDecisionNode()
+    : Node("sentry_decision"),
+      game_started_(false),
+      tf_buffer_(this->get_clock()),
+      tf_listener_(std::make_shared<tf2_ros::TransformListener>(tf_buffer_)) {
+        decision_manager_ = std::make_shared<DecisionManager>();
+
+        our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
+            "/decision_messages/OurRobotState", 10,
+            std::bind(&SentryDecisionNode::ourStateCallback, this, std::placeholders::_1));
+
+        game_state_sub_ = this->create_subscription<decision_messages::msg::GameState>(
+            "/decision_messages/GameState", 10,
+            std::bind(&SentryDecisionNode::gameStateCallback, this, std::placeholders::_1));
+
+        target_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>("/sentry/target_position", 10);
+        control_pub_ = this->create_publisher<sentry_decision::msg::SentryControl>("/sentry/control", 10);
+
+        timer_ = this->create_wall_timer(100ms, std::bind(&SentryDecisionNode::decisionLoop, this));
+
+        std::cout << "[SYSTEM] Sentry Decision System (TF Position) Started" << std::endl;
+    }
+
+private:
+    void ourStateCallback(const decision_messages::msg::OurRobotState::SharedPtr msg) {
+        decision_manager_->updateOurState(msg);
+    }
+
+    void gameStateCallback(const decision_messages::msg::GameState::SharedPtr msg) {
+        decision_manager_->updateGameState(msg);
+        if (msg->stage == 4 && !game_started_) {
+            game_started_ = true;
+            std::cout << "[SYSTEM] 比赛开始!" << std::endl;
+        } else if (msg->stage != 4 && game_started_) {
+            game_started_ = false;
+            std::cout << "[SYSTEM] 比赛结束" << std::endl;
+        }
+    }
+
+    bool updatePositionFromTF() {
+        try {
+            auto t = tf_buffer_.lookupTransform(
+                "map",
+                "base_link",
+                tf2::TimePointZero);
+
+            auto blackboard = decision_manager_->getBlackboard();
+            blackboard->updatePositionFromTF(t.transform.translation.x, t.transform.translation.y);
+            return true;
+        } catch (const tf2::TransformException& ex) {
+            std::cerr << "[TF] 查询 map->base_link 失败: " << ex.what() << std::endl;
+            return false;
+        }
+    }
+
+    void decisionLoop() {
+        try {
+            updatePositionFromTF();
+
+            DecisionOutput output = decision_manager_->executeDecision();
+
+            if (game_started_) {
+                auto blackboard = decision_manager_->getBlackboard();
+
+                if (output.target_needs_publishing &&
+                    (output.target_position.x != 0 || output.target_position.y != 0)) {
+                    publishTarget(output.target_position);
+                    blackboard->setTargetPublished(true);
+                }
+
+                if (output.control_needs_publishing) {
+                    publishControl(output.control_msg);
+                    blackboard->setControlPublished(true);
+                }
+            } else {
+                publishStopControl();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] Decision loop: " << e.what() << std::endl;
+        }
+    }
+
+    void publishTarget(const geometry_msgs::msg::Point& target) {
+        auto msg = std::make_shared<geometry_msgs::msg::PointStamped>();
+        msg->header.stamp = now();
+        msg->header.frame_id = "map";
+        msg->point.x = target.x / 100.0;
+        msg->point.y = target.y / 100.0;
+        target_pub_->publish(*msg);
+        std::cout << "[TARGET] (" << msg->point.x << ", " << msg->point.y << ")" << std::endl;
+    }
+
+    void publishControl(const sentry_decision::msg::SentryControl& ctrl) {
+        auto msg = std::make_shared<sentry_decision::msg::SentryControl>(ctrl);
+        control_pub_->publish(*msg);
+        std::string spin;
+        switch (ctrl.spin_mode) {
+            case 0: spin = "不动"; break;
+            case 1: spin = "低速转"; break;
+            case 2: spin = "变速转"; break;
+            default: spin = "未知";
+        }
+        std::cout << "[CONTROL] 小陀螺: " << spin << std::endl;
+    }
+
+    void publishStopControl() {
+        auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
+        msg->spin_mode = 0;
+        control_pub_->publish(*msg);
+    }
+
+    rclcpp::Subscription<decision_messages::msg::OurRobotState>::SharedPtr our_state_sub_;
+    rclcpp::Subscription<decision_messages::msg::GameState>::SharedPtr game_state_sub_;
+    rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr target_pub_;
+    rclcpp::Publisher<sentry_decision::msg::SentryControl>::SharedPtr control_pub_;
+    rclcpp::TimerBase::SharedPtr timer_;
+
+    std::shared_ptr<DecisionManager> decision_manager_;
+    bool game_started_;
+
+    tf2_ros::Buffer tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+};
+
+int main(int argc, char** argv) {
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<SentryDecisionNode>();
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    return 0;
+}
