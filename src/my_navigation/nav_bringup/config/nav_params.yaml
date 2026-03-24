@@ -144,7 +144,12 @@ nav_server:
       # 台阶段方向约束（经过台阶时尽量垂直边沿）
       stair_segment_align: true
       opt_lambda_stair_align: 25.0
-      stair_align_expand_points: 5  # 台阶命中点前后各扩展 n 个控制点参与方向优化
+      stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
+      # 推荐：按弧长定义窗口，并区分上/下台阶
+      stair_align_up_pre_dist_m: 1.5
+      stair_align_up_post_dist_m: 0.45
+      stair_align_down_pre_dist_m: 0.45
+      stair_align_down_post_dist_m: 0.5
     
     
     # 控制器(Pure Pursuit)

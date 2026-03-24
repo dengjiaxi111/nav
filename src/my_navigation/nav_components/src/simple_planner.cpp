@@ -63,6 +63,16 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     smooth_params.lambda_stair_align = node_->declare_parameter("planner.opt_lambda_stair_align", 6.0);
     smooth_params.stair_align_expand_points =
         node_->declare_parameter("planner.stair_align_expand_points", 2);
+    const double stair_legacy_window_m =
+        std::max(0.0, smooth_params.stair_align_expand_points * smooth_params.resample_interval);
+    smooth_params.stair_align_up_pre_dist_m =
+        node_->declare_parameter("planner.stair_align_up_pre_dist_m", stair_legacy_window_m);
+    smooth_params.stair_align_up_post_dist_m =
+        node_->declare_parameter("planner.stair_align_up_post_dist_m", stair_legacy_window_m);
+    smooth_params.stair_align_down_pre_dist_m =
+        node_->declare_parameter("planner.stair_align_down_pre_dist_m", stair_legacy_window_m);
+    smooth_params.stair_align_down_post_dist_m =
+        node_->declare_parameter("planner.stair_align_down_post_dist_m", stair_legacy_window_m);
 
     smoother_.setParams(smooth_params);
     

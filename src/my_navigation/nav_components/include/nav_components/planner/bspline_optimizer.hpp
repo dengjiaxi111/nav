@@ -35,7 +35,13 @@ struct BSplineOptParams {
     // 台阶段方向约束（路径切向尽量与台阶法向一致）
     bool stair_segment_align = true;
     double lambda_stair_align = 6.0;
+    // 兼容旧参数：仅在四个弧长窗口参数全部<=0时回退使用
     int stair_expand_points = 2;
+    // 新参数：按弧长定义作用窗口，并区分上/下台阶
+    double stair_align_up_pre_dist = 0.6;
+    double stair_align_up_post_dist = 0.6;
+    double stair_align_down_pre_dist = 0.6;
+    double stair_align_down_post_dist = 0.6;
     
     // 优化器参数
     int max_iterations = 100;       // 最大迭代次数
@@ -647,8 +653,10 @@ private:
 
         std::vector<int> stair_indices;
         std::vector<Eigen::Vector2d> stair_normals;
+        std::vector<uint8_t> stair_is_uphill;
         stair_indices.reserve(n_ctrl_);
         stair_normals.reserve(n_ctrl_);
+        stair_is_uphill.reserve(n_ctrl_);
 
         for (int i = 1; i < n_ctrl_ - 1; ++i) {
             double nx = 0.0;
@@ -665,25 +673,82 @@ private:
             normal /= normal_norm;
             stair_indices.push_back(i);
             stair_normals.push_back(normal);
+
+            Eigen::Vector2d p_prev = ctrl_pts.row(i - 1).head<2>();
+            Eigen::Vector2d p_next = ctrl_pts.row(i + 1).head<2>();
+            Eigen::Vector2d tangent = p_next - p_prev;
+            bool is_uphill = true;
+            if (tangent.norm() > 1e-6) {
+                is_uphill = (tangent.dot(normal) >= 0.0);
+            }
+            stair_is_uphill.push_back(is_uphill ? 1u : 0u);
         }
 
         if (stair_indices.empty()) {
             return;
         }
 
+        std::vector<double> arc_length(n_ctrl_, 0.0);
+        for (int i = 1; i < n_ctrl_; ++i) {
+            Eigen::Vector2d p_prev = ctrl_pts.row(i - 1).head<2>();
+            Eigen::Vector2d p_curr = ctrl_pts.row(i).head<2>();
+            arc_length[i] = arc_length[i - 1] + (p_curr - p_prev).norm();
+        }
+
+        const double up_pre_dist = std::max(0.0, params_.stair_align_up_pre_dist);
+        const double up_post_dist = std::max(0.0, params_.stair_align_up_post_dist);
+        const double down_pre_dist = std::max(0.0, params_.stair_align_down_pre_dist);
+        const double down_post_dist = std::max(0.0, params_.stair_align_down_post_dist);
+        const bool use_arc_window =
+            (up_pre_dist > 1e-6 || up_post_dist > 1e-6 ||
+             down_pre_dist > 1e-6 || down_post_dist > 1e-6);
         const int expand_points = std::max(0, params_.stair_expand_points);
         std::vector<int> nearest_stair_index(n_ctrl_, -1);
+        std::vector<double> nearest_stair_arc_dist(
+            n_ctrl_, std::numeric_limits<double>::max());
         std::vector<Eigen::Vector2d> nearest_stair_normal(n_ctrl_, Eigen::Vector2d::Zero());
 
         for (size_t k = 0; k < stair_indices.size(); ++k) {
             int stair_idx = stair_indices[k];
-            int window_start = std::max(1, stair_idx - expand_points);
-            int window_end = std::min(n_ctrl_ - 2, stair_idx + expand_points);
+            const bool is_uphill = (stair_is_uphill[k] != 0u);
+            const double pre_dist = is_uphill ? up_pre_dist : down_pre_dist;
+            const double post_dist = is_uphill ? up_post_dist : down_post_dist;
+
+            int window_start = stair_idx;
+            int window_end = stair_idx;
+            if (use_arc_window) {
+                double acc_pre = 0.0;
+                for (int idx = stair_idx; idx > 1; --idx) {
+                    Eigen::Vector2d p_curr = ctrl_pts.row(idx).head<2>();
+                    Eigen::Vector2d p_prev = ctrl_pts.row(idx - 1).head<2>();
+                    acc_pre += (p_curr - p_prev).norm();
+                    if (acc_pre > pre_dist + 1e-6) {
+                        break;
+                    }
+                    window_start = idx - 1;
+                }
+
+                double acc_post = 0.0;
+                for (int idx = stair_idx; idx < n_ctrl_ - 2; ++idx) {
+                    Eigen::Vector2d p_curr = ctrl_pts.row(idx).head<2>();
+                    Eigen::Vector2d p_next = ctrl_pts.row(idx + 1).head<2>();
+                    acc_post += (p_next - p_curr).norm();
+                    if (acc_post > post_dist + 1e-6) {
+                        break;
+                    }
+                    window_end = idx + 1;
+                }
+            } else {
+                window_start = std::max(1, stair_idx - expand_points);
+                window_end = std::min(n_ctrl_ - 2, stair_idx + expand_points);
+            }
 
             for (int idx = window_start; idx <= window_end; ++idx) {
-                if (nearest_stair_index[idx] < 0 ||
-                    std::abs(idx - stair_idx) < std::abs(idx - nearest_stair_index[idx])) {
+                const double arc_dist =
+                    std::abs(arc_length[idx] - arc_length[stair_idx]);
+                if (nearest_stair_index[idx] < 0 || arc_dist < nearest_stair_arc_dist[idx]) {
                     nearest_stair_index[idx] = stair_idx;
+                    nearest_stair_arc_dist[idx] = arc_dist;
                     nearest_stair_normal[idx] = stair_normals[k];
                 }
             }
