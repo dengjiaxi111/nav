@@ -24,9 +24,8 @@ namespace SentryConstants {
     const geometry_msgs::msg::Point BLUE_SUPPLY_POINT = createPoint(1126.3, 68.1);
 
     // 小陀螺模式常量
-    const uint8_t SPIN_OFF      = 0;
-    const uint8_t SPIN_LOW      = 1;
-    const uint8_t SPIN_VARIABLE = 2;
+    const uint8_t SPIN_OFF = 0;
+    const uint8_t SPIN_ON  = 1;  
 
     const uint8_t STAGE_BATTLE = 4;
 

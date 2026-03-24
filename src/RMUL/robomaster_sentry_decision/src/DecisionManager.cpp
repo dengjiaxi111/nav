@@ -58,19 +58,19 @@ void DecisionManager::transitionTo(State new_state) {
         case State::ATTACKING:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(SPIN_VARIABLE);
+            blackboard_->updateControlMsg(SPIN_ON);
             break;
         case State::SUPPLYING:
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(SPIN_LOW);
+            blackboard_->updateControlMsg(SPIN_ON);
             break;
         case State::RESURRECTING:
             blackboard_->current_behavior.type = BehaviorType::RESURRECTION;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(SPIN_LOW);
+            blackboard_->updateControlMsg(SPIN_ON);
             break;
         case State::IDLE:
             blackboard_->resetCurrentBehavior();

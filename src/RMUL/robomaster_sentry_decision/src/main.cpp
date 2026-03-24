@@ -112,8 +112,7 @@ private:
         std::string spin;
         switch (ctrl.spin_mode) {
             case 0: spin = "不动"; break;
-            case 1: spin = "低速转"; break;
-            case 2: spin = "变速转"; break;
+            case 1: spin = "转动"; break;
             default: spin = "未知";
         }
         std::cout << "[CONTROL] 小陀螺: " << spin << std::endl;
