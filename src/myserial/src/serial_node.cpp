@@ -317,7 +317,7 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     // ============================================================
 
     // ---------- OurRobotState ----------
-    // 按 robots_msgs/msg/decision_messages/OurRobotState.msg 填充
+    // 按 decision_messages/msg/OurRobotState.msg 填充
     our_state_.robot_id   = to_decision_team_id(msg._robot_id);
     our_state_.current_hp = msg._my_HP;
     our_state_.max_hp     = 400;
@@ -330,7 +330,7 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
 
     // ---------- GameState ----------
     {
-        auto gs = robots_msgs::msg::GameState{};
+        auto gs = decision_messages::msg::GameState{};
         gs.competition_type     = msg._game_type;
         gs.stage                = msg._game_process;
         gs.stage_remaining_time = static_cast<double>(msg._stage_remain_time);
