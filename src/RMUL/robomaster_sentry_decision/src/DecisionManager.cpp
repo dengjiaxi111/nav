@@ -22,7 +22,7 @@ void DecisionManager::updateGameState(const GameState::SharedPtr msg) {
 
 bool DecisionManager::needSupply() const {
     double Z = Models::calculateSituationZ(*blackboard_);
-    return Z < SUPPLY_THRESHOLD;
+    return Z < blackboard_->getSupplyThreshold();
 }
 
 bool DecisionManager::shouldInterruptAttack() const {
@@ -30,7 +30,8 @@ bool DecisionManager::shouldInterruptAttack() const {
 }
 
 bool DecisionManager::supplyComplete() const {
-    return blackboard_->current_hp >= 400.0 && blackboard_->allowance_17mm >= 300.0;
+    // 修改：只检查血量是否回到 400
+    return blackboard_->current_hp >= 400.0;
 }
 
 bool DecisionManager::resurrectionComplete() const {
@@ -47,35 +48,37 @@ void DecisionManager::transitionTo(State new_state) {
 
     blackboard_->resetAllPublishStates();
 
+    uint8_t gimbal_mode = blackboard_->getGimbalModeByStage();  // 根据阶段获取云台模式
+
     switch (new_state) {
         case State::MOVING_TO_ATTACK:
             blackboard_->startBehavior(BehaviorType::MOVE_TO_ATTACK, blackboard_->getAttackPoint(), 0.0);
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
             break;
         case State::MOVING_TO_SUPPLY:
             blackboard_->startBehavior(BehaviorType::MOVE_TO_SUPPLY, blackboard_->getSupplyPoint(), 0.0);
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
             break;
         case State::ATTACKING:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_ON);
             break;
         case State::SUPPLYING:
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_ON);
             break;
         case State::RESURRECTING:
             blackboard_->current_behavior.type = BehaviorType::RESURRECTION;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_ON);
             break;
         case State::IDLE:
             blackboard_->resetCurrentBehavior();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
             break;
         default:
             break;
@@ -99,11 +102,14 @@ DecisionOutput DecisionManager::executeDecision() {
     output.target_needs_publishing = false;
     output.control_needs_publishing = false;
 
+    // 非比赛阶段
     if (blackboard_->stage != STAGE_BATTLE) {
         if (current_state_ != State::IDLE) {
             transitionTo(State::IDLE);
         } else {
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
+            // 根据阶段设置云台模式
+            uint8_t gimbal_mode = blackboard_->getGimbalModeByStage();
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
         }
         output.control_msg = *blackboard_->getControlMsg();
         output.decision_reason = "WAITING_FOR_START";
@@ -114,6 +120,7 @@ DecisionOutput DecisionManager::executeDecision() {
         return output;
     }
 
+    // 比赛阶段状态机
     switch (current_state_) {
         case State::IDLE: {
             if (blackboard_->resurrection_flag) {
@@ -138,7 +145,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
                 }
-                if (blackboard_->hasWaitedAtTarget(ARRIVAL_WAIT_TIME)) {
+                if (blackboard_->hasWaitedAtTarget(blackboard_->getArrivalWaitTime())) {
                     transitionTo(State::ATTACKING);
                 }
             } else {
@@ -159,7 +166,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
                 }
-                if (blackboard_->hasWaitedAtTarget(ARRIVAL_WAIT_TIME)) {
+                if (blackboard_->hasWaitedAtTarget(blackboard_->getArrivalWaitTime())) {
                     if (blackboard_->resurrection_flag) {
                         transitionTo(State::RESURRECTING);
                     } else {
@@ -182,6 +189,11 @@ DecisionOutput DecisionManager::executeDecision() {
             if (shouldInterruptAttack()) {
                 transitionTo(State::MOVING_TO_SUPPLY);
                 break;
+            }
+            // 新增：偏离检测，如果当前位置与攻击点距离超过 50cm，则重新移动到攻击点
+            geometry_msgs::msg::Point attack_point = blackboard_->getAttackPoint();
+            if (!blackboard_->isAtTarget(attack_point, 50.0)) {
+                transitionTo(State::MOVING_TO_ATTACK);
             }
             break;
         }

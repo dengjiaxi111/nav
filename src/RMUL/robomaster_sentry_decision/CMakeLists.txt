@@ -18,6 +18,8 @@ find_package(tf2_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(rosidl_default_runtime REQUIRED)
 find_package(decision_messages REQUIRED)
+find_package(yaml-cpp REQUIRED)          # 新增
+find_package(ament_index_cpp REQUIRED)   # 新增
 
 # 生成自定义消息
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -48,10 +50,13 @@ ament_target_dependencies(sentry_decision_lib
   tf2_ros
   decision_messages
   rosidl_default_runtime
+  yaml-cpp          # 新增
+  ament_index_cpp   # 新增
 )
 
 target_link_libraries(sentry_decision_lib
   ${PROJECT_NAME}__rosidl_typesupport_cpp
+  yaml-cpp          # 修改：直接链接库名
 )
 
 # 主节点
@@ -72,11 +77,14 @@ ament_target_dependencies(sentry_decision_node
   tf2_ros
   decision_messages
   rosidl_default_runtime
+  yaml-cpp          # 新增
+  ament_index_cpp   # 新增
 )
 
 target_link_libraries(sentry_decision_node
   sentry_decision_lib
   ${PROJECT_NAME}__rosidl_typesupport_cpp
+  yaml-cpp          # 修改
 )
 
 install(TARGETS
@@ -89,6 +97,9 @@ install(TARGETS
 
 install(DIRECTORY include/ DESTINATION include)
 
+# 安装配置文件
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+
 ament_export_include_directories(include)
 ament_export_libraries(sentry_decision_lib)
 ament_export_dependencies(
@@ -99,6 +110,8 @@ ament_export_dependencies(
   tf2_ros
   decision_messages
   rosidl_default_runtime
+  yaml-cpp          # 新增
+  ament_index_cpp   # 新增
 )
 
 ament_package()
