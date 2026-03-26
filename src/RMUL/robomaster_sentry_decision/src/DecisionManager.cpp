@@ -35,7 +35,7 @@ bool DecisionManager::supplyComplete() const {
 }
 
 bool DecisionManager::resurrectionComplete() const {
-    return !blackboard_->resurrection_flag && blackboard_->current_hp >= blackboard_->getMaxHp();
+    return blackboard_->current_hp >= blackboard_->getMaxHp();
 }
 
 void DecisionManager::transitionTo(State new_state) {
@@ -160,6 +160,10 @@ DecisionOutput DecisionManager::executeDecision() {
         }
 
         case State::MOVING_TO_SUPPLY: {
+            if (blackboard_->current_hp >= blackboard_->getMaxHp()) {
+                transitionTo(State::IDLE);
+                break;
+            }
             geometry_msgs::msg::Point supply_point = blackboard_->getSupplyPoint();
             if (blackboard_->isAtTarget(supply_point, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {

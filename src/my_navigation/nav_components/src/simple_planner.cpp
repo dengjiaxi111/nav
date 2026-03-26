@@ -5,6 +5,7 @@
 #include "nav_components/layered_map_manager.hpp"
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace nav_components {
 
@@ -21,6 +22,7 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     esdf_warn_min_safe_dist_ = node_->declare_parameter("planner.esdf_warn_min_safe_dist", 0.12);
     start_deviation_threshold_ = node_->declare_parameter("planner.start_deviation_threshold", 1.0);
     astar_max_attempts_ = node_->declare_parameter("planner.astar_max_attempts", 2);
+    astar_max_iterations_ = node_->declare_parameter("planner.astar_max_iterations", 0);
     astar_threshold_step_ = node_->declare_parameter("planner.astar_threshold_step", 10);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
     publish_astar_raw_path_ = node_->declare_parameter("planner.publish_astar_raw_path", true);
@@ -393,10 +395,15 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     std::priority_queue<Node*, std::vector<Node*>, decltype(cmp)> open(cmp);
     std::vector<std::unique_ptr<Node>> all_nodes;
     std::vector<bool> closed(width_ * height_, false);
+    std::vector<double> best_g(width_ * height_, std::numeric_limits<double>::infinity());
+    std::vector<Node*> best_node(width_ * height_, nullptr);
     
     auto start_node = std::make_unique<Node>();
     start_node->x = sx; start_node->y = sy;
     start_node->g = 0; start_node->h = heuristic(sx, sy, gx, gy);
+    int start_idx = sy * width_ + sx;
+    best_g[start_idx] = 0.0;
+    best_node[start_idx] = start_node.get();
     open.push(start_node.get());
     all_nodes.push_back(std::move(start_node));
     
@@ -406,7 +413,8 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     
     Node* goal_node = nullptr;
     int iterations = 0;
-    const int max_iter = std::min(width_ * height_ * 2, 1000000);
+    const int auto_max_iter = std::min(width_ * height_ * 2, 1000000);
+    const int max_iter = (astar_max_iterations_ > 0) ? astar_max_iterations_ : auto_max_iter;
     
     while (!open.empty() && iterations++ < max_iter) {
         Node* curr = open.top();
@@ -441,12 +449,19 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
             
             double cell_cost = getCost(nx, ny);
             double total_cost = move_cost[i] + cost_weight_ * cell_cost;
+            double tentative_g = curr->g + total_cost;
+
+            if (tentative_g + 1e-9 >= best_g[nidx]) {
+                continue;
+            }
             
             auto new_node = std::make_unique<Node>();
             new_node->x = nx; new_node->y = ny;
-            new_node->g = curr->g + total_cost;
+            new_node->g = tentative_g;
             new_node->h = heuristic(nx, ny, gx, gy);
             new_node->parent = curr;
+            best_g[nidx] = tentative_g;
+            best_node[nidx] = new_node.get();
             
             open.push(new_node.get());
             all_nodes.push_back(std::move(new_node));
@@ -458,7 +473,7 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     }
     
     std::vector<geometry_msgs::msg::PoseStamped> waypoints;
-    for (Node* n = goal_node; n != nullptr; n = n->parent) {
+    for (Node* n = best_node[gy * width_ + gx]; n != nullptr; n = n->parent) {
         geometry_msgs::msg::PoseStamped pose;
         pose.header = header;
         mapToWorld(n->x, n->y, pose.pose.position.x, pose.pose.position.y);

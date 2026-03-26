@@ -86,6 +86,7 @@ private:
     double esdf_warn_min_safe_dist_ = 0.12;  // 平滑后ESDF预警最小安全距离(米)
     double start_deviation_threshold_ = 1.0;  // 起点偏离缓存路径阈值(米)
     int astar_max_attempts_ = 2;  // A* 重试次数
+    int astar_max_iterations_ = 0;  // A* 单次搜索最大迭代次数(<=0: 自动)
     int astar_threshold_step_ = 10;  // A* 每次重试降低的障碍物阈值步长
     bool enable_path_cache_ = true;  // 启用路径缓存
     bool enable_auto_prune_ = true;  // 启用自动剪枝
