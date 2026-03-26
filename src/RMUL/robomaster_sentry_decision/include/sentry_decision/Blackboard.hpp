@@ -7,7 +7,7 @@
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
-#include "Constants.hpp"
+#include "GameConstants.hpp"
 
 using OurRobotState = decision_messages::msg::OurRobotState;
 using GameState = decision_messages::msg::GameState;
@@ -35,7 +35,7 @@ struct BehaviorInfo {
     double start_time = -1.0;
     double execution_start_time = -1.0;
     double execution_duration = 0.0;
-    bool target_published = false;
+    bool target_published = false;      // 不再用于限制发布频率，保留备用
     bool control_published = false;
     bool control_updated = false;
 };
@@ -55,8 +55,10 @@ public:
     double getDeviationThreshold() const { return config_.deviation_threshold; }
     double getHpWeight() const { return config_.hp_weight; }
     double getAmmoWeight() const { return config_.ammo_weight; }
+    double getMaxHp() const { return config_.max_hp; }
+    double getMaxAmmo() const { return config_.max_ammo; }
 
-    // 根据当前阶段返回云台模式 (0: 静止, 1: 打人)
+    // 根据当前阶段返回云台模式
     uint8_t getGimbalModeByStage() const;
 
     void updateOurState(const OurRobotState::SharedPtr msg);
@@ -82,7 +84,7 @@ public:
     bool at_supply_point = false;
     bool at_current_target = false;
     double target_arrival_time = -1.0;
-    double min_stay_duration = 3.0;   // 暂时保持，后续可配置
+    double min_stay_duration = 3.0;   // 停留最短时间（可配置）
 
     BehaviorInfo current_behavior;
 
@@ -129,11 +131,13 @@ private:
         // 补给点 (单位: cm)
         geometry_msgs::msg::Point red_supply;
         geometry_msgs::msg::Point blue_supply;
-        double arrival_wait_time = SentryConstants::ARRIVAL_WAIT_TIME;
-        double supply_threshold = SentryConstants::SUPPLY_THRESHOLD;
-        double deviation_threshold = 0.5;   // 单位: 米
+        double arrival_wait_time = 1.0;
+        double supply_threshold = 0.3;
+        double deviation_threshold = 50.0;      // 单位：cm
         double hp_weight = 1.0;
         double ammo_weight = 0.0;
+        double max_hp = 400.0;
+        double max_ammo = 750.0;
     } config_;
 
     std::shared_ptr<SentryControl> control_msg_;

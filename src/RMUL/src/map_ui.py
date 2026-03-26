@@ -12,7 +12,7 @@ from config import *
 from sentry_controller import SentryController
 
 class MapUI:
-    def __init__(self, game_state, msg_interface):
+    def __init__(self, game_state, msg_interface, sentry_controller=None):
         pygame.init()
         
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -20,11 +20,14 @@ class MapUI:
         
         self.game_state = game_state
         self.msg_interface = msg_interface          # 用于发布ROS2消息
-        self.sentry_controller = SentryController(game_state)
+        self._owns_sentry_controller = sentry_controller is None
+        self.sentry_controller = sentry_controller or SentryController(game_state)
         
         # 加载地图图片（省赛地图）
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        map_image_path = os.path.abspath(os.path.join(script_dir, "..", "assets", "RMULmap.png"))
         try:
-            self.map_image = pygame.image.load("assets/RMULmap.png")
+            self.map_image = pygame.image.load(map_image_path)
             self.map_image = pygame.transform.scale(
                 self.map_image, (MAP_DISPLAY_WIDTH, MAP_DISPLAY_HEIGHT)
             )
@@ -32,6 +35,7 @@ class MapUI:
             print(f"✓ 地图偏移: ({MAP_OFFSET_X}, {MAP_OFFSET_Y})")
         except Exception as e:
             print(f"警告: 无法加载地图图片: {e}")
+            print(f"尝试加载的地图路径: {map_image_path}")
             print("使用彩色背景代替")
             self.map_image = None
         
@@ -79,7 +83,7 @@ class MapUI:
         print(f"地图UI初始化: {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
         print(f"地图显示区域: {MAP_DISPLAY_WIDTH}x{MAP_DISPLAY_HEIGHT}")
         print(f"UI缩放: {UI_SCALE}")
-        print("✓ 哨兵控制器已启动")
+        print("✓ 地图界面已连接哨兵控制器")
         print("✓ 订阅决策系统话题: /sentry/target_position, /sentry/control")
     
     def save_state_to_file(self):
@@ -522,7 +526,7 @@ class MapUI:
                 self.clock.tick(FPS)
 
         finally:
-            if self.sentry_controller:
+            if self.sentry_controller and self._owns_sentry_controller:
                 self.sentry_controller.destroy_node()
             pygame.quit()
             sys.exit()

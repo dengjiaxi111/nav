@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
 哨兵移动控制器 - 增强版
-订阅决策系统的目标点，控制7号机器人移动，并发布TF变换
+订阅决策系统的目标点，控制7号机器人移动
 """
-import json
-import os
 import time
-import threading
 import math
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PointStamped, TransformStamped
+from geometry_msgs.msg import PointStamped
 from std_msgs.msg import String
 from sentry_decision.msg import SentryControl
-import tf2_ros
 from datetime import datetime
 
 class SentryController(Node):
@@ -47,9 +43,6 @@ class SentryController(Node):
             self.debug_callback,
             10
         )
-        
-        # TF广播器
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
         
         # 当前状态
         self.current_target = None
@@ -88,7 +81,6 @@ class SentryController(Node):
         
         print("✓ 哨兵移动控制器已启动")
         print("✓ 订阅话题: /sentry/target_position, /sentry/control, /sentry/debug")
-        print("✓ 发布TF变换: map -> base_link")
         
     def target_callback(self, msg):
         """目标点回调函数"""
@@ -161,14 +153,12 @@ class SentryController(Node):
             print(f"调试消息回调错误: {e}")
             
     def update_movement(self, dt):
-        """更新哨兵机器人位置，并发布TF变换"""
+        """更新哨兵机器人位置"""
         if not self.sentry_robot:
             return
         
         # 如果没有目标点或不移动，停止移动
         if not self.sentry_robot.has_target or not self.sentry_robot.is_moving:
-            # 即使没有移动，也要发布当前的TF变换
-            self.publish_tf_transform()
             return
         
         # 保存当前位置
@@ -186,7 +176,6 @@ class SentryController(Node):
             self.sentry_robot.has_target = False
             self.sentry_robot.is_moving = False
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 已到达目标点: ({self.sentry_robot.x:.1f}, {self.sentry_robot.y:.1f}) cm")
-            self.publish_tf_transform()
             return
         
         # 计算移动方向
@@ -213,38 +202,10 @@ class SentryController(Node):
                 self.sentry_robot.is_moving = False
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] 已到达目标点: ({self.sentry_robot.x:.1f}, {self.sentry_robot.y:.1f}) cm")
         
-        # 发布TF变换（每次位置更新后）
-        self.publish_tf_transform()
-        
         # 检查是否长时间没有收到目标点（超过2秒）
         current_time = time.time()
         if current_time - self.last_target_time > 2.0 and self.sentry_robot.has_target:
             print(f"警告: 超过2秒未收到新的目标点，当前位置: ({self.sentry_robot.x:.1f}, {self.sentry_robot.y:.1f}) cm")
-            
-    def publish_tf_transform(self):
-        """发布从map到base_link的变换"""
-        if not self.sentry_robot:
-            return
-        
-        # 创建TransformStamped消息
-        t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = "map"
-        t.child_frame_id = "base_link"
-        
-        # 位置：厘米 -> 米
-        t.transform.translation.x = self.sentry_robot.x / 100.0
-        t.transform.translation.y = self.sentry_robot.y / 100.0
-        t.transform.translation.z = 0.0
-        
-        # 无旋转
-        t.transform.rotation.x = 0.0
-        t.transform.rotation.y = 0.0
-        t.transform.rotation.z = 0.0
-        t.transform.rotation.w = 1.0
-        
-        # 广播
-        self.tf_broadcaster.sendTransform(t)
         
     def get_status(self):
         """获取当前状态"""
@@ -286,8 +247,5 @@ class SentryController(Node):
         self.current_target = None
         self.current_control = None
         self.debug_message = ""
-        
-        # 发布一次重置后的TF
-        self.publish_tf_transform()
         
         print("哨兵控制器已重置")

@@ -8,20 +8,28 @@ import subprocess
 # 添加工作空间的Python包路径
 def setup_python_path():
     """设置Python路径以包含ROS2消息包"""
-    # 获取当前工作目录
-    workspace_path = os.path.dirname(os.path.abspath(__file__))
-    
-    # 可能的Python包路径
-    possible_paths = [
-        # install目录中的Python包
-        os.path.join(workspace_path, "..", "install", "decision_messages", "local", "lib", "python3.10", "dist-packages"),
-        os.path.join(workspace_path, "..", "install", "decision_messages", "lib", "python3.10", "site-packages"),
-        # build目录中的Python包
-        os.path.join(workspace_path, "..", "build", "decision_messages", "rosidl_generator_py"),
-        # sentry_decision包的Python路径
-        os.path.join(workspace_path, "..", "install", "sentry_decision", "local", "lib", "python3.10", "dist-packages"),
-        os.path.join(workspace_path, "..", "install", "sentry_decision", "lib", "python3.10", "site-packages"),
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+
+    # 兼容从仓库根目录或src/RMUL/src目录启动的情况
+    candidate_roots = [
+        os.getcwd(),
+        script_dir,
+        os.path.abspath(os.path.join(script_dir, "..")),
+        os.path.abspath(os.path.join(script_dir, "..", "..")),
+        os.path.abspath(os.path.join(script_dir, "..", "..", "..")),
     ]
+
+    possible_paths = []
+    for root in candidate_roots:
+        possible_paths.extend([
+            os.path.join(root, "install", "decision_messages", "local", "lib", python_version, "dist-packages"),
+            os.path.join(root, "install", "decision_messages", "lib", python_version, "site-packages"),
+            os.path.join(root, "build", "decision_messages", "rosidl_generator_py"),
+            os.path.join(root, "install", "sentry_decision", "local", "lib", python_version, "dist-packages"),
+            os.path.join(root, "install", "sentry_decision", "lib", python_version, "site-packages"),
+            os.path.join(root, "build", "sentry_decision", "rosidl_generator_py"),
+        ])
     
     # 添加存在的路径到sys.path
     added = False
@@ -123,10 +131,8 @@ if __name__ == "__main__":
             game_state.set_msg_interface(msg_interface)
             game_state.set_sentry_controller(sentry_controller)
             
-            # 创建地图UI
-            map_ui = MapUI(game_state, msg_interface)
-            # 将哨兵控制器传递给地图UI
-            map_ui.sentry_controller = sentry_controller
+            # 创建地图UI，并复用同一个哨兵控制器节点
+            map_ui = MapUI(game_state, msg_interface, sentry_controller=sentry_controller)
             
             try:
                 map_ui.run()

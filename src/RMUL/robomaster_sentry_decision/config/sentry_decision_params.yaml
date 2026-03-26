@@ -1,13 +1,31 @@
+# 攻击点（单位：cm）
 red_attack_x: 676.0
-red_attack_y: 400
+red_attack_y: 400.0
 blue_attack_x: 517.4
-blue_attack_y: 400
+blue_attack_y: 400.0
+
+# 补给点（单位：cm）
 red_supply_x: 60.0
 red_supply_y: 710.0
 blue_supply_x: 1130.0
-blue_supply_y: 79.00
+blue_supply_y: 79.0
+
+# 到达目标后等待时间（秒）
 arrival_wait_time: 1.0
+
+# 补给的 Z 值阈值
 supply_threshold: 0.3
-deviation_threshold: 0.5
+
+# 偏移检测阈值（单位：cm，与目标点的距离）
+deviation_threshold: 50.0
+
+# Z 值计算权重
 hp_weight: 1.0
 ammo_weight: 0.0
+
+# 机器人自身属性（最大血量、最大弹量）
+max_hp: 400.0
+max_ammo: 750.0
+
+# 决策循环发布周期（毫秒）
+publish_interval_ms: 100
