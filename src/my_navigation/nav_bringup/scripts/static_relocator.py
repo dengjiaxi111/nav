@@ -3,7 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
-from tf2_ros import TransformBroadcaster, StaticTransformBroadcaster
+from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 import numpy as np
@@ -36,14 +36,16 @@ class StaticRelocator(Node):
         
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.tf_static_broadcaster = StaticTransformBroadcaster(self)
+        self.tf_broadcaster = TransformBroadcaster(self)
         
-        self.map_frame = "map"
-        self.odom_frame = "odom"
-        self.base_frame = "base_link"
-        
-        # 初始不再发 0 0 0，等待 rviz 指定
-        # self.publish_initial_identity_transform()
+        self.map_frame = self.declare_parameter("map_frame", "map").value
+        self.odom_frame = self.declare_parameter("odom_frame", "odom").value
+        self.base_frame = self.declare_parameter("base_frame", "base_link").value
+        self.fallback_assume_odom_equals_base = bool(
+            self.declare_parameter("fallback_assume_odom_equals_base", True).value
+        )
+        self.current_map_to_odom = None
+        self.publish_timer = self.create_timer(0.05, self.publish_current_transform)
         
         self.sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -52,43 +54,66 @@ class StaticRelocator(Node):
             10
         )
         self.get_logger().info("静态重定位节点启动！(use_static_map_odom=true 模式)")
-        self.get_logger().info("请在 RViz 中通过 '2D Pose Estimate' 选择初始位姿...")
+        self.get_logger().info("请在 RViz 中通过 '2D Pose Estimate' 选择初始位姿（输入是 map->base_link，不是 map->odom）...")
+        if self.fallback_assume_odom_equals_base:
+            self.get_logger().warn(
+                "若 odom->base_link 暂不可用，将回退假设 odom==base_link 来更新 map->odom"
+            )
 
-    def publish_initial_identity_transform(self):
-        t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = self.map_frame
-        t.child_frame_id = self.odom_frame
-        t.transform.translation.x = 0.0
-        t.transform.translation.y = 0.0
-        t.transform.translation.z = 0.0
-        t.transform.rotation.w = 1.0
-        self.tf_static_broadcaster.sendTransform(t)
-        self.get_logger().info("已发布初始 map->odom 恒等变换，等待用户在 RViz 指定新位姿。")
+    def publish_current_transform(self):
+        if self.current_map_to_odom is None:
+            return
+        self.current_map_to_odom.header.stamp = self.get_clock().now().to_msg()
+        self.tf_broadcaster.sendTransform(self.current_map_to_odom)
 
     def initial_pose_callback(self, msg):
-        self.get_logger().info("接收到 /initialpose 输入，直接作为 map->odom 变换发布...")
+        self.get_logger().info("接收到 /initialpose，正在由 map->base_link 计算 map->odom...")
         
-        # 接收到的 Pose 直接作为 map -> odom（与重定位输出一致，不进行 NDT 配准）
-        map_to_odom_mat = pose_to_matrix(msg.pose.pose)
+        # RViz /initialpose 表示 map->base_link，而非 map->odom。
+        map_to_base_mat = pose_to_matrix(msg.pose.pose)
+
+        # 当前 odom->base_link（来自里程计/LIO）
+        try:
+            odom_to_base_tf = self.tf_buffer.lookup_transform(
+                self.odom_frame,
+                self.base_frame,
+                rclpy.time.Time(),
+            )
+            odom_to_base_mat = transform_to_matrix(odom_to_base_tf.transform)
+        except Exception as ex:
+            if not self.fallback_assume_odom_equals_base:
+                self.get_logger().warn(
+                    f"无法获取 {self.odom_frame}->{self.base_frame}，本次不更新 map->odom: {ex}"
+                )
+                return
+            self.get_logger().warn(
+                f"无法获取 {self.odom_frame}->{self.base_frame}，回退为 odom==base_link 假设更新 map->odom: {ex}"
+            )
+            odom_to_base_mat = np.eye(4)
+
+        # 公式：T_map_odom = T_map_base * inv(T_odom_base)
+        map_to_odom_mat = map_to_base_mat @ np.linalg.inv(odom_to_base_mat)
         
         t, q = matrix_to_transform(map_to_odom_mat)
         
         trans = TransformStamped()
-        trans.header.stamp = self.get_clock().now().to_msg()
         trans.header.frame_id = self.map_frame
         trans.child_frame_id = self.odom_frame
-        trans.transform.translation.x = t[0]
-        trans.transform.translation.y = t[1]
-        trans.transform.translation.z = t[2]
-        trans.transform.rotation.x = q[0]
-        trans.transform.rotation.y = q[1]
-        trans.transform.rotation.z = q[2]
-        trans.transform.rotation.w = q[3]
+        trans.transform.translation.x = float(t[0])
+        trans.transform.translation.y = float(t[1])
+        trans.transform.translation.z = float(t[2])
+        trans.transform.rotation.x = float(q[0])
+        trans.transform.rotation.y = float(q[1])
+        trans.transform.rotation.z = float(q[2])
+        trans.transform.rotation.w = float(q[3])
+
+        self.current_map_to_odom = trans
+        self.publish_current_transform()
         
-        self.tf_static_broadcaster.sendTransform(trans)
         euler = R.from_quat(q).as_euler('xyz')
-        self.get_logger().info(f"已更新 map->odom: x={t[0]:.3f}, y={t[1]:.3f}, yaw={euler[2]*180.0/3.14159:.2f}度")
+        self.get_logger().info(
+            f"已更新 map->odom: x={t[0]:.3f}, y={t[1]:.3f}, yaw={euler[2]*180.0/3.14159:.2f}度"
+        )
 
 def main(args=None):
     rclpy.init(args=args)

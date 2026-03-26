@@ -12,6 +12,7 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import PythonExpression
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
@@ -148,7 +149,10 @@ def generate_launch_description():
         package='nav_bringup',
         executable='static_relocator.py',
         name='static_relocator',
-        condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('use_static_map_odom'), "' == 'true' and '",
+            LaunchConfiguration('debug_reset_odom_to_base_link'), "' != 'true'"
+        ])),
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
         output='screen'
     )

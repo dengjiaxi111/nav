@@ -61,6 +61,8 @@ class OdomBaseDebugRebaser(Node):
         self.latest_odom_pose = None
         self.has_anchor = False
         self.need_reanchor = True
+        self.pending_initialpose_mat = None
+        self._warned_waiting_odom = False
 
         self.anchor_map_to_base = np.eye(4)
         self.anchor_odom_to_base = np.eye(4)
@@ -90,8 +92,12 @@ class OdomBaseDebugRebaser(Node):
 
     def odom_callback(self, msg: Odometry):
         self.latest_odom_pose = msg.pose.pose
+        self._warned_waiting_odom = False
 
-    def initialpose_callback(self, _msg: PoseWithCovarianceStamped):
+    def initialpose_callback(self, msg: PoseWithCovarianceStamped):
+        # 直接使用 RViz 2D Pose Estimate 作为 map->base 的目标锚点，
+        # 避免与其他 map->odom 发布源竞争时通过 TF 回读出现旧值。
+        self.pending_initialpose_mat = pose_to_matrix(msg.pose.pose)
         self.need_reanchor = True
         self.get_logger().warn("[DEBUG] 收到 /initialpose，准备重锚定 map 运动")
 
@@ -117,30 +123,48 @@ class OdomBaseDebugRebaser(Node):
         self.tf_broadcaster.sendTransform(tf_msg)
 
     def try_reanchor(self):
-        if self.latest_odom_pose is None:
+        if self.latest_odom_pose is None and self.pending_initialpose_mat is None:
+            if not self._warned_waiting_odom:
+                self.get_logger().warn("[DEBUG] 尚未收到里程计，暂不能重锚定（等待 /Odometry）")
+                self._warned_waiting_odom = True
             return
 
-        # 先拿“当前 base_link 在 map 下”的位姿作为锚点
-        try:
-            map_to_base_tf = self.tf_buffer.lookup_transform(
-                self.map_frame,
-                self.base_frame,
-                rclpy.time.Time(),
-            )
-        except Exception:
-            return
+        # /initialpose 触发时：优先采用用户输入作为 map->base 锚点。
+        if self.pending_initialpose_mat is not None:
+            self.anchor_map_to_base = self.pending_initialpose_mat
+            self.pending_initialpose_mat = None
+        else:
+            # 其他触发（例如 localization/status）回退到 TF 回读。
+            try:
+                map_to_base_tf = self.tf_buffer.lookup_transform(
+                    self.map_frame,
+                    self.base_frame,
+                    rclpy.time.Time(),
+                )
+            except Exception:
+                return
+            self.anchor_map_to_base = transform_to_matrix(map_to_base_tf.transform)
 
-        self.anchor_map_to_base = transform_to_matrix(map_to_base_tf.transform)
-        self.anchor_odom_to_base = pose_to_matrix(self.latest_odom_pose)
+        if self.latest_odom_pose is not None:
+            self.anchor_odom_to_base = pose_to_matrix(self.latest_odom_pose)
+        else:
+            # /initialpose 先到、/Odometry 暂未到时，先用恒等作为临时锚点，
+            # 保障 map->odom 能立即跳转到用户给定初值。
+            self.anchor_odom_to_base = np.eye(4)
+
         self.has_anchor = True
         self.need_reanchor = False
         self.get_logger().warn("[DEBUG] 重锚定成功，开始持续发布 map->odom")
 
     def publish_rebased_map_to_odom(self):
-        if not self.has_anchor or self.latest_odom_pose is None:
+        if not self.has_anchor:
             return
 
-        t_odom_to_base_now = pose_to_matrix(self.latest_odom_pose)
+        t_odom_to_base_now = (
+            pose_to_matrix(self.latest_odom_pose)
+            if self.latest_odom_pose is not None
+            else np.eye(4)
+        )
         t_map_to_base_now = self.anchor_map_to_base @ np.linalg.inv(self.anchor_odom_to_base) @ t_odom_to_base_now
 
         # 因为强制了 odom==base_link，所以 map->odom = map->base_link
