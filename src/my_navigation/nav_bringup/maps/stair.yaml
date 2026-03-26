@@ -1,4 +1,4 @@
-image: stair.pgm
+image: stair1.pgm
 mode: trinary
 resolution: 0.05
 origin: [-0.3, -0.334, 0]

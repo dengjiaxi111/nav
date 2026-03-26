@@ -10,6 +10,7 @@
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <fstream>
 #include <yaml-cpp/yaml.h>
 
@@ -28,13 +29,22 @@ public:
         decision_manager_ = std::make_shared<DecisionManager>();
         auto blackboard = decision_manager_->getBlackboard();
 
-        // 加载配置文件
-        std::string config_path = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
+        // 加载配置文件：优先使用安装后的 share 路径，兼容 ros2 run
+        std::string config_path;
+        try {
+            config_path = ament_index_cpp::get_package_share_directory("sentry_decision") +
+                          "/config/sentry_decision_params.yaml";
+        } catch (const std::exception& e) {
+            // 开发态 fallback（从源码目录直接运行）
+            config_path = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
+            RCLCPP_WARN(this->get_logger(),
+                        "获取包 share 路径失败: %s，回退到相对路径 %s",
+                        e.what(), config_path.c_str());
+        }
+
         if (std::ifstream(config_path).good()) {
             if (!blackboard->loadConfigFromYAML(config_path)) {
-                RCLCPP_ERROR(this->get_logger(), "加载配置文件 %s 失败，程序退出", config_path.c_str());
-                rclcpp::shutdown();
-                return;
+                RCLCPP_WARN(this->get_logger(), "加载配置文件 %s 失败，使用默认配置", config_path.c_str());
             }
             try {
                 YAML::Node config = YAML::LoadFile(config_path);
@@ -46,9 +56,7 @@ public:
                             e.what(), target_republish_interval_sec_);
             }
         } else {
-            RCLCPP_ERROR(this->get_logger(), "配置文件 %s 不存在，程序退出", config_path.c_str());
-            rclcpp::shutdown();
-            return;
+            RCLCPP_WARN(this->get_logger(), "配置文件 %s 不存在，使用默认配置", config_path.c_str());
         }
 
         // 从 YAML 读取发布周期

@@ -41,6 +41,7 @@ public:
         declare_parameter("yaw_tolerance", 0.1);
         declare_parameter("controller_timeout", 10.0);
         declare_parameter("controller_progress_threshold", 0.15);
+        declare_parameter("decision_bridge.goal_dedup_tolerance", 0.05);
         
         control_rate_ = get_parameter("control_rate").as_double();
         goal_timeout_ = get_parameter("goal_timeout").as_double();
@@ -48,6 +49,8 @@ public:
         yaw_tolerance_ = get_parameter("yaw_tolerance").as_double();
         controller_timeout_ = get_parameter("controller_timeout").as_double();
         controller_progress_threshold_ = get_parameter("controller_progress_threshold").as_double();
+        decision_goal_dedup_tolerance_ =
+            get_parameter("decision_bridge.goal_dedup_tolerance").as_double();
         
         // === 路径检查参数 ===
         declare_parameter("path_check_period", 2.0);
@@ -604,9 +607,34 @@ private:
         goal->pose.orientation.z = 0.0;
         goal->pose.orientation.w = 1.0;
 
+        // 同一目标高频重发时，避免重复重置规划器/NMPC。
+        // 仅在导航进行中去重；若已失败或空闲，则允许同目标再次触发（用于重试规划）。
+        if ((goal_handle_ || rviz_goal_active_) && isSameGoalXY(*goal, goal_, decision_goal_dedup_tolerance_)) {
+            const auto state = fsm_.state();
+            const bool allow_retry =
+                (state == nav_core::NavState::FAILED) ||
+                (state == nav_core::NavState::IDLE) ||
+                (state == nav_core::NavState::SUCCEEDED);
+            if (!allow_retry) {
+                RCLCPP_DEBUG_THROTTLE(
+                    get_logger(), *get_clock(), 1000,
+                    "[决策桥接] 忽略重复目标(%.2f, %.2f), state=%d",
+                    msg->point.x, msg->point.y, static_cast<int>(state));
+                return;
+            }
+        }
+
         RCLCPP_INFO(get_logger(), "[决策桥接] 目标点 (%.2f, %.2f) -> goal_pose",
                     msg->point.x, msg->point.y);
         goalPoseCallback(goal);
+    }
+
+    static bool isSameGoalXY(const geometry_msgs::msg::PoseStamped& a,
+                             const geometry_msgs::msg::PoseStamped& b,
+                             double tolerance_m) {
+        const double dx = a.pose.position.x - b.pose.position.x;
+        const double dy = a.pose.position.y - b.pose.position.y;
+        return std::hypot(dx, dy) <= std::max(0.0, tolerance_m);
     }
     
     void initComponents() {
@@ -1720,6 +1748,7 @@ private:
     double control_rate_, goal_timeout_, goal_tolerance_, yaw_tolerance_;
     double controller_timeout_;  // 控制器无进展超时阈值(秒)
     double controller_progress_threshold_;  // 进展检测距离阈值(米)
+    double decision_goal_dedup_tolerance_ = 0.05;  // 决策桥接目标去重阈值(米)
     double esdf_vis_max_dist_;
     bool enable_esdf_;
     bool enable_static_layer_;   // 是否启用静态地图层
