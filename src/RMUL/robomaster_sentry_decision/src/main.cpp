@@ -64,6 +64,7 @@ private:
 
             auto blackboard = decision_manager_->getBlackboard();
             blackboard->updatePositionFromTF(t.transform.translation.x, t.transform.translation.y);
+            RCLCPP_INFO(this->get_logger(), "updatePositionFromTF: %f, %f", t.transform.translation.x, t.transform.translation.y);
             return true;
         } catch (const tf2::TransformException& ex) {
             std::cerr << "[TF] 查询 map->base_link 失败: " << ex.what() << std::endl;
