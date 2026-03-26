@@ -1,10 +1,11 @@
 #include "sentry_decision/DecisionManager.hpp"
-#include "sentry_decision/Constants.hpp"
+#include "sentry_decision/Models.hpp"
+#include "sentry_decision/GameConstants.hpp"
 #include <iostream>
 #include <cmath>
 #include <rclcpp/rclcpp.hpp>
 
-using namespace SentryConstants;
+using namespace GameConstants;
 
 DecisionManager::DecisionManager()
     : blackboard_(std::make_shared<Blackboard>()) {
@@ -30,12 +31,11 @@ bool DecisionManager::shouldInterruptAttack() const {
 }
 
 bool DecisionManager::supplyComplete() const {
-    // 修改：只检查血量是否回到 400
-    return blackboard_->current_hp >= 400.0;
+    return blackboard_->current_hp >= blackboard_->getMaxHp();
 }
 
 bool DecisionManager::resurrectionComplete() const {
-    return !blackboard_->resurrection_flag && blackboard_->current_hp >= 400.0;
+    return !blackboard_->resurrection_flag && blackboard_->current_hp >= blackboard_->getMaxHp();
 }
 
 void DecisionManager::transitionTo(State new_state) {
@@ -48,7 +48,7 @@ void DecisionManager::transitionTo(State new_state) {
 
     blackboard_->resetAllPublishStates();
 
-    uint8_t gimbal_mode = blackboard_->getGimbalModeByStage();  // 根据阶段获取云台模式
+    uint8_t gimbal_mode = blackboard_->getGimbalModeByStage();
 
     switch (new_state) {
         case State::MOVING_TO_ATTACK:
@@ -141,7 +141,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::MOVING_TO_SUPPLY);
                 break;
             }
-            if (blackboard_->isAtTarget(blackboard_->getAttackPoint(), 50.0)) {
+            if (blackboard_->isAtTarget(blackboard_->getAttackPoint(), blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
                 }
@@ -152,17 +152,16 @@ DecisionOutput DecisionManager::executeDecision() {
                 if (blackboard_->at_current_target) {
                     blackboard_->setTargetReached(false);
                 }
-                if (!blackboard_->isTargetPublished()) {
-                    output.target_position = blackboard_->getAttackPoint();
-                    output.target_needs_publishing = true;
-                }
+                // 只要未到达，就持续发布目标点
+                output.target_position = blackboard_->getAttackPoint();
+                output.target_needs_publishing = true;
             }
             break;
         }
 
         case State::MOVING_TO_SUPPLY: {
             geometry_msgs::msg::Point supply_point = blackboard_->getSupplyPoint();
-            if (blackboard_->isAtTarget(supply_point, 50.0)) {
+            if (blackboard_->isAtTarget(supply_point, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
                 }
@@ -177,10 +176,9 @@ DecisionOutput DecisionManager::executeDecision() {
                 if (blackboard_->at_current_target) {
                     blackboard_->setTargetReached(false);
                 }
-                if (!blackboard_->isTargetPublished()) {
-                    output.target_position = supply_point;
-                    output.target_needs_publishing = true;
-                }
+                // 持续发布目标点
+                output.target_position = supply_point;
+                output.target_needs_publishing = true;
             }
             break;
         }
@@ -190,9 +188,9 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::MOVING_TO_SUPPLY);
                 break;
             }
-            // 新增：偏离检测，如果当前位置与攻击点距离超过 50cm，则重新移动到攻击点
+            // 偏离检测
             geometry_msgs::msg::Point attack_point = blackboard_->getAttackPoint();
-            if (!blackboard_->isAtTarget(attack_point, 50.0)) {
+            if (!blackboard_->isAtTarget(attack_point, blackboard_->getDeviationThreshold())) {
                 transitionTo(State::MOVING_TO_ATTACK);
             }
             break;

@@ -4,23 +4,19 @@
 #include <yaml-cpp/yaml.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
-using namespace SentryConstants;
+using namespace GameConstants;
 
 Blackboard::Blackboard() {
     control_msg_ = std::make_shared<SentryControl>();
-    control_msg_->gimbal_mode = GIMBAL_ENEMY;
+    control_msg_->gimbal_mode = GIMBAL_STOP;
     control_msg_->spin_mode = SPIN_OFF;
     resetAllPublishStates();
 
-    // 初始化配置为默认值（来自 Constants.hpp）
-    config_.red_attack = RED_ATTACK_POINT;
-    config_.blue_attack = BLUE_ATTACK_POINT;
-    config_.red_supply = RED_SUPPLY_POINT;
-    config_.blue_supply = BLUE_SUPPLY_POINT;
-    config_.arrival_wait_time = ARRIVAL_WAIT_TIME;
-    config_.supply_threshold = SUPPLY_THRESHOLD;
-    config_.hp_weight = 1.0;
-    config_.ammo_weight = 0.0;
+    // 所有配置由 loadConfigFromYAML 负责，这里保留默认值（会被覆盖）
+    config_.red_attack = geometry_msgs::msg::Point();
+    config_.blue_attack = geometry_msgs::msg::Point();
+    config_.red_supply = geometry_msgs::msg::Point();
+    config_.blue_supply = geometry_msgs::msg::Point();
 }
 
 bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
@@ -30,18 +26,26 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         if (config["red_attack_x"] && config["red_attack_y"]) {
             config_.red_attack.x = config["red_attack_x"].as<double>();
             config_.red_attack.y = config["red_attack_y"].as<double>();
+        } else {
+            throw std::runtime_error("Missing red_attack_x or red_attack_y");
         }
         if (config["blue_attack_x"] && config["blue_attack_y"]) {
             config_.blue_attack.x = config["blue_attack_x"].as<double>();
             config_.blue_attack.y = config["blue_attack_y"].as<double>();
+        } else {
+            throw std::runtime_error("Missing blue_attack_x or blue_attack_y");
         }
         if (config["red_supply_x"] && config["red_supply_y"]) {
             config_.red_supply.x = config["red_supply_x"].as<double>();
             config_.red_supply.y = config["red_supply_y"].as<double>();
+        } else {
+            throw std::runtime_error("Missing red_supply_x or red_supply_y");
         }
         if (config["blue_supply_x"] && config["blue_supply_y"]) {
             config_.blue_supply.x = config["blue_supply_x"].as<double>();
             config_.blue_supply.y = config["blue_supply_y"].as<double>();
+        } else {
+            throw std::runtime_error("Missing blue_supply_x or blue_supply_y");
         }
         if (config["arrival_wait_time"])
             config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
@@ -53,11 +57,18 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
             config_.hp_weight = config["hp_weight"].as<double>();
         if (config["ammo_weight"])
             config_.ammo_weight = config["ammo_weight"].as<double>();
+        if (config["max_hp"])
+            config_.max_hp = config["max_hp"].as<double>();
+        if (config["max_ammo"])
+            config_.max_ammo = config["max_ammo"].as<double>();
 
         std::cout << "[CONFIG] 成功加载配置文件: " << filepath << std::endl;
         return true;
     } catch (const YAML::Exception& e) {
         std::cerr << "[CONFIG] 加载 YAML 失败: " << e.what() << std::endl;
+        return false;
+    } catch (const std::runtime_error& e) {
+        std::cerr << "[CONFIG] 配置缺失: " << e.what() << std::endl;
         return false;
     }
 }
@@ -81,9 +92,9 @@ geometry_msgs::msg::Point Blackboard::getSupplyPoint() const {
 uint8_t Blackboard::getGimbalModeByStage() const {
     // 阶段 3: 五秒倒计时，阶段 4: 比赛中，云台打人；其他阶段云台静止
     if (stage == 3 || stage == 4) {
-        return 1;   // 打人模式
+        return GIMBAL_ATTACK;
     } else {
-        return 0;   // 静止
+        return GIMBAL_STOP;
     }
 }
 
@@ -93,7 +104,6 @@ void Blackboard::resetForNewMatch() {
     resurrection_flag = false;
     at_current_target = false;
     target_arrival_time = -1.0;
-    // 根据当前阶段设置云台模式
     updateControlMsg(getGimbalModeByStage(), SPIN_OFF);
     resetAllPublishStates();
 }
@@ -115,7 +125,7 @@ void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
         resetCurrentBehavior();
     }
 
-    if (resurrection_flag && current_hp >= 400.0) {
+    if (resurrection_flag && current_hp >= config_.max_hp) {
         resurrection_flag = false;
         at_current_target = false;
     }

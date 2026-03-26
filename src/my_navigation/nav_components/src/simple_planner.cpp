@@ -23,6 +23,7 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_max_attempts_ = node_->declare_parameter("planner.astar_max_attempts", 2);
     astar_threshold_step_ = node_->declare_parameter("planner.astar_threshold_step", 10);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
+    publish_astar_raw_path_ = node_->declare_parameter("planner.publish_astar_raw_path", true);
 
     if (astar_max_attempts_ < 1) {
         RCLCPP_WARN(node_->get_logger(),
@@ -77,6 +78,8 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     smoother_.setParams(smooth_params);
     
     // 创建调试可视化发布器
+    astar_raw_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
+        "plan_astar_raw", 10);
     ctrl_pts_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
         "debug/control_points", 10);
 }
@@ -305,6 +308,15 @@ bool SimplePlanner::plan(
             RCLCPP_WARN(node_->get_logger(), 
                 "A*规划失败 (阈值=%d)", current_threshold);
             continue;
+        }
+
+        if (publish_astar_raw_path_ && astar_raw_path_pub_) {
+            nav_msgs::msg::Path astar_path_msg = raw_path;
+            astar_path_msg.header.stamp = node_->now();
+            for (auto& pose : astar_path_msg.poses) {
+                pose.header.stamp = astar_path_msg.header.stamp;
+            }
+            astar_raw_path_pub_->publish(astar_path_msg);
         }
         
         nav_msgs::msg::Path smoothed_path;

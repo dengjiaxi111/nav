@@ -16,8 +16,8 @@ def generate_launch_description():
     stair_mask_yaml = LaunchConfiguration('stair_mask_yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
 
-    default_map = '/home/li/navigation2026/src/my_navigation/nav_bringup/maps/map.yaml'
-    default_stair_mask = "/home/li/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"
+    default_map = '/home/lehan/navigation2026/src/my_navigation/nav_bringup/maps/map.yaml'
+    default_stair_mask = "/home/lehan/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"
     
     # 注意: map → odom TF 现在由 localization_initializer (NDT重定位) 发布
     # 不再需要临时的 static_tf_map_odom

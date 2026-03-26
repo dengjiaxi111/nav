@@ -1,5 +1,5 @@
 #include "sentry_decision/DecisionManager.hpp"
-#include "sentry_decision/Constants.hpp"
+#include "sentry_decision/GameConstants.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -14,7 +14,7 @@
 #include <yaml-cpp/yaml.h>
 
 using namespace std::chrono_literals;
-using namespace SentryConstants;
+using namespace GameConstants;
 
 class SentryDecisionNode : public rclcpp::Node {
 public:
@@ -28,11 +28,13 @@ public:
         decision_manager_ = std::make_shared<DecisionManager>();
         auto blackboard = decision_manager_->getBlackboard();
 
-        // 仅从 robomaster_sentry_decision/config/sentry_decision_params.yaml 加载配置
+        // 加载配置文件
         std::string config_path = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
         if (std::ifstream(config_path).good()) {
             if (!blackboard->loadConfigFromYAML(config_path)) {
-                RCLCPP_WARN(this->get_logger(), "无法加载配置文件 %s，使用默认配置", config_path.c_str());
+                RCLCPP_ERROR(this->get_logger(), "加载配置文件 %s 失败，程序退出", config_path.c_str());
+                rclcpp::shutdown();
+                return;
             }
             try {
                 YAML::Node config = YAML::LoadFile(config_path);
@@ -44,7 +46,19 @@ public:
                             e.what(), target_republish_interval_sec_);
             }
         } else {
-            RCLCPP_WARN(this->get_logger(), "配置文件 %s 不存在，使用默认配置", config_path.c_str());
+            RCLCPP_ERROR(this->get_logger(), "配置文件 %s 不存在，程序退出", config_path.c_str());
+            rclcpp::shutdown();
+            return;
+        }
+
+        // 从 YAML 读取发布周期
+        int publish_interval_ms = 100;
+        try {
+            YAML::Node config = YAML::LoadFile(config_path);
+            if (config["publish_interval_ms"])
+                publish_interval_ms = config["publish_interval_ms"].as<int>();
+        } catch (const YAML::Exception& e) {
+            RCLCPP_WARN(this->get_logger(), "读取发布周期失败，使用默认 100ms");
         }
 
         our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
@@ -58,9 +72,10 @@ public:
         target_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>("/sentry/target_position", 10);
         control_pub_ = this->create_publisher<sentry_decision::msg::SentryControl>("/sentry/control", 10);
 
-        timer_ = this->create_wall_timer(100ms, std::bind(&SentryDecisionNode::decisionLoop, this));
+        timer_ = this->create_wall_timer(std::chrono::milliseconds(publish_interval_ms),
+                                         std::bind(&SentryDecisionNode::decisionLoop, this));
 
-        std::cout << "[SYSTEM] Sentry Decision System (TF Position) Started" << std::endl;
+        std::cout << "[SYSTEM] Sentry Decision System (TF Position) Started, period = " << publish_interval_ms << "ms" << std::endl;
     }
 
 private:
@@ -70,10 +85,10 @@ private:
 
     void gameStateCallback(const decision_messages::msg::GameState::SharedPtr msg) {
         decision_manager_->updateGameState(msg);
-        if (msg->stage == 4 && !game_started_) {
+        if (msg->stage == STAGE_BATTLE && !game_started_) {
             game_started_ = true;
             std::cout << "[SYSTEM] 比赛开始!" << std::endl;
-        } else if (msg->stage != 4 && game_started_) {
+        } else if (msg->stage != STAGE_BATTLE && game_started_) {
             game_started_ = false;
             std::cout << "[SYSTEM] 比赛结束" << std::endl;
         }
@@ -183,11 +198,11 @@ private:
 
         auto blackboard = decision_manager_->getBlackboard();
 
-        std::string gimbal = (ctrl.gimbal_mode == 1) ? "打人" : "不动";
+        std::string gimbal = (ctrl.gimbal_mode == GIMBAL_ATTACK) ? "打人" : "不动";
         std::string spin;
         switch (ctrl.spin_mode) {
-            case 0: spin = "不动"; break;
-            case 1: spin = "旋转"; break;
+            case SPIN_OFF: spin = "不动"; break;
+            case SPIN_ON:  spin = "旋转"; break;
             default: spin = "未知";
         }
 
@@ -201,7 +216,7 @@ private:
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
         auto blackboard = decision_manager_->getBlackboard();
         msg->gimbal_mode = blackboard->getGimbalModeByStage();
-        msg->spin_mode = 0;
+        msg->spin_mode = SPIN_OFF;
         control_pub_->publish(*msg);
 
         std::cout << "[CONTROL] 停止模式, 云台模式: " << (int)msg->gimbal_mode << ", 底盘不动" << std::endl;
