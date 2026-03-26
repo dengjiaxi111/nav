@@ -453,8 +453,6 @@ void SerialNode::modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg
 void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg)
 {
     _send_frame_.setAutoDriveMode(true);
-    // 按需求：固定云台模式为 1，不使用 msg->gimbal_mode
-    _send_frame_.setGimbalMode(1);
     _send_frame_.setGimbalMode(msg->gimbal_mode);
     // spin_mode 直接映射到底盘模式（0~3），超范围值进行截断
     const uint8_t spin_mode = (msg->spin_mode > 3) ? 3 : msg->spin_mode;
