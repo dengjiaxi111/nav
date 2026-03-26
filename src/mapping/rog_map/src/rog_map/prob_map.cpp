@@ -674,10 +674,10 @@ void ProbMap::resetCell(const int& hash_id) {
 
 void ProbMap::probabilisticMapFromCache() {
     const size_t cache_size = raycast_data_.update_cache_id_g.size();
-    if (cache_size == 0) return;
-    
-    // Increment frame counter for fading mechanism
+    // Increment frame counter for fading mechanism every batch,
+    // even when this batch has no cache updates.
     ++frame_counter_;
+    if (cache_size == 0) return;
     
     // Structure to hold grid type transitions for inf_map update
     struct GridTransition {

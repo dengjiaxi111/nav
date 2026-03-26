@@ -82,7 +82,7 @@ rog_map:
     
     # Fading机制
     fading_enable: true
-    fading_frame_thresh: 800       
+    fading_frame_thresh: 80       
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0
