@@ -24,12 +24,14 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <std_msgs/msg/string.hpp>
 
-#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
-#include <mutex>  // 🔒 多线程保护
+#include <mutex>  
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -155,7 +157,13 @@ public:
             "/localization/fitness_marker", 10
         );
         
-        tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
+        tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+        tf_publish_timer_ = create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&LocalizationInitializer::publishCurrentMapToOdomTF, this)
+        );
         
         // ==================== 加载地图 ====================
         if (map_file_.empty()) {
@@ -232,23 +240,22 @@ private:
     
     // ==================== 发布初始 map frame ====================
     void publishInitialMapFrame() {
-        geometry_msgs::msg::TransformStamped tf_msg;
-        tf_msg.header.stamp = now();
-        tf_msg.header.frame_id = "map";
-        tf_msg.child_frame_id = "odom";
+        current_map_to_odom_tf_.header.frame_id = "map";
+        current_map_to_odom_tf_.child_frame_id = "odom";
         
         // 单位变换（identity）
-        tf_msg.transform.translation.x = 0.0;
-        tf_msg.transform.translation.y = 0.0;
-        tf_msg.transform.translation.z = 0.0;
-        tf_msg.transform.rotation.x = 0.0;
-        tf_msg.transform.rotation.y = 0.0;
-        tf_msg.transform.rotation.z = 0.0;
-        tf_msg.transform.rotation.w = 1.0;
+        current_map_to_odom_tf_.transform.translation.x = 0.0;
+        current_map_to_odom_tf_.transform.translation.y = 0.0;
+        current_map_to_odom_tf_.transform.translation.z = 0.0;
+        current_map_to_odom_tf_.transform.rotation.x = 0.0;
+        current_map_to_odom_tf_.transform.rotation.y = 0.0;
+        current_map_to_odom_tf_.transform.rotation.z = 0.0;
+        current_map_to_odom_tf_.transform.rotation.w = 1.0;
+        has_map_to_odom_tf_ = true;
+
+        publishCurrentMapToOdomTF();
         
-        tf_broadcaster_->sendTransform(tf_msg);
-        
-        RCLCPP_INFO(get_logger(), "📍 发布初始 map → odom TF（单位变换），RViz 可显示地图");
+        RCLCPP_INFO(get_logger(), "📍 发布初始 map → odom TF（单位变换，动态发布），RViz 可显示地图");
     }
     
     // ==================== 发布地图点云（用于 RViz 可视化）====================
@@ -284,6 +291,24 @@ private:
         clearScanBuffer();
 
         user_initial_guess_ = poseToMatrix(msg->pose.pose);
+
+        // 重定位时，RViz 给出的 /initialpose 表示 map 系下的 base_link 位姿，
+        // 而 NDT 需要的初值是 map -> odom（因为 /cloud_registered 在 odom 系下）。
+        // 第一次定位保留原有行为，仅在多次定位时做坐标换算，最小化对已有流程的影响。
+        if (was_initialized) {
+            try {
+                auto odom_to_base_msg = tf_buffer_->lookupTransform(
+                    "odom", "base_link", tf2::TimePointZero);
+                Eigen::Matrix4f T_odom_to_base = transformToMatrix(odom_to_base_msg.transform);
+                user_initial_guess_ = user_initial_guess_ * T_odom_to_base.inverse();
+                RCLCPP_INFO(get_logger(), "🔁 多次定位: 已将 /initialpose 从 map->base_link 换算为 map->odom 初值");
+            } catch (const tf2::TransformException& ex) {
+                RCLCPP_WARN(
+                    get_logger(),
+                    "⚠️ 多次定位时查询 odom->base_link 失败，回退为原始 /initialpose: %s",
+                    ex.what());
+            }
+        }
         has_initial_guess_ = true;
         
         double yaw = getYawFromQuaternion(msg->pose.pose.orientation);
@@ -1066,24 +1091,32 @@ private:
     
     // ==================== 发布 TF ====================
     void publishMapToOdomTF(const Eigen::Matrix4f& T_map_to_odom) {
-        geometry_msgs::msg::TransformStamped tf_msg;
-        tf_msg.header.stamp = now();
-        tf_msg.header.frame_id = "map";
-        tf_msg.child_frame_id = "odom";
+        current_map_to_odom_tf_.header.frame_id = "map";
+        current_map_to_odom_tf_.child_frame_id = "odom";
         
-        tf_msg.transform.translation.x = T_map_to_odom(0, 3);
-        tf_msg.transform.translation.y = T_map_to_odom(1, 3);
-        tf_msg.transform.translation.z = T_map_to_odom(2, 3);
+        current_map_to_odom_tf_.transform.translation.x = T_map_to_odom(0, 3);
+        current_map_to_odom_tf_.transform.translation.y = T_map_to_odom(1, 3);
+        current_map_to_odom_tf_.transform.translation.z = T_map_to_odom(2, 3);
         
         Eigen::Quaternionf q(T_map_to_odom.block<3,3>(0,0));
-        tf_msg.transform.rotation.x = q.x();
-        tf_msg.transform.rotation.y = q.y();
-        tf_msg.transform.rotation.z = q.z();
-        tf_msg.transform.rotation.w = q.w();
+        current_map_to_odom_tf_.transform.rotation.x = q.x();
+        current_map_to_odom_tf_.transform.rotation.y = q.y();
+        current_map_to_odom_tf_.transform.rotation.z = q.z();
+        current_map_to_odom_tf_.transform.rotation.w = q.w();
+        has_map_to_odom_tf_ = true;
+
+        publishCurrentMapToOdomTF();
         
-        tf_broadcaster_->sendTransform(tf_msg);
-        
-        RCLCPP_INFO(get_logger(), "🔗 map → odom TF 已发布 (静态)");
+        RCLCPP_INFO(get_logger(), "🔗 map → odom TF 已更新 (动态)");
+    }
+
+    void publishCurrentMapToOdomTF() {
+        if (!has_map_to_odom_tf_) {
+            return;
+        }
+
+        current_map_to_odom_tf_.header.stamp = now();
+        tf_broadcaster_->sendTransform(current_map_to_odom_tf_);
     }
     
     // ==================== 发布配准后点云 ====================
@@ -1171,6 +1204,20 @@ private:
         
         return mat;
     }
+
+    Eigen::Matrix4f transformToMatrix(const geometry_msgs::msg::Transform& transform) {
+        Eigen::Matrix4f mat = Eigen::Matrix4f::Identity();
+
+        mat(0, 3) = transform.translation.x;
+        mat(1, 3) = transform.translation.y;
+        mat(2, 3) = transform.translation.z;
+
+        Eigen::Quaternionf q(transform.rotation.w, transform.rotation.x,
+                            transform.rotation.y, transform.rotation.z);
+        mat.block<3,3>(0,0) = q.toRotationMatrix();
+
+        return mat;
+    }
     
     double getYawFromQuaternion(const geometry_msgs::msg::Quaternion& q) {
         tf2::Quaternion tf_q(q.x, q.y, q.z, q.w);
@@ -1249,7 +1296,12 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
     
-    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_broadcaster_;
+    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    geometry_msgs::msg::TransformStamped current_map_to_odom_tf_;
+    bool has_map_to_odom_tf_ = false;
+    rclcpp::TimerBase::SharedPtr tf_publish_timer_;
     rclcpp::TimerBase::SharedPtr map_publish_timer_;  // 定时发布地图点云
 };
 

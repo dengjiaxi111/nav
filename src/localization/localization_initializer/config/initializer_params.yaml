@@ -81,7 +81,7 @@
     # 🔴 调参提示：保留重要的边缘与立面。如果 scan_voxel_size 太大，特征会被抹平。
     map_voxel_size: 0.08
     scan_voxel_size: 0.05
-    accumulate_voxel_size: 0.1
+    accumulate_voxel_size: 0.08
 
     # ==================== 多帧累积 ====================
     # 🔴 调参提示：运动中初始化时，如果多帧时间跨幅太大，会糊掉。
