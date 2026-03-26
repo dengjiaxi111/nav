@@ -68,13 +68,13 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(gimbal_mode, SPIN_ON);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
             break;
         case State::RESURRECTING:
             blackboard_->current_behavior.type = BehaviorType::RESURRECTION;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(gimbal_mode, SPIN_ON);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
             break;
         case State::IDLE:
             blackboard_->resetCurrentBehavior();

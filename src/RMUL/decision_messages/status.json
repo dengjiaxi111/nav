@@ -1,7 +1,7 @@
 {
   "game_state": {
     "stage": 4,
-    "stage_remaining_time": 394.1188359260559,
+    "stage_remaining_time": 406.98295378685,
     "is_running": true,
     "competition_type": 1
   },
@@ -19,9 +19,9 @@
       "allowance": 0
     },
     "7": {
-      "x": 1126.3,
-      "y": 68.1,
-      "hp": 100,
+      "x": 94.0,
+      "y": 257.0,
+      "hp": 40,
       "allowance": 300
     }
   },
@@ -45,5 +45,5 @@
       "allowance": 300
     }
   },
-  "our_robot_id": 1
+  "our_robot_id": 0
 }

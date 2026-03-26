@@ -10,8 +10,6 @@
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
-#include <ament_index_cpp/get_package_share_directory.hpp>
-#include <yaml-cpp/yaml.h>
 #include <fstream>
 
 using namespace std::chrono_literals;
@@ -27,14 +25,14 @@ public:
         decision_manager_ = std::make_shared<DecisionManager>();
         auto blackboard = decision_manager_->getBlackboard();
 
-        // 加载配置文件：环境变量 > 当前目录 > config/ > robomaster_sentry_decision/config > 安装目录
-        std::string config_path = getConfigPath();
-        if (!config_path.empty()) {
+        // 仅从 robomaster_sentry_decision/config/sentry_decision_params.yaml 加载配置
+        std::string config_path = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
+        if (std::ifstream(config_path).good()) {
             if (!blackboard->loadConfigFromYAML(config_path)) {
                 RCLCPP_WARN(this->get_logger(), "无法加载配置文件 %s，使用默认配置", config_path.c_str());
             }
         } else {
-            RCLCPP_WARN(this->get_logger(), "未找到配置文件，使用默认配置");
+            RCLCPP_WARN(this->get_logger(), "配置文件 %s 不存在，使用默认配置", config_path.c_str());
         }
 
         our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
@@ -54,45 +52,6 @@ public:
     }
 
 private:
-    std::string getConfigPath() {
-        // 1. 环境变量
-        const char* env_config = std::getenv("SENTRY_DECISION_CONFIG");
-        if (env_config && std::ifstream(env_config).good()) {
-            return std::string(env_config);
-        }
-
-        // 2. 当前工作目录
-        std::string cwd_config = "sentry_decision_params.yaml";
-        if (std::ifstream(cwd_config).good()) {
-            return cwd_config;
-        }
-
-        // 3. 当前工作目录下的 config 子目录
-        std::string cwd_config_sub = "config/sentry_decision_params.yaml";
-        if (std::ifstream(cwd_config_sub).good()) {
-            return cwd_config_sub;
-        }
-
-        // 4. 当前工作目录下的 robomaster_sentry_decision/config 子目录（您的源码结构）
-        std::string src_config = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
-        if (std::ifstream(src_config).good()) {
-            return src_config;
-        }
-
-        // 5. 安装目录默认配置
-        try {
-            std::string package_share_dir = ament_index_cpp::get_package_share_directory("sentry_decision");
-            std::string default_config = package_share_dir + "/config/sentry_decision_params.yaml";
-            if (std::ifstream(default_config).good()) {
-                return default_config;
-            }
-        } catch (const std::exception& e) {
-            RCLCPP_WARN(this->get_logger(), "获取包共享目录失败: %s", e.what());
-        }
-
-        return "";
-    }
-
     void ourStateCallback(const decision_messages::msg::OurRobotState::SharedPtr msg) {
         decision_manager_->updateOurState(msg);
     }
@@ -117,7 +76,6 @@ private:
 
             auto blackboard = decision_manager_->getBlackboard();
             blackboard->updatePositionFromTF(t.transform.translation.x, t.transform.translation.y);
-            RCLCPP_INFO(this->get_logger(), "updatePositionFromTF: %f, %f", t.transform.translation.x, t.transform.translation.y);
             return true;
         } catch (const tf2::TransformException& ex) {
             std::cerr << "[TF] 查询 map->base_link 失败: " << ex.what() << std::endl;
@@ -165,6 +123,9 @@ private:
     void publishControl(const sentry_decision::msg::SentryControl& ctrl) {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>(ctrl);
         control_pub_->publish(*msg);
+
+        auto blackboard = decision_manager_->getBlackboard();
+
         std::string gimbal = (ctrl.gimbal_mode == 1) ? "打人" : "不动";
         std::string spin;
         switch (ctrl.spin_mode) {
@@ -172,7 +133,11 @@ private:
             case 1: spin = "旋转"; break;
             default: spin = "未知";
         }
+
         std::cout << "[CONTROL] " << gimbal << ", " << spin << std::endl;
+        std::cout << "[DEBUG] 比赛阶段: " << (int)blackboard->stage 
+                  << ", 云台模式: " << (int)ctrl.gimbal_mode 
+                  << ", 底盘模式: " << (int)ctrl.spin_mode << std::endl;
     }
 
     void publishStopControl() {
@@ -181,6 +146,11 @@ private:
         msg->gimbal_mode = blackboard->getGimbalModeByStage();
         msg->spin_mode = 0;
         control_pub_->publish(*msg);
+
+        std::cout << "[CONTROL] 停止模式, 云台模式: " << (int)msg->gimbal_mode << ", 底盘不动" << std::endl;
+        std::cout << "[DEBUG] 比赛阶段: " << (int)blackboard->stage 
+                  << ", 云台模式: " << (int)msg->gimbal_mode 
+                  << ", 底盘模式: 0" << std::endl;
     }
 
     rclcpp::Subscription<decision_messages::msg::OurRobotState>::SharedPtr our_state_sub_;
