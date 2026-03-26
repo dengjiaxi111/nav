@@ -126,6 +126,7 @@ nav_server:
       astar_max_attempts: 1           # A* 尝试次数（避免无效重试）
       astar_threshold_step: 0         # 关闭反向收紧阈值重试
       prune_distance: 1.0            # 剪枝保留距离(米), 保留当前位置前方此距离内的点
+      publish_astar_raw_path: true   # 发布原始A*路径到 /plan_astar_raw（平滑前）
       
       # B样条优化）
       enable_optimization: true    # 启用轨迹优化
@@ -144,7 +145,7 @@ nav_server:
       narrow_min_consecutive: 3    # 最少连续几个点才算窄通道（防止单点误判）
 
       # 台阶段方向约束（经过台阶时尽量垂直边沿）
-      stair_segment_align: true
+      stair_segment_align: false
       opt_lambda_stair_align: 50.0
       stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
       # 推荐：按弧长定义窗口，并区分上/下台阶

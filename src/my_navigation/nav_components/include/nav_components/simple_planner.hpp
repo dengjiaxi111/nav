@@ -90,8 +90,10 @@ private:
     bool enable_path_cache_ = true;  // 启用路径缓存
     bool enable_auto_prune_ = true;  // 启用自动剪枝
     double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
+    bool publish_astar_raw_path_ = true;  // 发布原始A*路径（平滑前）
     
     // 调试可视化
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr astar_raw_path_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr ctrl_pts_pub_;
     void publishControlPoints(const std::vector<Eigen::Vector2d>& ctrl_pts, 
                               const std::string& frame_id);
