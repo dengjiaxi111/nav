@@ -42,6 +42,10 @@ struct SmoothParams {
     bool stair_segment_align = true;
     double lambda_stair_align = 6.0;
     int stair_align_expand_points = 2;
+    double stair_align_up_pre_dist_m = 0.6;
+    double stair_align_up_post_dist_m = 0.6;
+    double stair_align_down_pre_dist_m = 0.6;
+    double stair_align_down_post_dist_m = 0.6;
 };
 
 class PathSmoother {
@@ -205,6 +209,10 @@ private:
         opt_params.stair_segment_align = params_.stair_segment_align;
         opt_params.lambda_stair_align = params_.lambda_stair_align;
         opt_params.stair_expand_points = params_.stair_align_expand_points;
+        opt_params.stair_align_up_pre_dist = params_.stair_align_up_pre_dist_m;
+        opt_params.stair_align_up_post_dist = params_.stair_align_up_post_dist_m;
+        opt_params.stair_align_down_pre_dist = params_.stair_align_down_pre_dist_m;
+        opt_params.stair_align_down_post_dist = params_.stair_align_down_post_dist_m;
         optimizer_.setParams(opt_params);
     }
     

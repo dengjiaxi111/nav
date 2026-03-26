@@ -1,6 +1,8 @@
 #include "sentry_decision/Blackboard.hpp"
 #include <iostream>
 #include <cmath>
+#include <yaml-cpp/yaml.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 using namespace SentryConstants;
 
@@ -9,6 +11,80 @@ Blackboard::Blackboard() {
     control_msg_->gimbal_mode = GIMBAL_ENEMY;
     control_msg_->spin_mode = SPIN_OFF;
     resetAllPublishStates();
+
+    // 初始化配置为默认值（来自 Constants.hpp）
+    config_.red_attack = RED_ATTACK_POINT;
+    config_.blue_attack = BLUE_ATTACK_POINT;
+    config_.red_supply = RED_SUPPLY_POINT;
+    config_.blue_supply = BLUE_SUPPLY_POINT;
+    config_.arrival_wait_time = ARRIVAL_WAIT_TIME;
+    config_.supply_threshold = SUPPLY_THRESHOLD;
+    config_.hp_weight = 1.0;
+    config_.ammo_weight = 0.0;
+}
+
+bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
+    try {
+        YAML::Node config = YAML::LoadFile(filepath);
+
+        if (config["red_attack_x"] && config["red_attack_y"]) {
+            config_.red_attack.x = config["red_attack_x"].as<double>();
+            config_.red_attack.y = config["red_attack_y"].as<double>();
+        }
+        if (config["blue_attack_x"] && config["blue_attack_y"]) {
+            config_.blue_attack.x = config["blue_attack_x"].as<double>();
+            config_.blue_attack.y = config["blue_attack_y"].as<double>();
+        }
+        if (config["red_supply_x"] && config["red_supply_y"]) {
+            config_.red_supply.x = config["red_supply_x"].as<double>();
+            config_.red_supply.y = config["red_supply_y"].as<double>();
+        }
+        if (config["blue_supply_x"] && config["blue_supply_y"]) {
+            config_.blue_supply.x = config["blue_supply_x"].as<double>();
+            config_.blue_supply.y = config["blue_supply_y"].as<double>();
+        }
+        if (config["arrival_wait_time"])
+            config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
+        if (config["supply_threshold"])
+            config_.supply_threshold = config["supply_threshold"].as<double>();
+        if (config["deviation_threshold"])
+            config_.deviation_threshold = config["deviation_threshold"].as<double>();
+        if (config["hp_weight"])
+            config_.hp_weight = config["hp_weight"].as<double>();
+        if (config["ammo_weight"])
+            config_.ammo_weight = config["ammo_weight"].as<double>();
+
+        std::cout << "[CONFIG] 成功加载配置文件: " << filepath << std::endl;
+        return true;
+    } catch (const YAML::Exception& e) {
+        std::cerr << "[CONFIG] 加载 YAML 失败: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+geometry_msgs::msg::Point Blackboard::getAttackPoint() const {
+    if (robot_id_ == 1) {
+        return config_.blue_attack;
+    } else {
+        return config_.red_attack;
+    }
+}
+
+geometry_msgs::msg::Point Blackboard::getSupplyPoint() const {
+    if (robot_id_ == 1) {
+        return config_.blue_supply;
+    } else {
+        return config_.red_supply;
+    }
+}
+
+uint8_t Blackboard::getGimbalModeByStage() const {
+    // 阶段 3: 五秒倒计时，阶段 4: 比赛中，云台打人；其他阶段云台静止
+    if (stage == 3 || stage == 4) {
+        return 1;   // 打人模式
+    } else {
+        return 0;   // 静止
+    }
 }
 
 void Blackboard::resetForNewMatch() {
@@ -17,7 +93,8 @@ void Blackboard::resetForNewMatch() {
     resurrection_flag = false;
     at_current_target = false;
     target_arrival_time = -1.0;
-    updateControlMsg(GIMBAL_ENEMY, SPIN_OFF);
+    // 根据当前阶段设置云台模式
+    updateControlMsg(getGimbalModeByStage(), SPIN_OFF);
     resetAllPublishStates();
 }
 
@@ -58,7 +135,7 @@ void Blackboard::updatePositionFromTF(double x_m, double y_m) {
     geometry_msgs::msg::Point supply_point = getSupplyPoint();
     double dx = x - supply_point.x;
     double dy = y - supply_point.y;
-    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 50.0;
+    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 20.0;
 }
 
 void Blackboard::updateGameState(const GameState::SharedPtr msg) {
@@ -134,22 +211,6 @@ bool Blackboard::hasWaitedAtTarget(double wait_seconds) const {
     return (current_time - target_arrival_time) >= wait_seconds;
 }
 
-geometry_msgs::msg::Point Blackboard::getSupplyPoint() const {
-    if (robot_id_ == 1) {
-        return BLUE_SUPPLY_POINT;
-    } else {
-        return RED_SUPPLY_POINT;
-    }
-}
-
-geometry_msgs::msg::Point Blackboard::getAttackPoint() const {
-    if (robot_id_ == 1) {
-        return BLUE_ATTACK_POINT;
-    } else {
-        return RED_ATTACK_POINT;
-    }
-}
-
 void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
     std::cout << "[SYSTEM] 机器人ID变化: " << (int)old_id << " -> " << (int)new_id << std::endl;
     setTargetPublished(false);
@@ -157,7 +218,7 @@ void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
     geometry_msgs::msg::Point supply_point = getSupplyPoint();
     double dx = x - supply_point.x;
     double dy = y - supply_point.y;
-    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 50.0;
+    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 20.0;
 }
 
 void Blackboard::startBehavior(BehaviorType type, const geometry_msgs::msg::Point& target, double duration) {

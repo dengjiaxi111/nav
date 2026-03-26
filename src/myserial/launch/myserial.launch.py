@@ -8,6 +8,6 @@ def generate_launch_description():
             executable='myserial',
             output='screen',
             parameters = [{"on_court": False,"debug_flag": False,"log_path":"/home/nuc/navigation2026/log"\
-                           ,"info_pub": False,"enable_rtt_measure": False,"enable_batch_read": True,"enable_improved_framing": True}]
+                           ,"info_pub": True,"enable_rtt_measure": False,"enable_batch_read": True,"enable_improved_framing": True}]
         )
     ])

@@ -10,9 +10,11 @@
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
+#include <ament_index_cpp/get_package_share_directory.hpp>   // 新增
+#include <yaml-cpp/yaml.h>                                   // 新增
 
 using namespace std::chrono_literals;
-using namespace SentryConstants;   // 添加命名空间，以便直接使用 GIMBAL_ENEMY 等常量
+using namespace SentryConstants;
 
 class SentryDecisionNode : public rclcpp::Node {
 public:
@@ -22,6 +24,14 @@ public:
       tf_buffer_(this->get_clock()),
       tf_listener_(std::make_shared<tf2_ros::TransformListener>(tf_buffer_)) {
         decision_manager_ = std::make_shared<DecisionManager>();
+        auto blackboard = decision_manager_->getBlackboard();
+
+        // 加载 YAML 配置文件
+        std::string package_share_dir = ament_index_cpp::get_package_share_directory("sentry_decision");
+        std::string config_path = package_share_dir + "/config/sentry_decision_params.yaml";
+        if (!blackboard->loadConfigFromYAML(config_path)) {
+            RCLCPP_WARN(this->get_logger(), "无法加载配置文件 %s，使用默认配置", config_path.c_str());
+        }
 
         our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
             "/decision_messages/OurRobotState", 10,
@@ -124,7 +134,9 @@ private:
 
     void publishStopControl() {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
-        msg->gimbal_mode = GIMBAL_ENEMY;   // 现在可以直接使用，因为使用了 using namespace SentryConstants
+        // 停止时云台模式根据当前阶段设置（非比赛阶段为 0）
+        auto blackboard = decision_manager_->getBlackboard();
+        msg->gimbal_mode = blackboard->getGimbalModeByStage();
         msg->spin_mode = 0;
         control_pub_->publish(*msg);
     }

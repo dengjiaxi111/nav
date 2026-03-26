@@ -51,7 +51,9 @@
 
 - `planner.stair_segment_align`
 - `planner.opt_lambda_stair_align`
-- `planner.stair_align_expand_points`：以命中台阶的控制点为中心，前后各扩展 `n` 个控制点参与方向优化。
+- `planner.stair_align_up_pre_dist_m / stair_align_up_post_dist_m`
+- `planner.stair_align_down_pre_dist_m / stair_align_down_post_dist_m`
+- `planner.stair_align_expand_points`：兼容旧参数。仅当上述四个弧长窗口参数都 `<= 0` 时回退为“按点数窗口”。
 
 ## 使用步骤
 
