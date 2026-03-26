@@ -135,7 +135,7 @@ void Blackboard::updatePositionFromTF(double x_m, double y_m) {
     geometry_msgs::msg::Point supply_point = getSupplyPoint();
     double dx = x - supply_point.x;
     double dy = y - supply_point.y;
-    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 20.0;
+    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 30.0;
 }
 
 void Blackboard::updateGameState(const GameState::SharedPtr msg) {
@@ -218,7 +218,7 @@ void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
     geometry_msgs::msg::Point supply_point = getSupplyPoint();
     double dx = x - supply_point.x;
     double dy = y - supply_point.y;
-    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 20.0;
+    at_supply_point = std::sqrt(dx*dx + dy*dy) <= 30.0;
 }
 
 void Blackboard::startBehavior(BehaviorType type, const geometry_msgs::msg::Point& target, double duration) {
