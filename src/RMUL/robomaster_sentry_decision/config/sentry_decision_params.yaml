@@ -11,3 +11,4 @@ supply_threshold: 0.3
 deviation_threshold: 0.5
 hp_weight: 1.0
 ammo_weight: 0.0
+target_republish_interval_sec: 0.2
