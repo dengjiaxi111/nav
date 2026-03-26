@@ -10,8 +10,9 @@
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
-#include <ament_index_cpp/get_package_share_directory.hpp>   // 新增
-#include <yaml-cpp/yaml.h>                                   // 新增
+#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <yaml-cpp/yaml.h>
+#include <fstream>
 
 using namespace std::chrono_literals;
 using namespace SentryConstants;
@@ -26,11 +27,14 @@ public:
         decision_manager_ = std::make_shared<DecisionManager>();
         auto blackboard = decision_manager_->getBlackboard();
 
-        // 加载 YAML 配置文件
-        std::string package_share_dir = ament_index_cpp::get_package_share_directory("sentry_decision");
-        std::string config_path = package_share_dir + "/config/sentry_decision_params.yaml";
-        if (!blackboard->loadConfigFromYAML(config_path)) {
-            RCLCPP_WARN(this->get_logger(), "无法加载配置文件 %s，使用默认配置", config_path.c_str());
+        // 加载配置文件：环境变量 > 当前目录 > config/ > robomaster_sentry_decision/config > 安装目录
+        std::string config_path = getConfigPath();
+        if (!config_path.empty()) {
+            if (!blackboard->loadConfigFromYAML(config_path)) {
+                RCLCPP_WARN(this->get_logger(), "无法加载配置文件 %s，使用默认配置", config_path.c_str());
+            }
+        } else {
+            RCLCPP_WARN(this->get_logger(), "未找到配置文件，使用默认配置");
         }
 
         our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
@@ -50,6 +54,45 @@ public:
     }
 
 private:
+    std::string getConfigPath() {
+        // 1. 环境变量
+        const char* env_config = std::getenv("SENTRY_DECISION_CONFIG");
+        if (env_config && std::ifstream(env_config).good()) {
+            return std::string(env_config);
+        }
+
+        // 2. 当前工作目录
+        std::string cwd_config = "sentry_decision_params.yaml";
+        if (std::ifstream(cwd_config).good()) {
+            return cwd_config;
+        }
+
+        // 3. 当前工作目录下的 config 子目录
+        std::string cwd_config_sub = "config/sentry_decision_params.yaml";
+        if (std::ifstream(cwd_config_sub).good()) {
+            return cwd_config_sub;
+        }
+
+        // 4. 当前工作目录下的 robomaster_sentry_decision/config 子目录（您的源码结构）
+        std::string src_config = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
+        if (std::ifstream(src_config).good()) {
+            return src_config;
+        }
+
+        // 5. 安装目录默认配置
+        try {
+            std::string package_share_dir = ament_index_cpp::get_package_share_directory("sentry_decision");
+            std::string default_config = package_share_dir + "/config/sentry_decision_params.yaml";
+            if (std::ifstream(default_config).good()) {
+                return default_config;
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_WARN(this->get_logger(), "获取包共享目录失败: %s", e.what());
+        }
+
+        return "";
+    }
+
     void ourStateCallback(const decision_messages::msg::OurRobotState::SharedPtr msg) {
         decision_manager_->updateOurState(msg);
     }
@@ -133,7 +176,6 @@ private:
 
     void publishStopControl() {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>();
-        // 停止时云台模式根据当前阶段设置（非比赛阶段为 0）
         auto blackboard = decision_manager_->getBlackboard();
         msg->gimbal_mode = blackboard->getGimbalModeByStage();
         msg->spin_mode = 0;

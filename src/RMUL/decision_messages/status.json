@@ -1,8 +1,8 @@
 {
   "game_state": {
-    "stage": 0,
-    "stage_remaining_time": 420,
-    "is_running": false,
+    "stage": 4,
+    "stage_remaining_time": 394.1188359260559,
+    "is_running": true,
     "competition_type": 1
   },
   "red_robots": {
@@ -19,9 +19,9 @@
       "allowance": 0
     },
     "7": {
-      "x": 120,
-      "y": 634,
-      "hp": 400,
+      "x": 1126.3,
+      "y": 68.1,
+      "hp": 100,
       "allowance": 300
     }
   },
@@ -45,5 +45,5 @@
       "allowance": 300
     }
   },
-  "our_robot_id": 0
+  "our_robot_id": 1
 }
