@@ -42,8 +42,32 @@ class StaticRelocator(Node):
         self.odom_frame = "odom"
         self.base_frame = "base_link"
         
-        # 初始不再发 0 0 0，等待 rviz 指定
-        # self.publish_initial_identity_transform()
+        # 如果你已测量好初始位姿（用于比赛抢时间），可以直接在这里写死。
+        # 启动时会先发布所选侧的 map->odom 变换；之后你在 RViz 里继续用
+        # "2D Pose Estimate" 修正，会以 /initialpose 回调为准覆盖此初始值。
+        self.publish_initial_pose_on_startup = True
+
+        # 通过参数选择初始位姿属于红蓝方。
+        # 用法示例（launch 里传参）：initial_side:=red 或 initial_side:=blue
+        self.initial_side = self.declare_parameter('initial_side', 'blue').value
+
+        # 写成 map 坐标系下的 (x, y, yaw)；yaw 为 rad（绕 z 轴偏航角）。
+        # 注意：你需要把测量值替换进这两套初始位姿。
+        self.initial_pose_red = {
+            'x': 0.40,
+            'y': 7.7,
+            'yaw': 0.0,
+            'z': 0.002,
+        }
+        self.initial_pose_blue = {
+            'x': 11.6,
+            'y': 0.3,
+            'yaw': 3.14159,
+            'z': 0.002,
+        }
+
+        if self.publish_initial_pose_on_startup:
+            self.publish_measured_initial_pose()
         
         self.sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -65,6 +89,38 @@ class StaticRelocator(Node):
         t.transform.rotation.w = 1.0
         self.tf_static_broadcaster.sendTransform(t)
         self.get_logger().info("已发布初始 map->odom 恒等变换，等待用户在 RViz 指定新位姿。")
+
+    def _get_selected_initial_pose(self):
+        side = str(self.initial_side).strip().lower()
+        if side == 'blue':
+            return self.initial_pose_blue, 'blue'
+        # 默认走 red，避免参数没配导致完全不发 TF
+        return self.initial_pose_red, 'red'
+
+    def publish_measured_initial_pose(self):
+        pose, side = self._get_selected_initial_pose()
+
+        # 仅使用 yaw 构建四元数（roll/pitch=0），匹配 2D Pose Estimate 的常见用法
+        q = R.from_euler('xyz', [0.0, 0.0, pose['yaw']]).as_quat()  # [x,y,z,w]
+
+        trans = TransformStamped()
+        trans.header.stamp = self.get_clock().now().to_msg()
+        trans.header.frame_id = self.map_frame
+        trans.child_frame_id = self.odom_frame
+        trans.transform.translation.x = float(pose['x'])
+        trans.transform.translation.y = float(pose['y'])
+        trans.transform.translation.z = float(pose['z'])
+        trans.transform.rotation.x = float(q[0])
+        trans.transform.rotation.y = float(q[1])
+        trans.transform.rotation.z = float(q[2])
+        trans.transform.rotation.w = float(q[3])
+
+        self.tf_static_broadcaster.sendTransform(trans)
+        self.get_logger().info(
+            f"已在启动时发布测量初始 map->odom({side}): x={pose['x']:.3f}, "
+            f"y={pose['y']:.3f}, yaw={pose['yaw'] * 180.0 / 3.14159:.2f}度；"
+            f"之后可在 RViz 用 2D Pose Estimate 覆盖。"
+        )
 
     def initial_pose_callback(self, msg):
         self.get_logger().info("接收到 /initialpose 输入，直接作为 map->odom 变换发布...")
