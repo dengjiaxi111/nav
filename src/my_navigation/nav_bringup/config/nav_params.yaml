@@ -4,6 +4,8 @@ nav_server:
   ros__parameters:
     # 静态重定位开关 (true: 从RViz的"2D Pose Estimate"接收初始位姿并作为固定的map->odom; false: 实际场地使用NDT重定位)
     use_static_map_odom: true
+    # 调试开关：重定位或给初始位姿后强制 odom==base_link（仅用于路径规划调试）
+    debug_reset_odom_to_base_link: true
     
     # 地图路径由 navigation.launch.py 注入
     map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
@@ -39,14 +41,14 @@ nav_server:
     
     # ============ 分层地图系统 ============
     # 静态层: 从yaml/pgm文件加载的全局地图
-    enable_static_layer: false   # 启用静态层（默认启用）
+    enable_static_layer: true   # 启用静态层（默认启用）
     # 说明: 
     #   - 启用时: 从map_file加载pgm/yaml静态地图
     #   - 禁用时: 自动创建50x50m空白地图框架（纯动态SLAM模式）
     # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
     
     # 动态层: 来自rog_map的局部障碍物
-    enable_dynamic_layer: true  # 启用动态层融合
+    enable_dynamic_layer: false  # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
 
@@ -143,10 +145,10 @@ nav_server:
 
       # 台阶段方向约束（经过台阶时尽量垂直边沿）
       stair_segment_align: true
-      opt_lambda_stair_align: 25.0
+      opt_lambda_stair_align: 50.0
       stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
       # 推荐：按弧长定义窗口，并区分上/下台阶
-      stair_align_up_pre_dist_m: 1.5
+      stair_align_up_pre_dist_m: 1.0
       stair_align_up_post_dist_m: 0.45
       stair_align_down_pre_dist_m: 0.45
       stair_align_down_post_dist_m: 0.5

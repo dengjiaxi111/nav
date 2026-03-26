@@ -109,7 +109,7 @@ public:
         
         // 自动初始化（如果不使用 RViz）
         declare_parameter("auto_initialize", false);
-        
+
         // ==================== 读取参数 ====================
         map_file_ = get_parameter("map_file").as_string();
         auto_initialize_ = get_parameter("auto_initialize").as_bool();
@@ -185,12 +185,12 @@ public:
         
         publishMapCloud();
         
-        RCLCPP_INFO(get_logger(), "✅ 定位初始化节点启动成功");
+        RCLCPP_INFO(get_logger(), "定位初始化节点启动成功");
         logNdtSearchConfig("启动时");
         if (!auto_initialize_) {
-            RCLCPP_INFO(get_logger(), "⏳ 请在 RViz 中使用 '2D Pose Estimate' 工具设置初始位姿");
+            RCLCPP_INFO(get_logger(), " 请在 RViz 中使用 '2D Pose Estimate' 工具设置初始位姿");
         } else {
-            RCLCPP_INFO(get_logger(), "🤖 自动初始化模式: [%.2f, %.2f, %.2f°]",
+            RCLCPP_INFO(get_logger(), "自动初始化模式: [%.2f, %.2f, %.2f°]",
                        user_initial_guess_(0,3), user_initial_guess_(1,3),
                        get_parameter("initial_yaw").as_double() * 180.0 / M_PI);
         }
@@ -209,11 +209,11 @@ public:
 private:
     // ==================== 地图加载 ====================
     bool loadMapCloud() {
-        RCLCPP_INFO(get_logger(), "📦 正在加载地图: %s", map_file_.c_str());
+        RCLCPP_INFO(get_logger(), " 正在加载地图: %s", map_file_.c_str());
         
         pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map(new pcl::PointCloud<pcl::PointXYZI>());
         if (pcl::io::loadPCDFile<pcl::PointXYZI>(map_file_, *raw_map) == -1) {
-            RCLCPP_ERROR(get_logger(), "❌ 无法加载地图文件: %s", map_file_.c_str());
+            RCLCPP_ERROR(get_logger(), " 无法加载地图文件: %s", map_file_.c_str());
             return false;
         }
         
@@ -230,7 +230,7 @@ private:
         
         RCLCPP_INFO(get_logger(), "   降采样后: %zu 点 (voxel_size=%.2fm)", 
                    map_cloud_->size(), voxel_size);
-        RCLCPP_INFO(get_logger(), "✅ 地图加载成功");
+        RCLCPP_INFO(get_logger(), " 地图加载成功");
         
         // 发布初始 map → odom TF（单位变换），使 RViz 能够显示地图
         publishInitialMapFrame();
@@ -255,7 +255,7 @@ private:
 
         publishCurrentMapToOdomTF();
         
-        RCLCPP_INFO(get_logger(), "📍 发布初始 map → odom TF（单位变换，动态发布），RViz 可显示地图");
+        RCLCPP_INFO(get_logger(), " 发布初始 map → odom TF（单位变换，动态发布），RViz 可显示地图");
     }
     
     // ==================== 发布地图点云（用于 RViz 可视化）====================
@@ -273,8 +273,8 @@ private:
         // 只在第一次发布时输出日志
         static bool first_publish = true;
         if (first_publish) {
-            RCLCPP_INFO(get_logger(), "📍 地图点云已发布到 /localization/map_cloud (frame: map)");
-            RCLCPP_INFO(get_logger(), "   💡 地图会每秒持续发布，确保 RViz 能收到");
+            RCLCPP_INFO(get_logger(), " 地图点云已发布到 /localization/map_cloud (frame: map)");
+            RCLCPP_INFO(get_logger(), "    地图会每秒持续发布，确保 RViz 能收到");
             first_publish = false;
         }
     }
@@ -283,7 +283,7 @@ private:
     void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
         bool was_initialized = localization_initialized_;
         if (was_initialized) {
-            RCLCPP_WARN(get_logger(), "🔄 收到新的初始位姿，重置初始化状态并重新配准");
+            RCLCPP_WARN(get_logger(), " 收到新的初始位姿，重置初始化状态并重新配准");
         }
 
         // 无论是否已完成初始化，只要收到新的初始位姿，就重新开始当前会话的配准流程
@@ -301,7 +301,7 @@ private:
                     "odom", "base_link", tf2::TimePointZero);
                 Eigen::Matrix4f T_odom_to_base = transformToMatrix(odom_to_base_msg.transform);
                 user_initial_guess_ = user_initial_guess_ * T_odom_to_base.inverse();
-                RCLCPP_INFO(get_logger(), "🔁 多次定位: 已将 /initialpose 从 map->base_link 换算为 map->odom 初值");
+                RCLCPP_INFO(get_logger(), " 多次定位: 已将 /initialpose 从 map->base_link 换算为 map->odom 初值");
             } catch (const tf2::TransformException& ex) {
                 RCLCPP_WARN(
                     get_logger(),

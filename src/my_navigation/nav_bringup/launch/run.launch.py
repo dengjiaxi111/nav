@@ -35,8 +35,9 @@ def generate_launch_description():
     nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
     loc_init_config = os.path.join(loc_init_dir, 'config', 'initializer_params.yaml')
     
-    # === 解析 YAML 获取默认的 use_static_map_odom 状态 ===
+    # === 解析 YAML 获取默认的 use_static_map_odom / debug_odom_reset 状态 ===
     default_use_static_map_odom = 'false'
+    default_debug_reset_odom_to_base = 'false'
     try:
         with open(nav_params_file, 'r') as f:
             params_dict = yaml.safe_load(f)
@@ -45,8 +46,10 @@ def generate_launch_description():
                 # 获取 YAML 中的 bool 值并转化为 launch parser 接受的 'true' 或 'false'
                 if ros_params.get('use_static_map_odom', False):
                     default_use_static_map_odom = 'true'
+                if ros_params.get('debug_reset_odom_to_base_link', False):
+                    default_debug_reset_odom_to_base = 'true'
     except Exception as e:
-        print(f"[Warning] Failed to parse nav_params.yaml for static map->odom toggle: {e}")
+        print(f"[Warning] Failed to parse nav_params.yaml for static/debug toggles: {e}")
 
     # === 解析 initialize_params.yaml 获取点云地图路径 ===
     default_pcd_map_file = ''
@@ -96,6 +99,12 @@ def generate_launch_description():
         default_value=default_use_static_map_odom,
         description='true: 发布静态 map->odom(0,0,0); false: 使用 localization_initializer 发布 map->odom'
     )
+
+    declare_debug_reset_odom_to_base = DeclareLaunchArgument(
+        'debug_reset_odom_to_base_link',
+        default_value=default_debug_reset_odom_to_base,
+        description='true: 调试模式，重定位或设初值后强制 odom==base_link（仅用于规划调试）'
+    )
     
     # ==================== 1. small_point_lio (SLAM定位) ====================
     small_point_lio_launch = IncludeLaunchDescription(
@@ -141,6 +150,24 @@ def generate_launch_description():
         name='static_relocator',
         condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+        output='screen'
+    )
+
+    odom_base_debug_rebaser = Node(
+        package='nav_bringup',
+        executable='odom_base_debug_rebaser.py',
+        name='odom_base_debug_rebaser',
+        condition=IfCondition(LaunchConfiguration('debug_reset_odom_to_base_link')),
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'map_frame': 'map',
+            'odom_frame': 'odom',
+            'base_frame': 'base_link',
+            'odom_topic': '/Odometry',
+            'initialpose_topic': '/initialpose',
+            'localization_status_topic': '/localization/status',
+            'tf_rate_hz': 50.0,
+        }],
         output='screen'
     )
 
@@ -218,12 +245,14 @@ def generate_launch_description():
         declare_rog_map_config,
         declare_rviz_config,
         declare_use_sim_time,
-    declare_use_static_map_odom,
+        declare_use_static_map_odom,
+        declare_debug_reset_odom_to_base,
         
         # 启动节点 (按依赖顺序)
         small_point_lio_launch,    # 1. LIO 里程计 (odom → base_link)
         localization_init_node,    # 2a. NDT 重定位 (map → odom)
         static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0 等待 RViz)
+        odom_base_debug_rebaser,   # 2c. 调试模式: 强制 odom==base_link
         pcd_map_publisher_node,    # 2b. 静态 TF 模式下发布地图点云
         integration_node,          # 3. ROG-Map (3D地图 + 2D投影 + 台阶检测)
         navigation_launch,         # 4. 导航服务器 (规划 + NMPC)

@@ -7,6 +7,7 @@ install(DIRECTORY launch config maps rviz DESTINATION share/${PROJECT_NAME})
 
 install(PROGRAMS
   scripts/static_relocator.py
+  scripts/odom_base_debug_rebaser.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
