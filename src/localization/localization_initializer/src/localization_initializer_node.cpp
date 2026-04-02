@@ -22,6 +22,7 @@
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <std_msgs/msg/string.hpp>
 
 #include <tf2_ros/transform_broadcaster.h>
@@ -36,7 +37,9 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/features/normal_3d_omp.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/search/kdtree.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/segmentation/extract_clusters.h>
@@ -51,6 +54,10 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <cstdint>
+#include <queue>
+#include <unordered_map>
+#include <unordered_set>
 
 class LocalizationInitializer : public rclcpp::Node {
 public:
@@ -98,6 +105,43 @@ public:
         declare_parameter("filter_y_max", 100.0);               // Y 轴最大值（米），过滤右侧
         declare_parameter("filter_z_min", -1.0);                // Z 轴最小值（米），过滤地面/低处
         declare_parameter("filter_z_max", 3.0);                 // Z 轴最大值（米），过滤天花板
+
+        // 基于法向量的简易地面过滤
+        declare_parameter("ground_filter_enable", false);
+        declare_parameter("ground_normal_radius", 0.25);
+        declare_parameter("ground_normal_z_threshold", 0.92);
+        declare_parameter("ground_max_height", -0.15);
+        declare_parameter("ground_max_curvature", 0.15);
+
+        // Multi-radius DBSCAN 动态障碍过滤
+        declare_parameter("cluster_filter_enable", false);
+        declare_parameter("cluster_near_range", 8.0);
+        declare_parameter("cluster_mid_range", 16.0);
+        declare_parameter("cluster_near_epsilon", 0.18);
+        declare_parameter("cluster_mid_epsilon", 0.28);
+        declare_parameter("cluster_far_epsilon", 0.40);
+        declare_parameter("cluster_near_min_points", 18);
+        declare_parameter("cluster_mid_min_points", 12);
+        declare_parameter("cluster_far_min_points", 8);
+        declare_parameter("cluster_occupancy_voxel_size", 0.10);
+        declare_parameter("cluster_dynamic_max_range", 12.0);
+        declare_parameter("cluster_dynamic_min_height", 0.25);
+        declare_parameter("cluster_dynamic_max_height", 2.20);
+        declare_parameter("cluster_dynamic_max_width", 1.40);
+        declare_parameter("cluster_dynamic_max_depth", 1.40);
+        declare_parameter("cluster_dynamic_max_volume", 3.00);
+        declare_parameter("cluster_dynamic_min_density", 40.0);
+        declare_parameter("cluster_dynamic_min_occupancy_ratio", 0.015);
+        declare_parameter("cluster_dynamic_max_points", 2500);
+        declare_parameter("cluster_pre_voxel_size", 0.15);
+        declare_parameter("cluster_visualization_enable", true);
+        declare_parameter("cluster_label_scale", 0.35);
+
+        // 时序稳定性过滤（多帧累计拖影过滤）
+        declare_parameter("temporal_filter_enable", true);
+        declare_parameter("temporal_filter_voxel_size", 0.12);
+        declare_parameter("temporal_filter_min_hits", 3);
+        declare_parameter("temporal_filter_min_hit_ratio", 0.15);
         
         // Yaw 多假设验证参数
         declare_parameter("yaw_seed_enable", false);
@@ -147,6 +191,14 @@ public:
         // 发布特征提取后的点云（用于可视化调试）
         feature_cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
             "/localization/feature_cloud", 10
+        );
+
+        cluster_debug_cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/localization/cluster_debug_cloud", 10
+        );
+
+        cluster_label_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+            "/localization/cluster_labels", 10
         );
         
         status_pub_ = create_publisher<std_msgs::msg::String>(
@@ -207,6 +259,45 @@ public:
     }
     
 private:
+    struct DbscanParams {
+        double epsilon;
+        int min_points;
+    };
+
+    struct ClusterMetrics {
+        float min_x;
+        float max_x;
+        float min_y;
+        float max_y;
+        float min_z;
+        float max_z;
+        double width;
+        double depth;
+        double height;
+        double volume;
+        double density;
+        double occupancy_ratio;
+        double centroid_range;
+        double centroid_x;
+        double centroid_y;
+        double centroid_z;
+        std::size_t point_count;
+    };
+
+    std::size_t makeVoxelKey(std::int64_t vx, std::int64_t vy, std::int64_t vz) const {
+        std::size_t key = std::hash<std::int64_t>{}(vx);
+        key ^= std::hash<std::int64_t>{}(vy) + 0x9e3779b97f4a7c15ULL + (key << 6) + (key >> 2);
+        key ^= std::hash<std::int64_t>{}(vz) + 0x9e3779b97f4a7c15ULL + (key << 6) + (key >> 2);
+        return key;
+    }
+
+    std::size_t makeVoxelKey(const pcl::PointXYZI& point, double voxel_size) const {
+        std::int64_t vx = static_cast<std::int64_t>(std::floor(point.x / voxel_size));
+        std::int64_t vy = static_cast<std::int64_t>(std::floor(point.y / voxel_size));
+        std::int64_t vz = static_cast<std::int64_t>(std::floor(point.z / voxel_size));
+        return makeVoxelKey(vx, vy, vz);
+    }
+
     // ==================== 地图加载 ====================
     bool loadMapCloud() {
         RCLCPP_INFO(get_logger(), " 正在加载地图: %s", map_file_.c_str());
@@ -372,9 +463,12 @@ private:
         RCLCPP_INFO(get_logger(), "   📦 降采样: %zu → %zu 点", scan_cloud->size(), scan_downsampled->size());
         
         pcl::PointCloud<pcl::PointXYZI>::Ptr processed_cloud = scan_downsampled;
-
-        // 仅进行空间过滤（移除特征提取与墙壁过滤）
-        processed_cloud = applySpatialFilter(processed_cloud);
+        if (!processed_cloud || processed_cloud->empty()) {
+            RCLCPP_ERROR(get_logger(), "❌ 降采样后点云为空，无法执行配准");
+            publishStatus("❌ 点云为空，无法执行配准");
+            return;
+        }
+        publishFeatureCloud(processed_cloud);
         
         // Yaw 多假设验证（在三阶段 NDT 前搜索最优 yaw）
         Eigen::Matrix4f optimized_guess = yawSeedSearch(processed_cloud, user_initial_guess_);
@@ -415,7 +509,7 @@ private:
         const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan_cloud,
         const rclcpp::Time& timestamp
     ) {
-        // ✅ 单帧过滤: 先过滤再累积(避免运动拖影)
+        // ✅ 单帧不做过滤，直接累积，统一在合并后预处理
         auto filtered_scan = filterSingleFrame(scan_cloud);
         
         if (!filtered_scan || filtered_scan->empty()) {
@@ -436,7 +530,7 @@ private:
                 RCLCPP_INFO(get_logger(), "📦 开始累积点云...");
             }
             
-            // 添加已过滤的点云到缓冲区
+            // 添加原始单帧点云到缓冲区
             scan_buffer_.push_back(filtered_scan);
             
             // 计算累积时长
@@ -477,7 +571,7 @@ private:
         
         // ✅ mergeAccumulatedScans() 内部已完成:
         //    1. 原始合并
-        //    2. 空间过滤 (去除地面/天花板)
+        //    2. 空间/地面过滤
         //    3. 降采样
         auto processed_cloud = mergeAccumulatedScans();
         
@@ -491,6 +585,7 @@ private:
         RCLCPP_INFO(get_logger(), "   ✅ 点云处理完成: %zu 点 (已完成空间过滤+降采样)", 
                    processed_cloud->size());
         publishStatus("开始配准 (使用处理后的累积点云)...");
+        publishFeatureCloud(processed_cloud);
         
         // Yaw 多假设验证（在三阶段 NDT 前搜索最优 yaw）
         Eigen::Matrix4f optimized_guess = yawSeedSearch(processed_cloud, user_initial_guess_);
@@ -542,18 +637,22 @@ private:
         
         RCLCPP_INFO(get_logger(), "   ✅ 合并原始点云: %zu 帧 → %zu 点", 
                    local_buffer.size(), merged->size());
-        
-        // ✅ 在累积后应用空间过滤
-        RCLCPP_INFO(get_logger(), "   🔍 应用空间过滤（累积后）...");
-        auto spatially_filtered = applySpatialFilter(merged);
-        
-        if (!spatially_filtered || spatially_filtered->empty()) {
-            RCLCPP_ERROR(get_logger(), "❌ 空间过滤后点云为空！");
+
+        auto temporally_filtered = applyTemporalStabilityFilter(local_buffer, "累积后");
+        if (!temporally_filtered || temporally_filtered->empty()) {
+            RCLCPP_ERROR(get_logger(), "❌ 时序稳定性过滤后点云为空！");
             return nullptr;
         }
         
-        RCLCPP_INFO(get_logger(), "   ✅ 空间过滤: %zu → %zu 点", 
-                   merged->size(), spatially_filtered->size());
+        auto spatially_filtered = preprocessCloudForRegistration(temporally_filtered, true, "累积后");
+        
+        if (!spatially_filtered || spatially_filtered->empty()) {
+            RCLCPP_ERROR(get_logger(), "❌ 累积后预处理后的点云为空！");
+            return nullptr;
+        }
+        
+        RCLCPP_INFO(get_logger(), "   ✅ 累积后预处理: %zu → %zu 点", 
+                   temporally_filtered->size(), spatially_filtered->size());
         
         // ❌ 移除动态物体与曲率特征提取逻辑（不再需要）
         pcl::PointCloud<pcl::PointXYZI>::Ptr preprocessed = spatially_filtered;
@@ -703,13 +802,574 @@ private:
         return filtered;
     }
     
-    // ==================== 单帧过滤（禁用，累积后再处理）====================
-    // 直接返回原始点云，不做任何处理
     pcl::PointCloud<pcl::PointXYZI>::Ptr filterSingleFrame(
         const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan_cloud
     ) {
-        // 不做任何过滤，直接返回原始点云
         return scan_cloud;
+    }
+
+    pcl::PointCloud<pcl::PointXYZI>::Ptr preprocessCloudForRegistration(
+        const pcl::PointCloud<pcl::PointXYZI>::Ptr& input_cloud,
+        bool enable_cluster_filter,
+        const std::string& stage_name
+    ) {
+        if (!input_cloud || input_cloud->empty()) {
+            return input_cloud;
+        }
+
+        auto filtered = applySpatialFilter(input_cloud);
+        if (!filtered || filtered->empty()) {
+            RCLCPP_WARN(get_logger(), "⚠️ [%s] 空间过滤后点云为空", stage_name.c_str());
+            return filtered;
+        }
+
+        filtered = removeGroundByNormals(filtered, stage_name);
+        if (!filtered || filtered->empty()) {
+            RCLCPP_WARN(get_logger(), "⚠️ [%s] 地面过滤后点云为空", stage_name.c_str());
+            return filtered;
+        }
+
+        if (enable_cluster_filter) {
+            filtered = filterDynamicObstaclesWithMultiRadiusDbscan(filtered, stage_name);
+        }
+
+        return filtered;
+    }
+
+    pcl::PointCloud<pcl::PointXYZI>::Ptr applyTemporalStabilityFilter(
+        const std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr>& frames,
+        const std::string& stage_name
+    ) {
+        pcl::PointCloud<pcl::PointXYZI>::Ptr merged(new pcl::PointCloud<pcl::PointXYZI>());
+        if (frames.empty()) {
+            return merged;
+        }
+
+        for (const auto& frame : frames) {
+            if (frame) {
+                *merged += *frame;
+            }
+        }
+
+        if (!get_parameter("temporal_filter_enable").as_bool() || frames.size() <= 1) {
+            return merged;
+        }
+
+        double voxel_size = std::max(0.02, get_parameter("temporal_filter_voxel_size").as_double());
+        int min_hits = static_cast<int>(get_parameter("temporal_filter_min_hits").as_int());
+        double min_hit_ratio = get_parameter("temporal_filter_min_hit_ratio").as_double();
+        int frame_count = static_cast<int>(frames.size());
+        int required_hits = std::max(min_hits, static_cast<int>(std::ceil(frame_count * min_hit_ratio)));
+        required_hits = std::min(required_hits, frame_count);
+        required_hits = std::max(1, required_hits);
+
+        std::unordered_map<std::size_t, int> voxel_hits;
+        voxel_hits.reserve(merged->size());
+
+        for (const auto& frame : frames) {
+            if (!frame || frame->empty()) {
+                continue;
+            }
+
+            std::unordered_set<std::size_t> frame_voxels;
+            frame_voxels.reserve(frame->size());
+            for (const auto& point : frame->points) {
+                frame_voxels.insert(makeVoxelKey(point, voxel_size));
+            }
+
+            for (const auto& voxel_key : frame_voxels) {
+                ++voxel_hits[voxel_key];
+            }
+        }
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZI>());
+        filtered->reserve(merged->size());
+
+        std::size_t removed_points = 0;
+        for (const auto& frame : frames) {
+            if (!frame) {
+                continue;
+            }
+
+            for (const auto& point : frame->points) {
+                auto it = voxel_hits.find(makeVoxelKey(point, voxel_size));
+                if (it != voxel_hits.end() && it->second >= required_hits) {
+                    filtered->push_back(point);
+                } else {
+                    ++removed_points;
+                }
+            }
+        }
+
+        std::size_t stable_voxels = 0;
+        for (const auto& [_, hits] : voxel_hits) {
+            if (hits >= required_hits) {
+                ++stable_voxels;
+            }
+        }
+
+        RCLCPP_INFO(
+            get_logger(),
+            "   [%s] 时序稳定性过滤: frames=%d, voxel=%.2f, hits>=%d (min_hits=%d, ratio=%.2f) -> %zu → %zu 点, stable_voxels=%zu, removed=%zu",
+            stage_name.c_str(),
+            frame_count,
+            voxel_size,
+            required_hits,
+            min_hits,
+            min_hit_ratio,
+            merged->size(),
+            filtered->size(),
+            stable_voxels,
+            removed_points
+        );
+
+        if (filtered->empty()) {
+            RCLCPP_WARN(get_logger(), "⚠️ [%s] 时序稳定性过滤后为空，回退到原始合并点云", stage_name.c_str());
+            return merged;
+        }
+
+        return filtered;
+    }
+
+    pcl::PointCloud<pcl::PointXYZI>::Ptr removeGroundByNormals(
+        const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
+        const std::string& stage_name
+    ) {
+        if (!get_parameter("ground_filter_enable").as_bool()) {
+            return cloud;
+        }
+
+        if (!cloud || cloud->size() < 30) {
+            return cloud;
+        }
+
+        double radius = get_parameter("ground_normal_radius").as_double();
+        double normal_z_threshold = get_parameter("ground_normal_z_threshold").as_double();
+        double ground_max_height = get_parameter("ground_max_height").as_double();
+        double ground_max_curvature = get_parameter("ground_max_curvature").as_double();
+
+        pcl::NormalEstimationOMP<pcl::PointXYZI, pcl::Normal> normal_estimation;
+        normal_estimation.setInputCloud(cloud);
+        normal_estimation.setRadiusSearch(radius);
+        int normal_threads = static_cast<int>(get_parameter("ndt_threads").as_int());
+        normal_estimation.setNumberOfThreads(std::max(1, normal_threads));
+
+        pcl::search::KdTree<pcl::PointXYZI>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZI>());
+        normal_estimation.setSearchMethod(tree);
+
+        pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>());
+        normal_estimation.compute(*normals);
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZI>());
+        filtered->reserve(cloud->size());
+
+        std::size_t removed_ground = 0;
+        for (std::size_t i = 0; i < cloud->size(); ++i) {
+            const auto& point = cloud->points[i];
+            const auto& normal = normals->points[i];
+
+            bool normal_valid = std::isfinite(normal.normal_x) &&
+                                std::isfinite(normal.normal_y) &&
+                                std::isfinite(normal.normal_z) &&
+                                std::isfinite(normal.curvature);
+            bool looks_like_ground = normal_valid &&
+                                     std::abs(normal.normal_z) >= normal_z_threshold &&
+                                     normal.curvature <= ground_max_curvature &&
+                                     point.z <= ground_max_height;
+
+            if (looks_like_ground) {
+                ++removed_ground;
+                continue;
+            }
+
+            filtered->push_back(point);
+        }
+
+        RCLCPP_INFO(
+            get_logger(),
+            "   [%s] 法向量地面过滤: %zu → %zu 点 (移除 %zu, radius=%.2f, |nz|>=%.2f, z<=%.2f)",
+            stage_name.c_str(),
+            cloud->size(),
+            filtered->size(),
+            removed_ground,
+            radius,
+            normal_z_threshold,
+            ground_max_height
+        );
+
+        return filtered;
+    }
+
+    DbscanParams getDbscanParamsForRange(double range) {
+        if (range <= get_parameter("cluster_near_range").as_double()) {
+            return {
+                get_parameter("cluster_near_epsilon").as_double(),
+                static_cast<int>(get_parameter("cluster_near_min_points").as_int())
+            };
+        }
+
+        if (range <= get_parameter("cluster_mid_range").as_double()) {
+            return {
+                get_parameter("cluster_mid_epsilon").as_double(),
+                static_cast<int>(get_parameter("cluster_mid_min_points").as_int())
+            };
+        }
+
+        return {
+            get_parameter("cluster_far_epsilon").as_double(),
+            static_cast<int>(get_parameter("cluster_far_min_points").as_int())
+        };
+    }
+
+    ClusterMetrics computeClusterMetrics(
+        const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
+        const std::vector<int>& indices
+    ) {
+        ClusterMetrics metrics{};
+        metrics.min_x = std::numeric_limits<float>::max();
+        metrics.min_y = std::numeric_limits<float>::max();
+        metrics.min_z = std::numeric_limits<float>::max();
+        metrics.max_x = std::numeric_limits<float>::lowest();
+        metrics.max_y = std::numeric_limits<float>::lowest();
+        metrics.max_z = std::numeric_limits<float>::lowest();
+        metrics.point_count = indices.size();
+
+        double sum_x = 0.0;
+        double sum_y = 0.0;
+        double sum_z = 0.0;
+        double voxel_size = std::max(0.02, get_parameter("cluster_occupancy_voxel_size").as_double());
+        std::unordered_set<std::size_t> occupied_voxels;
+        occupied_voxels.reserve(indices.size());
+
+        for (int idx : indices) {
+            const auto& p = cloud->points[idx];
+            metrics.min_x = std::min(metrics.min_x, p.x);
+            metrics.max_x = std::max(metrics.max_x, p.x);
+            metrics.min_y = std::min(metrics.min_y, p.y);
+            metrics.max_y = std::max(metrics.max_y, p.y);
+            metrics.min_z = std::min(metrics.min_z, p.z);
+            metrics.max_z = std::max(metrics.max_z, p.z);
+            sum_x += p.x;
+            sum_y += p.y;
+            sum_z += p.z;
+
+            occupied_voxels.insert(makeVoxelKey(p, voxel_size));
+        }
+
+        metrics.width = std::max(0.0, static_cast<double>(metrics.max_x - metrics.min_x));
+        metrics.depth = std::max(0.0, static_cast<double>(metrics.max_y - metrics.min_y));
+        metrics.height = std::max(0.0, static_cast<double>(metrics.max_z - metrics.min_z));
+        metrics.volume = std::max(1e-6, metrics.width * metrics.depth * std::max(metrics.height, 0.05));
+        metrics.density = static_cast<double>(metrics.point_count) / metrics.volume;
+
+        double centroid_x = sum_x / static_cast<double>(metrics.point_count);
+        double centroid_y = sum_y / static_cast<double>(metrics.point_count);
+        double centroid_z = sum_z / static_cast<double>(metrics.point_count);
+        metrics.centroid_range = std::hypot(centroid_x, centroid_y);
+        metrics.centroid_x = centroid_x;
+        metrics.centroid_y = centroid_y;
+        metrics.centroid_z = centroid_z;
+
+        int grid_x = std::max(1, static_cast<int>(std::ceil(metrics.width / voxel_size)));
+        int grid_y = std::max(1, static_cast<int>(std::ceil(metrics.depth / voxel_size)));
+        int grid_z = std::max(1, static_cast<int>(std::ceil(std::max(metrics.height, 0.05) / voxel_size)));
+        double total_voxels = static_cast<double>(grid_x) * grid_y * grid_z;
+        metrics.occupancy_ratio =
+            total_voxels > 0.0 ? static_cast<double>(occupied_voxels.size()) / total_voxels : 0.0;
+
+        return metrics;
+    }
+
+    bool isDynamicObstacleCluster(const ClusterMetrics& metrics) {
+        if (metrics.centroid_range > get_parameter("cluster_dynamic_max_range").as_double()) {
+            return false;
+        }
+
+        if (metrics.point_count > static_cast<std::size_t>(get_parameter("cluster_dynamic_max_points").as_int())) {
+            return false;
+        }
+
+        if (metrics.height < get_parameter("cluster_dynamic_min_height").as_double() ||
+            metrics.height > get_parameter("cluster_dynamic_max_height").as_double()) {
+            return false;
+        }
+
+        if (metrics.width > get_parameter("cluster_dynamic_max_width").as_double() ||
+            metrics.depth > get_parameter("cluster_dynamic_max_depth").as_double()) {
+            return false;
+        }
+
+        if (metrics.volume > get_parameter("cluster_dynamic_max_volume").as_double()) {
+            return false;
+        }
+
+        if (metrics.density < get_parameter("cluster_dynamic_min_density").as_double()) {
+            return false;
+        }
+
+        if (metrics.occupancy_ratio < get_parameter("cluster_dynamic_min_occupancy_ratio").as_double()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    void publishClusterDebugVisualization(
+        const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
+        const std::vector<std::vector<int>>& clusters,
+        const std::vector<bool>& dynamic_cluster_mask
+    ) {
+        if (!get_parameter("cluster_visualization_enable").as_bool()) {
+            return;
+        }
+
+        sensor_msgs::msg::PointCloud2 cluster_msg;
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>());
+
+        for (std::size_t cluster_id = 0; cluster_id < clusters.size(); ++cluster_id) {
+            for (int point_idx : clusters[cluster_id]) {
+                pcl::PointXYZI point = cloud->points[point_idx];
+                point.intensity = dynamic_cluster_mask[cluster_id]
+                    ? static_cast<float>(1000 + cluster_id)
+                    : static_cast<float>(cluster_id + 1);
+                cluster_cloud->push_back(point);
+            }
+        }
+
+        pcl::toROSMsg(*cluster_cloud, cluster_msg);
+        cluster_msg.header.frame_id = "odom";
+        cluster_msg.header.stamp = now();
+        cluster_debug_cloud_pub_->publish(cluster_msg);
+
+        visualization_msgs::msg::MarkerArray marker_array;
+        visualization_msgs::msg::Marker clear_marker;
+        clear_marker.header.frame_id = "odom";
+        clear_marker.header.stamp = now();
+        clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+        marker_array.markers.push_back(clear_marker);
+
+        double label_scale = get_parameter("cluster_label_scale").as_double();
+        for (std::size_t cluster_id = 0; cluster_id < clusters.size(); ++cluster_id) {
+            if (clusters[cluster_id].empty()) {
+                continue;
+            }
+
+            ClusterMetrics metrics = computeClusterMetrics(cloud, clusters[cluster_id]);
+
+            visualization_msgs::msg::Marker text_marker;
+            text_marker.header.frame_id = "odom";
+            text_marker.header.stamp = now();
+            text_marker.ns = "cluster_labels";
+            text_marker.id = static_cast<int>(cluster_id);
+            text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+            text_marker.action = visualization_msgs::msg::Marker::ADD;
+            text_marker.pose.orientation.w = 1.0;
+            text_marker.pose.position.x = metrics.centroid_x;
+            text_marker.pose.position.y = metrics.centroid_y;
+            text_marker.pose.position.z = metrics.max_z + 0.25;
+            text_marker.scale.z = label_scale;
+            text_marker.color.a = 1.0;
+            if (dynamic_cluster_mask[cluster_id]) {
+                text_marker.color.r = 1.0;
+                text_marker.color.g = 0.2;
+                text_marker.color.b = 0.2;
+                text_marker.text = "D" + std::to_string(cluster_id);
+            } else {
+                text_marker.color.r = 0.1;
+                text_marker.color.g = 0.9;
+                text_marker.color.b = 1.0;
+                text_marker.text = std::to_string(cluster_id);
+            }
+            marker_array.markers.push_back(text_marker);
+        }
+
+        cluster_label_pub_->publish(marker_array);
+    }
+
+    pcl::PointCloud<pcl::PointXYZI>::Ptr filterDynamicObstaclesWithMultiRadiusDbscan(
+        const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
+        const std::string& stage_name
+    ) {
+        if (!get_parameter("cluster_filter_enable").as_bool()) {
+            return cloud;
+        }
+
+        if (!cloud || cloud->size() < 50) {
+            return cloud;
+        }
+
+        double dynamic_max_range = get_parameter("cluster_dynamic_max_range").as_double();
+        double cluster_pre_voxel_size = std::max(0.05, get_parameter("cluster_pre_voxel_size").as_double());
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr clustering_roi(new pcl::PointCloud<pcl::PointXYZI>());
+        clustering_roi->reserve(cloud->size());
+        for (const auto& point : cloud->points) {
+            if (std::hypot(point.x, point.y) <= dynamic_max_range) {
+                clustering_roi->push_back(point);
+            }
+        }
+
+        if (clustering_roi->size() < 30) {
+            RCLCPP_INFO(
+                get_logger(),
+                "   [%s] 聚类 ROI 点太少: full=%zu, roi=%zu, range<=%.2fm，跳过 DBSCAN",
+                stage_name.c_str(),
+                cloud->size(),
+                clustering_roi->size(),
+                dynamic_max_range
+            );
+            return cloud;
+        }
+
+        pcl::VoxelGrid<pcl::PointXYZI> cluster_voxel_filter;
+        cluster_voxel_filter.setLeafSize(cluster_pre_voxel_size, cluster_pre_voxel_size, cluster_pre_voxel_size);
+        cluster_voxel_filter.setInputCloud(clustering_roi);
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_cloud(new pcl::PointCloud<pcl::PointXYZI>());
+        cluster_voxel_filter.filter(*cluster_cloud);
+
+        if (cluster_cloud->size() < 30) {
+            RCLCPP_INFO(
+                get_logger(),
+                "   [%s] 聚类降采样后点太少: roi=%zu, voxel=%.2f, downsampled=%zu，跳过 DBSCAN",
+                stage_name.c_str(),
+                clustering_roi->size(),
+                cluster_pre_voxel_size,
+                cluster_cloud->size()
+            );
+            return cloud;
+        }
+
+        pcl::KdTreeFLANN<pcl::PointXYZI> kdtree;
+        kdtree.setInputCloud(cluster_cloud);
+
+        constexpr int kUnassigned = -1;
+        constexpr int kNoise = -2;
+        std::vector<int> labels(cluster_cloud->size(), kUnassigned);
+        std::vector<std::vector<int>> clusters;
+
+        auto expand_cluster = [&](int seed_index, int cluster_id) {
+            std::queue<int> frontier;
+            frontier.push(seed_index);
+            labels[seed_index] = cluster_id;
+            clusters[cluster_id].push_back(seed_index);
+
+            while (!frontier.empty()) {
+                int current = frontier.front();
+                frontier.pop();
+
+                const auto& point = cluster_cloud->points[current];
+                DbscanParams params = getDbscanParamsForRange(std::hypot(point.x, point.y));
+
+                std::vector<int> neighbor_indices;
+                std::vector<float> neighbor_distances;
+                kdtree.radiusSearch(point, params.epsilon, neighbor_indices, neighbor_distances);
+
+                if (static_cast<int>(neighbor_indices.size()) < params.min_points) {
+                    continue;
+                }
+
+                for (int neighbor_idx : neighbor_indices) {
+                    if (labels[neighbor_idx] == kNoise) {
+                        labels[neighbor_idx] = cluster_id;
+                        clusters[cluster_id].push_back(neighbor_idx);
+                    }
+
+                    if (labels[neighbor_idx] != kUnassigned) {
+                        continue;
+                    }
+
+                    labels[neighbor_idx] = cluster_id;
+                    clusters[cluster_id].push_back(neighbor_idx);
+                    frontier.push(neighbor_idx);
+                }
+            }
+        };
+
+        for (std::size_t i = 0; i < cluster_cloud->size(); ++i) {
+            if (labels[i] != kUnassigned) {
+                continue;
+            }
+
+            const auto& point = cluster_cloud->points[i];
+            DbscanParams params = getDbscanParamsForRange(std::hypot(point.x, point.y));
+
+            std::vector<int> neighbor_indices;
+            std::vector<float> neighbor_distances;
+            kdtree.radiusSearch(point, params.epsilon, neighbor_indices, neighbor_distances);
+
+            if (static_cast<int>(neighbor_indices.size()) < params.min_points) {
+                labels[i] = kNoise;
+                continue;
+            }
+
+            clusters.emplace_back();
+            int cluster_id = static_cast<int>(clusters.size()) - 1;
+            expand_cluster(static_cast<int>(i), cluster_id);
+        }
+
+        std::vector<bool> remove_mask(cloud->size(), false);
+        std::size_t removed_points = 0;
+        std::size_t dynamic_cluster_count = 0;
+        std::vector<bool> dynamic_cluster_mask(clusters.size(), false);
+        std::unordered_set<std::size_t> dynamic_cluster_voxels;
+
+        for (std::size_t cluster_id = 0; cluster_id < clusters.size(); ++cluster_id) {
+            const auto& cluster_indices = clusters[cluster_id];
+            if (cluster_indices.empty()) {
+                continue;
+            }
+
+            ClusterMetrics metrics = computeClusterMetrics(cluster_cloud, cluster_indices);
+            if (!isDynamicObstacleCluster(metrics)) {
+                continue;
+            }
+
+            ++dynamic_cluster_count;
+            dynamic_cluster_mask[cluster_id] = true;
+            for (int idx : cluster_indices) {
+                dynamic_cluster_voxels.insert(makeVoxelKey(cluster_cloud->points[idx], cluster_pre_voxel_size));
+            }
+        }
+
+        publishClusterDebugVisualization(cluster_cloud, clusters, dynamic_cluster_mask);
+
+        for (std::size_t i = 0; i < cloud->size(); ++i) {
+            const auto& point = cloud->points[i];
+            if (std::hypot(point.x, point.y) > dynamic_max_range) {
+                continue;
+            }
+
+            if (dynamic_cluster_voxels.count(makeVoxelKey(point, cluster_pre_voxel_size)) > 0) {
+                remove_mask[i] = true;
+                ++removed_points;
+            }
+        }
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZI>());
+        filtered->reserve(cloud->size() - std::min(removed_points, cloud->size()));
+
+        for (std::size_t i = 0; i < cloud->size(); ++i) {
+            if (!remove_mask[i]) {
+                filtered->push_back(cloud->points[i]);
+            }
+        }
+
+        RCLCPP_INFO(
+            get_logger(),
+            "   [%s] Multi-radius DBSCAN: full=%zu, roi=%zu, cluster_downsampled=%zu(voxel=%.2f) -> %zu, clusters=%zu, dynamic_clusters=%zu, removed=%zu",
+            stage_name.c_str(),
+            cloud->size(),
+            clustering_roi->size(),
+            cluster_cloud->size(),
+            cluster_pre_voxel_size,
+            filtered->size(),
+            clusters.size(),
+            dynamic_cluster_count,
+            removed_points
+        );
+
+        return filtered;
     }
     
     // ==================== Yaw 多假设验证 (Yaw Seed Search) ====================
@@ -1142,6 +1802,10 @@ private:
     
     // ==================== 发布特征点云（可视化调试）====================
     void publishFeatureCloud(const pcl::PointCloud<pcl::PointXYZI>::Ptr& feature_cloud) {
+        if (!feature_cloud) {
+            return;
+        }
+
         sensor_msgs::msg::PointCloud2 feature_msg;
         pcl::toROSMsg(*feature_cloud, feature_msg);
         feature_msg.header.frame_id = "odom";  // 特征点云在 odom 坐标系
@@ -1293,8 +1957,10 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr aligned_cloud_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_cloud_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr feature_cloud_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cluster_debug_cloud_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr cluster_label_pub_;
     
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
