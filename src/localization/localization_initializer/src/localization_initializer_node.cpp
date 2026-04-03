@@ -83,6 +83,7 @@ public:
         
         // GICP 参数 (可选,默认禁用)
         declare_parameter("enable_gicp", false);                // 禁用 GICP
+        declare_parameter("use_last_ndt_result", true);         // true: 始终采用最后一阶段结果
         
         // 质量评估阈值
         declare_parameter("ndt_fitness_threshold", 1.0);
@@ -150,6 +151,18 @@ public:
         declare_parameter("yaw_seed_ndt_resolution", 1.5);
         declare_parameter("yaw_seed_ndt_max_iter", 10);
         declare_parameter("yaw_seed_fallback_threshold", 5.0);
+        declare_parameter("yaw_seed_eval_max_correspondence_dist", 0.60);
+        declare_parameter("yaw_seed_eval_trim_ratio", 0.70);
+        declare_parameter("yaw_seed_inlier_ratio_weight", 0.35);
+        declare_parameter("yaw_seed_ndt_score_weight", 0.03);
+        declare_parameter("yaw_seed_min_inlier_ratio", 0.20);
+        declare_parameter("yaw_seed_max_trimmed_distance", 0.45);
+
+        declare_parameter("ndt_eval_max_correspondence_dist", 0.60);
+        declare_parameter("ndt_eval_trim_ratio", 0.70);
+        declare_parameter("ndt_eval_trimmed_distance_weight", 0.73);
+        declare_parameter("ndt_eval_inlier_ratio_weight", 0.22);
+        declare_parameter("ndt_eval_ndt_score_weight", 0.05);
         
         // 自动初始化（如果不使用 RViz）
         declare_parameter("auto_initialize", false);
@@ -282,6 +295,12 @@ private:
         double centroid_y;
         double centroid_z;
         std::size_t point_count;
+    };
+
+    struct AlignmentQualityMetrics {
+        double trimmed_distance = std::numeric_limits<double>::max();
+        double inlier_ratio = 0.0;
+        int valid_points = 0;
     };
 
     std::size_t makeVoxelKey(std::int64_t vx, std::int64_t vy, std::int64_t vz) const {
@@ -720,6 +739,70 @@ private:
         }
         
         return total_distance / valid_points;  // 返回平均距离
+    }
+
+    AlignmentQualityMetrics evaluateAlignmentQuality(
+        const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan_cloud,
+        const Eigen::Matrix4f& pose,
+        const pcl::KdTreeFLANN<pcl::PointXYZI>& kdtree,
+        double max_correspondence_dist,
+        double trim_ratio
+    ) {
+        AlignmentQualityMetrics metrics;
+        if (!scan_cloud || scan_cloud->empty()) {
+            return metrics;
+        }
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZI>());
+        pcl::transformPointCloud(*scan_cloud, *transformed, pose);
+
+        const double max_dist_sq = max_correspondence_dist * max_correspondence_dist;
+        std::vector<double> valid_distances;
+        valid_distances.reserve(transformed->size());
+
+        for (const auto& point : transformed->points) {
+            std::vector<int> indices(1);
+            std::vector<float> distances(1);
+
+            if (kdtree.nearestKSearch(point, 1, indices, distances) > 0 &&
+                distances[0] < max_dist_sq) {
+                valid_distances.push_back(std::sqrt(distances[0]));
+            }
+        }
+
+        metrics.valid_points = static_cast<int>(valid_distances.size());
+        metrics.inlier_ratio = static_cast<double>(metrics.valid_points) /
+                               static_cast<double>(std::max<std::size_t>(1, transformed->size()));
+
+        if (valid_distances.empty()) {
+            return metrics;
+        }
+
+        std::sort(valid_distances.begin(), valid_distances.end());
+        double clamped_trim_ratio = std::clamp(trim_ratio, 0.1, 1.0);
+        std::size_t trimmed_count = static_cast<std::size_t>(
+            std::ceil(valid_distances.size() * clamped_trim_ratio));
+        trimmed_count = std::max<std::size_t>(1, std::min(trimmed_count, valid_distances.size()));
+
+        double trimmed_sum = std::accumulate(
+            valid_distances.begin(),
+            valid_distances.begin() + static_cast<std::ptrdiff_t>(trimmed_count),
+            0.0
+        );
+        metrics.trimmed_distance = trimmed_sum / static_cast<double>(trimmed_count);
+        return metrics;
+    }
+
+    double computeCombinedAlignmentScore(
+        const AlignmentQualityMetrics& metrics,
+        double ndt_score,
+        double trimmed_distance_weight,
+        double inlier_ratio_weight,
+        double ndt_score_weight
+    ) {
+        return trimmed_distance_weight * metrics.trimmed_distance
+             - inlier_ratio_weight * metrics.inlier_ratio
+             + ndt_score_weight * ndt_score;
     }
     
     // ==================== 空间过滤（按坐标轴过滤）====================
@@ -1376,7 +1459,8 @@ private:
     /**
      * @brief 在 [yaw0 - Δ, yaw0 + Δ] 范围内搜索最优 yaw 角
      * 
-     * 方法: 对每个候选 yaw，用粗分辨率 NDT 跑少量迭代，取 fitness score 最低的作为最优。
+     * 方法: 对每个候选 yaw，用粗分辨率 NDT 跑少量迭代，再结合 trimmed distance、
+     * inlier ratio 与 NDT score 进行组合评分，选最优 yaw。
      * 仅修改 initial_guess 的旋转部分（绕 Z 轴），平移不变。
      * 
      * @param scan_cloud    预处理后的扫描点云
@@ -1396,6 +1480,10 @@ private:
         double step_deg = get_parameter("yaw_seed_step_deg").as_double();
         double seed_resolution = get_parameter("yaw_seed_ndt_resolution").as_double();
         int seed_max_iter = get_parameter("yaw_seed_ndt_max_iter").as_int();
+        double eval_max_corr_dist = get_parameter("yaw_seed_eval_max_correspondence_dist").as_double();
+        double eval_trim_ratio = get_parameter("yaw_seed_eval_trim_ratio").as_double();
+        double inlier_weight = get_parameter("yaw_seed_inlier_ratio_weight").as_double();
+        double ndt_weight = get_parameter("yaw_seed_ndt_score_weight").as_double();
         
         // 从初始位姿提取当前 yaw
         Eigen::Matrix3f rot = initial_guess.block<3,3>(0,0);
@@ -1440,6 +1528,9 @@ private:
         ndt_seed->setOulierRatio(get_parameter("ndt_outlier_ratio").as_double());
         ndt_seed->setInputTarget(map_cloud_);
         ndt_seed->setInputSource(scan_cloud);
+
+        pcl::KdTreeFLANN<pcl::PointXYZI> map_kdtree;
+        map_kdtree.setInputCloud(map_cloud_);
         
         double best_score = std::numeric_limits<double>::max();
         double best_yaw = center_yaw;
@@ -1448,7 +1539,10 @@ private:
         // 存储所有候选的分数用于日志
         struct YawCandidate {
             double yaw_rad;
-            double fitness;
+            double ndt_score;
+            double trimmed_distance;
+            double inlier_ratio;
+            double combined_score;
         };
         std::vector<YawCandidate> candidates;
         candidates.reserve(num_candidates);
@@ -1471,9 +1565,14 @@ private:
             ndt_seed->align(*aligned_tmp, candidate_pose);
             
             // 取 NDT 内部 fitness score（越小越好）
-            double score = ndt_seed->getFitnessScore();
+            double ndt_score = ndt_seed->getFitnessScore();
+            AlignmentQualityMetrics quality = evaluateAlignmentQuality(
+                scan_cloud, candidate_pose, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+            double score = quality.trimmed_distance
+                         - inlier_weight * quality.inlier_ratio
+                         + ndt_weight * ndt_score;
             
-            candidates.push_back({yaw, score});
+            candidates.push_back({yaw, ndt_score, quality.trimmed_distance, quality.inlier_ratio, score});
             
             if (score < best_score) {
                 best_score = score;
@@ -1491,31 +1590,41 @@ private:
         std::partial_sort(sorted_indices.begin(), 
                          sorted_indices.begin() + std::min<size_t>(5, sorted_indices.size()),
                          sorted_indices.end(),
-                         [&](size_t a, size_t b) { return candidates[a].fitness < candidates[b].fitness; });
+                         [&](size_t a, size_t b) { return candidates[a].combined_score < candidates[b].combined_score; });
         
         RCLCPP_INFO(get_logger(), "   📊 Top-5 候选:");
         for (size_t i = 0; i < std::min<size_t>(5, sorted_indices.size()); ++i) {
             auto& c = candidates[sorted_indices[i]];
-            RCLCPP_INFO(get_logger(), "      %s yaw=%+.1f° fitness=%.4f",
+            RCLCPP_INFO(get_logger(), "      %s yaw=%+.1f° score=%.4f trim=%.4f inlier=%.3f ndt=%.4f",
                        (sorted_indices[i] == static_cast<size_t>(best_idx)) ? "★" : " ",
-                       c.yaw_rad * 180.0 / M_PI, c.fitness);
+                       c.yaw_rad * 180.0 / M_PI,
+                       c.combined_score, c.trimmed_distance, c.inlier_ratio, c.ndt_score);
         }
         
         double yaw_shift = (best_yaw - center_yaw) * 180.0 / M_PI;
-        RCLCPP_INFO(get_logger(), "   ✅ 最优 yaw=%.1f° (偏移 %+.1f°), fitness=%.4f, 耗时=%.0fms",
-                   best_yaw * 180.0 / M_PI, yaw_shift, best_score, search_ms);
+        const auto& best_candidate = candidates[static_cast<std::size_t>(best_idx)];
+        RCLCPP_INFO(get_logger(), "   ✅ 最优 yaw=%.1f° (偏移 %+.1f°), score=%.4f, trim=%.4f, inlier=%.3f, ndt=%.4f, 耗时=%.0fms",
+                   best_yaw * 180.0 / M_PI, yaw_shift, best_score,
+                   best_candidate.trimmed_distance, best_candidate.inlier_ratio,
+                   best_candidate.ndt_score, search_ms);
         RCLCPP_INFO(get_logger(), "🔄 ========================================");
         
-        // ===== 置信度检查：若最优 score 仍超过阈值，说明评分不可信，回退到原始 yaw =====
+        // ===== 置信度检查：trimmed distance 太差或 inlier ratio 太低时回退 =====
         double fallback_threshold = get_parameter("yaw_seed_fallback_threshold").as_double();
-        if (best_score > fallback_threshold) {
+        double min_inlier_ratio = get_parameter("yaw_seed_min_inlier_ratio").as_double();
+        double max_trimmed_distance = get_parameter("yaw_seed_max_trimmed_distance").as_double();
+        if (best_candidate.trimmed_distance > max_trimmed_distance ||
+            best_candidate.inlier_ratio < min_inlier_ratio ||
+            best_candidate.ndt_score > fallback_threshold) {
             RCLCPP_WARN(get_logger(), 
-                "⚠️  Yaw-seed 评分不可信 (best_score=%.4f > threshold=%.4f)，回退到用户原始 yaw=%.1f°",
-                best_score, fallback_threshold, center_yaw * 180.0 / M_PI);
+                "⚠️  Yaw-seed 评分不可信 (trim=%.4f, inlier=%.3f, ndt=%.4f)，回退到用户原始 yaw=%.1f°",
+                best_candidate.trimmed_distance, best_candidate.inlier_ratio,
+                best_candidate.ndt_score, center_yaw * 180.0 / M_PI);
+            RCLCPP_WARN(get_logger(),
+                "   阈值: trim<=%.3f, inlier>=%.3f, ndt<=%.3f",
+                max_trimmed_distance, min_inlier_ratio, fallback_threshold);
             RCLCPP_WARN(get_logger(),
                 "   可能原因: 点云质量差 / 车位置偏差过大 / seed_ndt_resolution 过粗");
-            RCLCPP_WARN(get_logger(),
-                "   建议: 查看 Top-5 正常 fitness 值后调整 yaw_seed_fallback_threshold");
             return initial_guess;  // 原样返回用户给的初始位姿
         }
         
@@ -1553,10 +1662,22 @@ private:
         logNdtSearchConfig("三阶段配准");
         
         auto start_time = std::chrono::high_resolution_clock::now();
+        pcl::KdTreeFLANN<pcl::PointXYZI> map_kdtree;
+        map_kdtree.setInputCloud(map_cloud_);
+        bool use_last_ndt_result = get_parameter("use_last_ndt_result").as_bool();
+        double eval_max_corr_dist = get_parameter("ndt_eval_max_correspondence_dist").as_double();
+        double eval_trim_ratio = get_parameter("ndt_eval_trim_ratio").as_double();
+        double eval_trimmed_weight = get_parameter("ndt_eval_trimmed_distance_weight").as_double();
+        double eval_inlier_weight = get_parameter("ndt_eval_inlier_ratio_weight").as_double();
+        double eval_ndt_weight = get_parameter("ndt_eval_ndt_score_weight").as_double();
         
         // ===== 阶段 0: 评估初始位姿质量 =====
-        double initial_fitness = computeFitnessScore(scan_cloud, initial_guess);
-        RCLCPP_INFO(get_logger(), "📊 初始位姿质量评估: fitness=%.4f", initial_fitness);
+        AlignmentQualityMetrics initial_quality = evaluateAlignmentQuality(
+            scan_cloud, initial_guess, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+        double initial_combined_score = computeCombinedAlignmentScore(
+            initial_quality, 0.0, eval_trimmed_weight, eval_inlier_weight, eval_ndt_weight);
+        RCLCPP_INFO(get_logger(), "📊 初始位姿质量: score=%.4f trim=%.4f inlier=%.3f",
+                   initial_combined_score, initial_quality.trimmed_distance, initial_quality.inlier_ratio);
         
         // ===== 阶段 1: NDT 粗配准 (1.0m 捕获大偏差) =====
         RCLCPP_INFO(get_logger(), "🔍 阶段 1/3: NDT 粗配准 (分辨率=%.2fm)...", 
@@ -1617,9 +1738,13 @@ private:
                    stage1_score, ndt_stage1->getFinalNumIteration());
         
         // 检查配准是否让结果变差
-        double stage1_fitness = computeFitnessScore(scan_cloud, stage1_pose);
-        RCLCPP_INFO(get_logger(), "   📊 阶段1后几何质量: %.4f (初始: %.4f)", 
-                   stage1_fitness, initial_fitness);
+        AlignmentQualityMetrics stage1_quality = evaluateAlignmentQuality(
+            scan_cloud, stage1_pose, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+        double stage1_combined_score = computeCombinedAlignmentScore(
+            stage1_quality, stage1_score, eval_trimmed_weight, eval_inlier_weight, eval_ndt_weight);
+        RCLCPP_INFO(get_logger(), "   📊 阶段1后质量: score=%.4f trim=%.4f inlier=%.3f ndt=%.3f (初始 score=%.4f)",
+                   stage1_combined_score, stage1_quality.trimmed_distance, stage1_quality.inlier_ratio,
+                   stage1_score, initial_combined_score);
         
         if (stage1_score > get_parameter("ndt_fitness_threshold").as_double()) {
             RCLCPP_WARN(get_logger(), "   ⚠️ 阶段1质量不佳 (fitness=%.3f > %.1f)，继续尝试...",
@@ -1661,16 +1786,28 @@ private:
                    stage2_score, ndt_stage2->getFinalNumIteration());
         
         // 计算并显示精度变化，但无条件采用阶段2结果
-        double stage2_fitness = computeFitnessScore(scan_cloud, stage2_pose);
-        RCLCPP_INFO(get_logger(), "   📊 阶段2后几何质量: %.4f (阶段1: %.4f)",
-                   stage2_fitness, stage1_fitness);
+        AlignmentQualityMetrics stage2_quality = evaluateAlignmentQuality(
+            scan_cloud, stage2_pose, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+        double stage2_combined_score = computeCombinedAlignmentScore(
+            stage2_quality, stage2_score, eval_trimmed_weight, eval_inlier_weight, eval_ndt_weight);
+        RCLCPP_INFO(get_logger(), "   📊 阶段2后质量: score=%.4f trim=%.4f inlier=%.3f ndt=%.3f (阶段1 score=%.4f)",
+                   stage2_combined_score, stage2_quality.trimmed_distance, stage2_quality.inlier_ratio,
+                   stage2_score, stage1_combined_score);
         
         // 🔥 强制采用阶段2结果
-        final_pose = stage2_pose;
-        if (stage2_fitness < stage1_fitness) {
-            RCLCPP_INFO(get_logger(), "   ✅ 阶段2改善了结果 (Δ=%.4f)", stage1_fitness - stage2_fitness);
+        if (use_last_ndt_result || stage2_combined_score < stage1_combined_score) {
+            final_pose = stage2_pose;
         } else {
-            RCLCPP_WARN(get_logger(), "   ⚠️ 阶段2精度变差 (Δ=+%.4f)，但仍强制采用", stage2_fitness - stage1_fitness);
+            final_pose = stage1_pose;
+        }
+        if (stage2_combined_score < stage1_combined_score) {
+            RCLCPP_INFO(get_logger(), "   ✅ 阶段2改善了结果 (Δ=%.4f)", stage1_combined_score - stage2_combined_score);
+        } else {
+            if (use_last_ndt_result) {
+                RCLCPP_WARN(get_logger(), "   ⚠️ 阶段2质量变差 (Δ=+%.4f)，但 use_last_ndt_result=true，仍采用阶段2", stage2_combined_score - stage1_combined_score);
+            } else {
+                RCLCPP_WARN(get_logger(), "   ⚠️ 阶段2质量变差 (Δ=+%.4f)，use_last_ndt_result=false，保留阶段1", stage2_combined_score - stage1_combined_score);
+            }
         }
         
         // ===== 阶段 3: NDT 精配准 (0.25m 死磕细节) =====
@@ -1710,22 +1847,42 @@ private:
                        stage3_score, ndt_stage3->getFinalNumIteration());
             
             // 计算并显示精度变化，但无条件采用阶段3结果
-            double stage3_fitness = computeFitnessScore(scan_cloud, stage3_pose);
-            double stage2_final_fitness = computeFitnessScore(scan_cloud, final_pose);
-            RCLCPP_INFO(get_logger(), "   📊 阶段3后几何质量: %.4f (阶段2: %.4f)",
-                       stage3_fitness, stage2_final_fitness);
+            AlignmentQualityMetrics stage3_quality = evaluateAlignmentQuality(
+                scan_cloud, stage3_pose, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+            double stage3_combined_score = computeCombinedAlignmentScore(
+                stage3_quality, stage3_score, eval_trimmed_weight, eval_inlier_weight, eval_ndt_weight);
+            double current_best_score = use_last_ndt_result ? stage2_combined_score
+                                                            : std::min(stage1_combined_score, stage2_combined_score);
+            Eigen::Matrix4f current_best_pose = final_pose;
+            RCLCPP_INFO(get_logger(), "   📊 阶段3后质量: score=%.4f trim=%.4f inlier=%.3f ndt=%.3f (上一最佳 score=%.4f)",
+                       stage3_combined_score, stage3_quality.trimmed_distance, stage3_quality.inlier_ratio,
+                       stage3_score, current_best_score);
             
-            // 🔥 强制采用阶段3结果
-            final_pose = stage3_pose;
-            if (stage3_fitness < stage2_final_fitness) {
-                RCLCPP_INFO(get_logger(), "   ✅ 阶段3改善了结果 (Δ=%.4f)", stage2_final_fitness - stage3_fitness);
+            if (use_last_ndt_result || stage3_combined_score < current_best_score) {
+                final_pose = stage3_pose;
             } else {
-                RCLCPP_WARN(get_logger(), "   ⚠️ 阶段3精度变差 (Δ=+%.4f)，但仍强制采用", stage3_fitness - stage2_final_fitness);
+                final_pose = current_best_pose;
+            }
+            if (stage3_combined_score < current_best_score) {
+                RCLCPP_INFO(get_logger(), "   ✅ 阶段3改善了结果 (Δ=%.4f)", current_best_score - stage3_combined_score);
+            } else {
+                if (use_last_ndt_result) {
+                    RCLCPP_WARN(get_logger(), "   ⚠️ 阶段3质量变差 (Δ=+%.4f)，但 use_last_ndt_result=true，仍采用阶段3", stage3_combined_score - current_best_score);
+                } else {
+                    RCLCPP_WARN(get_logger(), "   ⚠️ 阶段3质量变差 (Δ=+%.4f)，use_last_ndt_result=false，保留前面更优结果", stage3_combined_score - current_best_score);
+                }
             }
             
             // 直接输出 NDT 最终结果
-            double ndt_final_fitness = computeFitnessScore(scan_cloud, final_pose);
-            RCLCPP_INFO(get_logger(), "📊 三阶段纯 NDT 最终几何质量: %.4f", ndt_final_fitness);
+            AlignmentQualityMetrics final_quality = evaluateAlignmentQuality(
+                scan_cloud, final_pose, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+            double final_ndt_score = (final_pose.isApprox(stage3_pose, 1e-5f)) ? stage3_score
+                                  : (final_pose.isApprox(stage2_pose, 1e-5f) ? stage2_score : stage1_score);
+            double final_combined_score = computeCombinedAlignmentScore(
+                final_quality, final_ndt_score, eval_trimmed_weight, eval_inlier_weight, eval_ndt_weight);
+            RCLCPP_INFO(get_logger(), "📊 三阶段纯 NDT 最终质量: score=%.4f trim=%.4f inlier=%.3f ndt=%.3f",
+                       final_combined_score, final_quality.trimmed_distance,
+                       final_quality.inlier_ratio, final_ndt_score);
         } else {
             RCLCPP_WARN(get_logger(), "⚠️ GICP 已启用 (不推荐!)，跳过 NDT 阶段3");
         }

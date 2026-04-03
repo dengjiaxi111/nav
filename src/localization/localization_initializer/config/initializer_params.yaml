@@ -22,27 +22,38 @@
     # 强制使用最后一次 NDT 配准结果：
     # - true: 无论 fitness 如何，都采用最后一次 NDT 输出
     # 注意：如果遇到“初始指得准，但配准后飞掉”的情况，建议结合下方的空间过滤与降采样参数调整！
-    use_last_ndt_result: true
+    use_last_ndt_result: false
 
     # 是否在多帧累积并降采样后再应用空间过滤（推荐 true）
     apply_spatial_filter_after_accumulation: true
 
     # ==================== Yaw 多假设验证 (Yaw Seed Search) ====================
     # 在三阶段 NDT 前，以用户给定 yaw 为中心，在 [yaw0-Δ, yaw0+Δ] 范围批量尝试候选朝向，
-    # 用粗分辨率 NDT 少量迭代快速评分，选最优 yaw 作为三阶段 NDT 的初始值。
+    # 用粗分辨率 NDT 少量迭代后，再结合 trimmed distance / inlier ratio / NDT score 做组合评分。
     # 🔴 调参提示：step_deg 越小越精确但越慢。Δ=15°/step=2° → 15个候选，约 2~4 秒。
-    yaw_seed_enable: false             # 是否启用 yaw 多假设验证
+    yaw_seed_enable: true             # 是否启用 yaw 多假设验证
     yaw_seed_half_range_deg: 15.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
     yaw_seed_step_deg: 2.0            # 搜索步长（度），越小越精确
     yaw_seed_ndt_resolution: 1.05     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）
-    yaw_seed_ndt_max_iter: 10          # 评分用的 NDT 最大迭代次数（少量迭代够了）
-    # 评分置信度阈值：所有候选的 best_score 都高于此值时，说明评分不可信（点云质量差/位置偏差太大）
-    # 此时放弃 yaw-seed 结果，保留用户原始给定的 yaw，直接进入三阶段 NDT
-    # 🔴 调参提示：这个值取决于你的 seed_ndt_resolution 和场景。
-    #   典型值：粗 NDT(res=1.2m, iter=5) 时，正常配准 score ≈ 0.3~2.0，
-    #   若所有候选 score > yaw_seed_fallback_threshold，说明评分完全不可信，回退到原始 yaw。
-    #   建议先看日志里 Top-5 的 fitness 值，取正常场景下最差值的 2 倍作为阈值。
-    yaw_seed_fallback_threshold: 15.0  # 回退阈值：best_score 超过此值时保留原始 yaw
+    yaw_seed_ndt_max_iter: 15          # 评分用的 NDT 最大迭代次数（少量迭代够了）
+    # yaw 候选评估参数：trimmed_distance 越小越好，inlier_ratio 越大越好，ndt_score 仅作辅助
+    yaw_seed_eval_max_correspondence_dist: 0.60
+    yaw_seed_eval_trim_ratio: 0.70
+    yaw_seed_inlier_ratio_weight: 0.27
+    yaw_seed_ndt_score_weight: 0.03
+    # 置信度回退阈值：若最优候选 trimmed_distance 太差 / inlier_ratio 太低 / ndt_score 太离谱，则回退
+    yaw_seed_min_inlier_ratio: 0.20
+    yaw_seed_max_trimmed_distance: 0.45
+    yaw_seed_fallback_threshold: 15.0  # 这里现在表示 ndt_score 的上限兜底阈值
+
+    # 三阶段 NDT 的质量评估也统一用组合评分：
+    # score = w_trim * trimmed_distance - w_inlier * inlier_ratio + w_ndt * ndt_score
+    # 其中 trimmed_distance 越小越好，inlier_ratio 越大越好，ndt_score 只作辅助参考。
+    ndt_eval_max_correspondence_dist: 0.60
+    ndt_eval_trim_ratio: 0.70
+    ndt_eval_trimmed_distance_weight: 0.73
+    ndt_eval_inlier_ratio_weight: 0.22
+    ndt_eval_ndt_score_weight: 0.05
 
     # ==================== 三阶段 NDT 配准参数 ====================
     # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
