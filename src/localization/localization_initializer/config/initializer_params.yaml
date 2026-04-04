@@ -5,7 +5,7 @@
   ros__parameters:
     # ==================== 地图与初始位姿 ====================
     # 官方提供的 PCD 地图文件路径（绝对路径）
-    map_file: "/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd"
+    map_file: "/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd"
 
     # 手动设置初始位姿（如果 auto_initialize=true）
     initial_x: 0.0
@@ -29,20 +29,31 @@
 
     # ==================== Yaw 多假设验证 (Yaw Seed Search) ====================
     # 在三阶段 NDT 前，以用户给定 yaw 为中心，在 [yaw0-Δ, yaw0+Δ] 范围批量尝试候选朝向，
-    # 用粗分辨率 NDT 少量迭代快速评分，选最优 yaw 作为三阶段 NDT 的初始值。
+    # 用粗分辨率 NDT 少量迭代后，再结合 trimmed distance / inlier ratio / NDT score 做组合评分。
     # 🔴 调参提示：step_deg 越小越精确但越慢。Δ=15°/step=2° → 15个候选，约 2~4 秒。
-    yaw_seed_enable: false             # 是否启用 yaw 多假设验证
+    yaw_seed_enable: true             # 是否启用 yaw 多假设验证
     yaw_seed_half_range_deg: 15.0     # 搜索半径（度），在先验 yaw 左右各搜索此范围
     yaw_seed_step_deg: 2.0            # 搜索步长（度），越小越精确
     yaw_seed_ndt_resolution: 1.05     # 评分用的粗 NDT 分辨率（比 stage1 更粗，跑得快）
-    yaw_seed_ndt_max_iter: 10          # 评分用的 NDT 最大迭代次数（少量迭代够了）
-    # 评分置信度阈值：所有候选的 best_score 都高于此值时，说明评分不可信（点云质量差/位置偏差太大）
-    # 此时放弃 yaw-seed 结果，保留用户原始给定的 yaw，直接进入三阶段 NDT
-    # 🔴 调参提示：这个值取决于你的 seed_ndt_resolution 和场景。
-    #   典型值：粗 NDT(res=1.2m, iter=5) 时，正常配准 score ≈ 0.3~2.0，
-    #   若所有候选 score > yaw_seed_fallback_threshold，说明评分完全不可信，回退到原始 yaw。
-    #   建议先看日志里 Top-5 的 fitness 值，取正常场景下最差值的 2 倍作为阈值。
-    yaw_seed_fallback_threshold: 15.0  # 回退阈值：best_score 超过此值时保留原始 yaw
+    yaw_seed_ndt_max_iter: 15          # 评分用的 NDT 最大迭代次数（少量迭代够了）
+    # yaw 候选评估参数：trimmed_distance 越小越好，inlier_ratio 越大越好，ndt_score 仅作辅助
+    yaw_seed_eval_max_correspondence_dist: 0.60
+    yaw_seed_eval_trim_ratio: 0.70
+    yaw_seed_inlier_ratio_weight: 0.27
+    yaw_seed_ndt_score_weight: 0.03
+    # 置信度回退阈值：若最优候选 trimmed_distance 太差 / inlier_ratio 太低 / ndt_score 太离谱，则回退
+    yaw_seed_min_inlier_ratio: 0.20
+    yaw_seed_max_trimmed_distance: 0.45
+    yaw_seed_fallback_threshold: 15.0  # 这里现在表示 ndt_score 的上限兜底阈值
+
+    # 三阶段 NDT 的质量评估也统一用组合评分：
+    # score = w_trim * trimmed_distance - w_inlier * inlier_ratio + w_ndt * ndt_score
+    # 其中 trimmed_distance 越小越好，inlier_ratio 越大越好，ndt_score 只作辅助参考。
+    ndt_eval_max_correspondence_dist: 0.60
+    ndt_eval_trim_ratio: 0.70
+    ndt_eval_trimmed_distance_weight: 0.73
+    ndt_eval_inlier_ratio_weight: 0.22
+    ndt_eval_ndt_score_weight: 0.05
 
     # ==================== 三阶段 NDT 配准参数 ====================
     # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
@@ -90,6 +101,17 @@
     accumulate_frames: 4
     accumulate_duration: 3.0
 
+    # ==================== 时序稳定性过滤（拖影过滤） ====================
+    # 按体素统计“跨多少帧重复出现”，只保留稳定出现的体素。
+    # 对 3 秒累积产生的人/机器人拖影通常很有效，因为拖影沿路径每段只会短暂出现 1~2 帧。
+    temporal_filter_enable: true
+    # 体素越大，越容易把近邻点合并为“稳定体素”；太大也可能把拖影和墙边混在一起。
+    temporal_filter_voxel_size: 0.15
+    # 最少命中帧数。若点云频率较高且拖影很多，可以从 3 提到 4。
+    temporal_filter_min_hits: 4
+    # 最低命中帧占比。最终生效阈值是 max(min_hits, ceil(num_frames * min_hit_ratio))。
+    temporal_filter_min_hit_ratio: 0.15
+
     # ==================== 空间过滤 (按雷达底盘坐标系) ===================
     # 很多室内场地的地图没有天花板或者地面标高与雷达真实高度不一致！
     # 如果 filter_z_min 太高或 filter_z_max 过大，导致把地面的点和地图的立柱对齐，或者把天花板对齐进去，就会把正确的初值带飞。
@@ -102,4 +124,52 @@
     # 注意：下面是相对雷达的高度，若雷达离地 0.4m，那地面在 -0.4。这里建议收紧！
     filter_z_min: -0.52   # 试试改成 0.1，过滤掉整个下半部分干扰
     filter_z_max: 2.5     # 试试改成 1.5，过滤掉高层杂点
+
+    # ==================== 基于法向量的地面过滤 ====================
+    # 先按空间范围裁剪，再估计法向量；满足“法向接近 z 轴 + 高度较低 + 曲率较小”的点会被视为地面。
+    ground_filter_enable: true
+    # 半径越大，法向越平滑；太大容易把小坡面/低矮障碍也当地面
+    ground_normal_radius: 0.22
+    # 越大越严格，只有法向非常接近 z 轴的点才会被删
+    ground_normal_z_threshold: 0.93
+    # 相对 lidar 的最高“地面高度”；调高会删掉更多低矮点，调低则更保守
+    ground_max_height: -0.02
+    # 越小越严格，只删非常平的区域；若误删坡面/边缘，可适当调大
+    ground_max_curvature: 0.10
+
+    # ==================== Multi-radius DBSCAN 动态障碍过滤 ====================
+    # 按点到 lidar 的距离切换聚类半径/最小点数，再根据簇的几何特征删除疑似人/机器人等动态障碍。
+    cluster_filter_enable: true
+    # 按距离切三档；近处点更密，远处点更稀
+    cluster_near_range: 4.0
+    cluster_mid_range: 8.0
+    # epsilon 越大越容易把拖影/相邻物体并成一簇；如果小簇断开，就先适当调大
+    cluster_near_epsilon: 0.20
+    cluster_mid_epsilon: 0.36
+    cluster_far_epsilon: 0.38
+    # min_points 越大越严格；如果“根本聚不出来”，优先往下调
+    cluster_near_min_points: 9
+    cluster_mid_min_points: 8
+    cluster_far_min_points: 5
+    cluster_occupancy_voxel_size: 0.12
+    # 只优先删近中距离动态物体；太远的簇稀疏且不稳定，容易误判
+    cluster_dynamic_max_range: 10.0
+    # 最低高度阈值；若小簇很矮但想保留下来参与判断，可以适当调低
+    cluster_dynamic_min_height: 0.20
+    cluster_dynamic_max_height: 2.00
+    # 宽深体积上限越大，越容易把静态结构也纳入“动态障碍候选”
+    cluster_dynamic_max_width: 2.00
+    cluster_dynamic_max_depth: 1.50
+    cluster_dynamic_max_volume: 2.50
+    # 密度/占据率越小越容易删；如果降采样后小簇太稀，可继续适当调低
+    cluster_dynamic_min_density: 18.0
+    cluster_dynamic_min_occupancy_ratio: 0.008
+    # 点数上限主要防止整面墙/大结构被误删
+    cluster_dynamic_max_points: 3500
+    # 聚类前单独做一次更粗的降采样，只影响 DBSCAN 速度，不直接影响最终 NDT 点云
+    # 若小簇明显变稀或聚不出来，可先把它收小到 0.12~0.14
+    cluster_pre_voxel_size: 0.14
+    cluster_visualization_enable: true
+    # RViz 中簇编号文字大小
+    cluster_label_scale: 0.35
 

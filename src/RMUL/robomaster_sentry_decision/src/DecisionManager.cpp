@@ -62,7 +62,7 @@ void DecisionManager::transitionTo(State new_state) {
         case State::ATTACKING:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(gimbal_mode, SPIN_ON);
+            blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF);
             break;
         case State::SUPPLYING:
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
