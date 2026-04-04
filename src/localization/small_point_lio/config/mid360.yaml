@@ -23,7 +23,7 @@ small_point_lio:
         check_satu: true                           # 是否开启IMU的数据饱和检查
         satu_acc: 3.5                              # IMU的加速度饱和阈值
         satu_gyro: 35.0                            # IMU的角速度饱和阈值
-        acc_norm: 9.81                              # IMU的加速度模长
+        acc_norm: 1.0                              # IMU的加速度模长
 
         # 地图
         map_resolution: 0.5                        # 地图分辨率

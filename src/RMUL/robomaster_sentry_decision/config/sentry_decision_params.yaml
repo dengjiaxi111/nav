@@ -1,7 +1,7 @@
 # 攻击点（单位：cm）
-red_attack_x: 676.0
+red_attack_x: 600.0
 red_attack_y: 400.0
-blue_attack_x: 517.4
+blue_attack_x: 600.4
 blue_attack_y: 400.0
 
 # 补给点（单位：cm）
@@ -17,7 +17,7 @@ arrival_wait_time: 1.0
 supply_threshold: 0.3
 
 # 偏移检测阈值（单位：cm，与目标点的距离）
-deviation_threshold: 50.0
+deviation_threshold: 110.0
 
 # Z 值计算权重
 hp_weight: 1.0

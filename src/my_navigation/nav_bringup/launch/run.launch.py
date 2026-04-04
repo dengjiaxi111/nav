@@ -133,6 +133,7 @@ def generate_launch_description():
         parameters=[
             loc_init_config,
             {'auto_initialize': 'false'},
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
         ],
         remappings=[
             ('/cloud_registered', '/cloud_registered'),

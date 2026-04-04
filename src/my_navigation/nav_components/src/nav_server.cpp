@@ -78,6 +78,8 @@ public:
         declare_parameter("escape.trigger_costmap_threshold", 99);
         declare_parameter("escape.target_safe_esdf", 0.3);
         declare_parameter("escape.search_radius", 5.0);
+        declare_parameter("escape.preferred_search_distance", 1.0);
+        declare_parameter("escape.preferred_search_half_angle", 0.35);
         declare_parameter("escape.rotation_speed", 0.3);
         declare_parameter("escape.forward_speed", 0.15);
         declare_parameter("escape.yaw_tolerance", 0.1);
@@ -87,11 +89,32 @@ public:
         escape_trigger_costmap_threshold_ = get_parameter("escape.trigger_costmap_threshold").as_int();
         escape_target_safe_esdf_ = get_parameter("escape.target_safe_esdf").as_double();
         escape_search_radius_ = get_parameter("escape.search_radius").as_double();
+        escape_preferred_search_distance_ = get_parameter("escape.preferred_search_distance").as_double();
+        escape_preferred_search_half_angle_ = get_parameter("escape.preferred_search_half_angle").as_double();
         escape_rotation_speed_ = get_parameter("escape.rotation_speed").as_double();
         escape_forward_speed_ = get_parameter("escape.forward_speed").as_double();
         escape_yaw_tolerance_ = get_parameter("escape.yaw_tolerance").as_double();
         escape_position_tolerance_ = get_parameter("escape.position_tolerance").as_double();
         escape_timeout_ = get_parameter("escape.timeout").as_double();
+
+        if (escape_preferred_search_distance_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "escape.preferred_search_distance=%.3f 非法，自动修正为0.0",
+                        escape_preferred_search_distance_);
+            escape_preferred_search_distance_ = 0.0;
+        }
+        if (escape_preferred_search_half_angle_ < 0.0) {
+            RCLCPP_WARN(get_logger(),
+                        "escape.preferred_search_half_angle=%.3f 非法，自动修正为0.0",
+                        escape_preferred_search_half_angle_);
+            escape_preferred_search_half_angle_ = 0.0;
+        }
+        if (escape_preferred_search_half_angle_ > (M_PI * 0.5)) {
+            RCLCPP_WARN(get_logger(),
+                        "escape.preferred_search_half_angle=%.3f 过大，自动修正为pi/2",
+                        escape_preferred_search_half_angle_);
+            escape_preferred_search_half_angle_ = M_PI * 0.5;
+        }
         
         // === 坐标系配置 ===
         declare_parameter("map_file", "");
@@ -127,6 +150,8 @@ public:
         RCLCPP_INFO(get_logger(), "escape.trigger_costmap_threshold: %d", escape_trigger_costmap_threshold_);
         RCLCPP_INFO(get_logger(), "escape.target_safe_esdf: %.2f m", escape_target_safe_esdf_);
         RCLCPP_INFO(get_logger(), "escape.search_radius: %.1f m", escape_search_radius_);
+        RCLCPP_INFO(get_logger(), "escape.preferred_search_distance: %.2f m", escape_preferred_search_distance_);
+        RCLCPP_INFO(get_logger(), "escape.preferred_search_half_angle: %.2f rad", escape_preferred_search_half_angle_);
         RCLCPP_INFO(get_logger(), "escape.rotation_speed: %.2f rad/s", escape_rotation_speed_);
         RCLCPP_INFO(get_logger(), "escape.forward_speed: %.2f m/s", escape_forward_speed_);
         RCLCPP_INFO(get_logger(), "========================================");
@@ -1279,6 +1304,40 @@ private:
     void doEscaping() {
         // 脱困模式：搜索最近的安全点，原地转向后直线前往
         // 策略：BFS 搜索 ESDF > target_safe_esdf 的格子，差速底盘先转向再前进
+
+        auto isPoseSafeForEscape = [this](double wx, double wy) {
+            if (!map_manager_ || !map_manager_->hasEsdf()) {
+                return false;
+            }
+
+            auto costmap = map_manager_->getCostmap();
+            if (!costmap) {
+                return false;
+            }
+
+            double gx = 0.0;
+            double gy = 0.0;
+            const double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
+            if (esdf_dist <= escape_target_safe_esdf_) {
+                return false;
+            }
+
+            const double resolution = costmap->info.resolution;
+            const double origin_x = costmap->info.origin.position.x;
+            const double origin_y = costmap->info.origin.position.y;
+            const int width = static_cast<int>(costmap->info.width);
+            const int height = static_cast<int>(costmap->info.height);
+
+            const int mx = static_cast<int>((wx - origin_x) / resolution);
+            const int my = static_cast<int>((wy - origin_y) / resolution);
+            if (mx < 0 || mx >= width || my < 0 || my >= height) {
+                return false;
+            }
+
+            const int idx = my * width + mx;
+            const int8_t cost = costmap->data[idx];
+            return cost < escape_trigger_costmap_threshold_;
+        };
         
         double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - escape_start_time_).count();
@@ -1320,11 +1379,13 @@ private:
         double dy = escape_target_y_ - current_pose_.pose.position.y;
         double target_yaw = std::atan2(dy, dx);
         double dist_to_target = std::hypot(dx, dy);
-        
-        // 归一化角度差
-        double yaw_error = target_yaw - yaw;
-        while (yaw_error > M_PI) yaw_error -= 2 * M_PI;
-        while (yaw_error < -M_PI) yaw_error += 2 * M_PI;
+
+        // 对齐策略：允许前进/倒车，选择最小旋转角
+        const double yaw_error_forward = normalizeAngle(target_yaw - yaw);
+        const double yaw_error_reverse = normalizeAngle(target_yaw + M_PI - yaw);
+        const bool prefer_reverse = std::abs(yaw_error_reverse) < std::abs(yaw_error_forward);
+        escape_drive_direction_ = prefer_reverse ? -1 : 1;
+        const double yaw_error = prefer_reverse ? yaw_error_reverse : yaw_error_forward;
         
         geometry_msgs::msg::Twist cmd;
         
@@ -1334,7 +1395,9 @@ private:
                 cmd.angular.z = std::copysign(escape_rotation_speed_, yaw_error);
                 cmd_vel_pub_->publish(cmd);
                 RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-                    "阶段0: 旋转对齐, yaw_error=%.2f°", yaw_error * 180.0 / M_PI);
+                    "阶段0: 旋转对齐(%s), yaw_error=%.2f°",
+                    (escape_drive_direction_ > 0 ? "前进" : "倒车"),
+                    yaw_error * 180.0 / M_PI);
             } else {
                 escape_phase_ = 1;
             }
@@ -1345,25 +1408,35 @@ private:
         if (escape_phase_ == 1) {
             // 检查是否到达目标
             if (dist_to_target < escape_position_tolerance_) {
-                RCLCPP_INFO(get_logger(), "脱困成功");
-                stopRobot();
-                escape_target_x_ = -1.0;  // 重置目标
-                fsm_.transitionTo(nav_core::NavState::PLANNING);
+                const bool safe_now = isPoseSafeForEscape(
+                    current_pose_.pose.position.x,
+                    current_pose_.pose.position.y);
+
+                if (safe_now) {
+                    RCLCPP_INFO(get_logger(), "脱困成功");
+                    stopRobot();
+                    escape_target_x_ = -1.0;  // 重置目标
+                    fsm_.transitionTo(nav_core::NavState::PLANNING);
+                } else {
+                    RCLCPP_WARN(get_logger(),
+                                "到达脱困点容差范围(%.2fm)但当前位置仍不安全，重新搜索目标 "
+                                "(position_tolerance=%.2f)",
+                                dist_to_target,
+                                escape_position_tolerance_);
+                    stopRobot();
+                    escape_target_x_ = -1.0;  // 触发下一周期重新选点
+                    escape_phase_ = 0;
+                }
                 return;
             }
             
             // 检查是否已经进入安全区域（提前退出）
-            if (map_manager_ && map_manager_->hasEsdf()) {
-                double gx, gy;  // 梯度（不使用）
-                double esdf_dist = map_manager_->getEsdfDistanceWithGradient(
-                    current_pose_.pose.position.x, current_pose_.pose.position.y,
-                    &gx, &gy);
-                if (esdf_dist > escape_target_safe_esdf_) {
-                    stopRobot();
-                    escape_target_x_ = -1.0;
-                    fsm_.transitionTo(nav_core::NavState::PLANNING);
-                    return;
-                }
+            if (isPoseSafeForEscape(current_pose_.pose.position.x,
+                                    current_pose_.pose.position.y)) {
+                stopRobot();
+                escape_target_x_ = -1.0;
+                fsm_.transitionTo(nav_core::NavState::PLANNING);
+                return;
             }
             
             // 前进时保持方向修正（轻微转向）
@@ -1375,18 +1448,103 @@ private:
                 return;
             }
             
-            cmd.linear.x = escape_forward_speed_;
+            cmd.linear.x = static_cast<double>(escape_drive_direction_) * escape_forward_speed_;
             cmd.angular.z = std::copysign(std::min(0.1, std::abs(yaw_error)), yaw_error);  // 轻微修正
             cmd_vel_pub_->publish(cmd);
             
             RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-                "阶段1: 前进中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs", 
+                "阶段1: %s中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs", 
+                (escape_drive_direction_ > 0 ? "前进" : "倒车"),
                 dist_to_target, yaw_error * 180.0 / M_PI, elapsed);
         }
     }
+
+    bool findDirectionalEscapeTarget() {
+        if (!map_manager_ || !map_manager_->hasEsdf()) {
+            return false;
+        }
+
+        auto costmap = map_manager_->getCostmap();
+        if (!costmap) {
+            return false;
+        }
+
+        tf2::Quaternion q;
+        tf2::fromMsg(current_pose_.pose.orientation, q);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        const double resolution = costmap->info.resolution;
+        const double origin_x = costmap->info.origin.position.x;
+        const double origin_y = costmap->info.origin.position.y;
+        const int width = static_cast<int>(costmap->info.width);
+        const int height = static_cast<int>(costmap->info.height);
+
+        const double max_dist = std::max(0.0, escape_preferred_search_distance_);
+        if (max_dist <= 0.0) {
+            return false;
+        }
+
+        const double half_angle = std::clamp(escape_preferred_search_half_angle_, 0.0, M_PI * 0.5);
+        const int angular_samples = std::max(1, static_cast<int>(std::ceil(half_angle / 0.0872664626)));  // ~5度
+        const int radial_samples = std::max(1, static_cast<int>(std::ceil(max_dist / std::max(0.05, resolution))));
+
+        for (int r_idx = 1; r_idx <= radial_samples; ++r_idx) {
+            const double r = max_dist * static_cast<double>(r_idx) / static_cast<double>(radial_samples);
+            for (int a_idx = -angular_samples; a_idx <= angular_samples; ++a_idx) {
+                const double angle_offset = (angular_samples > 0)
+                    ? (half_angle * static_cast<double>(a_idx) / static_cast<double>(angular_samples))
+                    : 0.0;
+
+                for (int dir = 0; dir < 2; ++dir) {
+                    const double base_heading = (dir == 0) ? yaw : normalizeAngle(yaw + M_PI);
+                    const double heading = base_heading + angle_offset;
+                    const double wx = current_pose_.pose.position.x + r * std::cos(heading);
+                    const double wy = current_pose_.pose.position.y + r * std::sin(heading);
+
+                    const int mx = static_cast<int>((wx - origin_x) / resolution);
+                    const int my = static_cast<int>((wy - origin_y) / resolution);
+                    if (mx < 0 || mx >= width || my < 0 || my >= height) {
+                        continue;
+                    }
+
+                    const int idx = my * width + mx;
+                    const int8_t cost = costmap->data[idx];
+
+                    double gx = 0.0;
+                    double gy = 0.0;
+                    const double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
+
+                    if (esdf_dist > escape_target_safe_esdf_ && cost < 99) {
+                        escape_target_x_ = wx;
+                        escape_target_y_ = wy;
+                        RCLCPP_INFO(get_logger(),
+                                    "✅ 定向搜索命中安全点: (%.2f, %.2f), dir=%s, r=%.2fm, angle=%.1f°, ESDF=%.3f",
+                                    wx,
+                                    wy,
+                                    (dir == 0 ? "+X" : "-X"),
+                                    r,
+                                    angle_offset * 180.0 / M_PI,
+                                    esdf_dist);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
     
-    // 搜索安全脱困点（BFS 螺旋搜索 ESDF > threshold 的格子）
+    // 搜索安全脱困点：先在 base_link ±X 方向小角度范围定向搜索，再回退到环形搜索
     bool findSafeEscapeTarget() {
+        if (findDirectionalEscapeTarget()) {
+            return true;
+        }
+
+        RCLCPP_WARN(get_logger(),
+                    "定向搜索未命中，回退到环形搜索 (radius=%.2fm)",
+                    escape_search_radius_);
+
         if (!map_manager_ || !map_manager_->hasEsdf()) {
             RCLCPP_ERROR(get_logger(), "ESDF 地图不可用，无法搜索安全点");
             return false;
@@ -1797,7 +1955,9 @@ private:
     // 脱困系统参数
     int escape_trigger_costmap_threshold_;  // Costmap 触发阈值
     double escape_target_safe_esdf_;        // 目标 ESDF 距离
-    double escape_search_radius_;           // BFS 搜索半径
+    double escape_search_radius_;           // 环形搜索半径
+    double escape_preferred_search_distance_;  // 定向搜索距离
+    double escape_preferred_search_half_angle_;  // 定向搜索半角(rad)
     double escape_rotation_speed_;          // 旋转速度
     double escape_forward_speed_;           // 前进速度
     double escape_yaw_tolerance_;           // 角度容差
@@ -1814,6 +1974,7 @@ private:
     double escape_target_x_ = -1.0;  // 脱困目标点 X（-1表示未设置）
     double escape_target_y_ = -1.0;  // 脱困目标点 Y
     int escape_phase_ = 0;  // 脱困阶段：0=旋转, 1=前进
+    int escape_drive_direction_ = 1;  // 脱困驱动方向：1=前进, -1=倒车
 };
 
 int main(int argc, char** argv) {

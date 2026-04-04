@@ -22,7 +22,7 @@
     # 强制使用最后一次 NDT 配准结果：
     # - true: 无论 fitness 如何，都采用最后一次 NDT 输出
     # 注意：如果遇到“初始指得准，但配准后飞掉”的情况，建议结合下方的空间过滤与降采样参数调整！
-    use_last_ndt_result: true
+    use_last_ndt_result: false
 
     # 是否在多帧累积并降采样后再应用空间过滤（推荐 true）
     apply_spatial_filter_after_accumulation: true
@@ -48,14 +48,14 @@
     # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
     # 导致被地面、天花板或外围噪点带偏。
     # 尝试把 stage1_resolution 改小（比如 0.8 或 0.6），防止大网格吸收过多错误特征。
-    ndt_stage1_resolution: 1.00
-    ndt_stage2_resolution: 0.75    
-    ndt_stage3_resolution: 0.40     
+    ndt_stage1_resolution: 0.0
+    ndt_stage2_resolution: 0.0    
+    ndt_stage3_resolution: 0.3    
 
     # 收敛参数
     ndt_max_iterations: 80
     ndt_transformation_epsilon: 0.005
-    ndt_step_size: 0.03             # 如果容易发散/非局部跳跃，可以调小（如 0.05）
+    ndt_step_size: 0.05             # 如果容易发散/非局部跳跃，可以调小（如 0.05）
 
     # 高级优化（邻域策略）
     # ndt_enable_linked_cells:
