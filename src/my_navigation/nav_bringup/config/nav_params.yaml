@@ -5,7 +5,7 @@ nav_server:
     # 静态重定位开关 (true: 从RViz的"2D Pose Estimate"接收初始位姿并作为固定的map->odom; false: 实际场地使用NDT重定位)
     use_static_map_odom: true
     # 调试开关：重定位或给初始位姿后强制 odom==base_link（仅用于路径规划调试）
-    debug_reset_odom_to_base_link: false
+    debug_reset_odom_to_base_link: true
     
     # 地图路径由 navigation.launch.py 注入
     map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
@@ -54,7 +54,7 @@ nav_server:
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
-      enable_stair_layer: true
+      enable_stair_layer: false
       # stair_mask_yaml: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"   # 由 navigation.launch.py 注入
       stair_clear_perp_dist_m: 0.15 # 台阶边沿清理距离(米)，清除台阶边沿一定宽度内的障碍物标记，防止过于靠近边沿导致误判无法通过
       stair_clear_perp_high_dist_m: -1.0  # 高侧法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
@@ -166,7 +166,7 @@ nav_server:
     nmpc:
       # 注意: N_horizon/T_horizon、QP/LM 等仍由 acados 生成 solver 固化
       # 下方 Q/R/ESDF/contouring 参数已接入运行时注入，修改 YAML 可直接生效
-      
+      是为了弥补MPC求解器计算的延迟、系统通信延迟与下位机
       # === 运动约束 ===
       max_linear_vel: 1.8        # 最大线速度 (m/s) 
       max_angular_vel: 3.5       # 最大角速度 (rad/s)
@@ -208,8 +208,9 @@ nav_server:
       curvature_decay_min_factor: 0.9    # 曲率衰减最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
       # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
-      vel_lag_tau: 0.5           # 线速度一阶滞后时间常数(s)
+      vel_lag_tau: 0.25           # 线速度一阶滞后时间常数(s)
       omega_lag_tau: 0.15        # 角速度一阶滞后时间常数(s)
+      output_preview_time: 0.2  # 输出前瞻时间(s)，从预测轨迹中取未来命令补偿相位滞后
       lateral_error_threshold: 0.1  # 横向误差阈值 (m)，超过时启用速度缩减策略
 
       # === 代价权重（运行时生效） ===

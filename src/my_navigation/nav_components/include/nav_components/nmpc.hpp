@@ -87,6 +87,15 @@ private:
                              const std::vector<double>& x0);
 
     /**
+     * @brief 从 solver 预测轨迹中采样前瞻时刻的命令状态
+     * @param preview_time 前瞻时间 (秒)
+     * @param v_cmd 输出线速度命令
+     * @param omega_cmd 输出角速度命令
+     * @return true 表示采样成功
+     */
+    bool samplePreviewCommand(double preview_time, double& v_cmd, double& omega_cmd);
+
+    /**
      * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
      * 参数格式 p = [xref(7), d_esdf, weight_scale,
      *               q_pos, q_theta, q_vel, r_lin, r_ang,
@@ -208,6 +217,9 @@ private:
         // 底层闭环速度一阶滞后模型时间常数（秒）
         double vel_lag_tau = 0.6;
         double omega_lag_tau = 0.6;
+
+        // 输出前瞻时间：从预测轨迹中取未来该时刻的命令作为实际输出
+        double output_preview_time = 0.0;
     } params_;
     
     // ========== ROS 接口 ==========
