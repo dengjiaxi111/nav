@@ -945,7 +945,7 @@ private:
 
                 if (heading_aligned) {
                     stair_mode_release_counter_ = 0;
-                    publishStairMode(1, true);
+                    publishStairMode(2, true);
                 } else {
                     RCLCPP_INFO_THROTTLE(
                         get_logger(), *get_clock(), 500,
@@ -999,7 +999,7 @@ private:
             stair_mode_release_counter_ = 0;
             publishStairMode(0, true);
         } else {
-            publishStairMode(1, true);
+            publishStairMode(2, true);
         }
     }
 

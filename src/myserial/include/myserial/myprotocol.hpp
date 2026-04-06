@@ -155,7 +155,7 @@ namespace rm
             oss << std::endl;
 
             oss << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
-                oss << "  Stair Mode: " << static_cast<int>(_stair_mode) << std::endl;
+            oss << "  Stair Mode: " << static_cast<int>(_stair_mode) << std::endl;
 
             oss << "===========================================================" << std::endl;
             return oss.str();
@@ -170,13 +170,13 @@ namespace rm
     {
         uint8_t _sof = HEADER;
 
-        // 3B
+        // 6B
         /**
-         * @brief: 接收底盘运动相关数据  /50为真实速度
+         * @brief: 接收底盘运动相关数据
          */
-        int8_t _speed_x = 0;  
-        int8_t _speed_y = 0;
-        int8_t _speed_w = 0;
+        float _speed_x = 0;  
+        float _speed_y = 0;
+        float _speed_w = 0;
 
         /**
          * @brief: 接收自瞄相关数据 

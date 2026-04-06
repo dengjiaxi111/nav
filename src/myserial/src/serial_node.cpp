@@ -295,9 +295,9 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     }
 
     // ------------------ ChassisOdom ------------------
-    chassis_odom_speed_.speed_x = static_cast<float>(msg._speed_x) / 50;
-    chassis_odom_speed_.speed_y = static_cast<float>(msg._speed_y) / 50;
-    chassis_odom_speed_.speed_w = static_cast<float>(msg._speed_w) / 50;
+    chassis_odom_speed_.speed_x = static_cast<float>(msg._speed_x);
+    chassis_odom_speed_.speed_y = static_cast<float>(msg._speed_y);
+    chassis_odom_speed_.speed_w = static_cast<float>(msg._speed_w);
     chassis_odom_speed_.gimbal_angle = msg._base_yaw;
 
     chassis_odom_pub_->publish(chassis_odom_speed_);
