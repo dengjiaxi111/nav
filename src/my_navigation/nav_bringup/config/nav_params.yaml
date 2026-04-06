@@ -3,9 +3,9 @@
 nav_server:
   ros__parameters:
     # 静态重定位开关 (true: 从RViz的"2D Pose Estimate"接收初始位姿并作为固定的map->odom; false: 实际场地使用NDT重定位)
-    use_static_map_odom: true
+    use_static_map_odom: false
     # 调试开关：重定位或给初始位姿后强制 odom==base_link（仅用于路径规划调试）
-    debug_reset_odom_to_base_link: true
+    debug_reset_odom_to_base_link: false
     
     # 地图路径由 navigation.launch.py 注入
     map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
@@ -166,7 +166,6 @@ nav_server:
     nmpc:
       # 注意: N_horizon/T_horizon、QP/LM 等仍由 acados 生成 solver 固化
       # 下方 Q/R/ESDF/contouring 参数已接入运行时注入，修改 YAML 可直接生效
-      是为了弥补MPC求解器计算的延迟、系统通信延迟与下位机
       # === 运动约束 ===
       max_linear_vel: 1.8        # 最大线速度 (m/s) 
       max_angular_vel: 3.5       # 最大角速度 (rad/s)
@@ -210,7 +209,8 @@ nav_server:
       # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
       vel_lag_tau: 0.25           # 线速度一阶滞后时间常数(s)
       omega_lag_tau: 0.15        # 角速度一阶滞后时间常数(s)
-      output_preview_time: 0.2  # 输出前瞻时间(s)，从预测轨迹中取未来命令补偿相位滞后
+      vel_ff_time: 0.15          # 线速度输出前馈提前量(s)，v_out = v_cmd + vel_ff_time * a_cmd
+      omega_ff_time: 0.05        # 角速度输出前馈提前量(s)，w_out = w_cmd + omega_ff_time * alpha_cmd
       lateral_error_threshold: 0.1  # 横向误差阈值 (m)，超过时启用速度缩减策略
 
       # === 代价权重（运行时生效） ===

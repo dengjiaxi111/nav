@@ -60,7 +60,8 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
     node_->declare_parameter("nmpc.vel_lag_tau", params_.vel_lag_tau);
     node_->declare_parameter("nmpc.omega_lag_tau", params_.omega_lag_tau);
-    node_->declare_parameter("nmpc.output_preview_time", params_.output_preview_time);
+    node_->declare_parameter("nmpc.vel_ff_time", params_.vel_ff_time);
+    node_->declare_parameter("nmpc.omega_ff_time", params_.omega_ff_time);
     node_->declare_parameter("nmpc.lateral_error_threshold", params_.lateral_error_threshold);
 
     // 代价权重（运行时注入）
@@ -143,8 +144,9 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.vel_lag_tau = std::max(0.05, node_->get_parameter("nmpc.vel_lag_tau").as_double());
     params_.omega_lag_tau =
         std::max(0.05, node_->get_parameter("nmpc.omega_lag_tau").as_double());
-    params_.output_preview_time =
-        std::max(0.0, node_->get_parameter("nmpc.output_preview_time").as_double());
+    params_.vel_ff_time = std::max(0.0, node_->get_parameter("nmpc.vel_ff_time").as_double());
+    params_.omega_ff_time =
+        std::max(0.0, node_->get_parameter("nmpc.omega_ff_time").as_double());
     if (params_.heading_slowdown_start > params_.pivot_turn_heading_thresh) {
         params_.heading_slowdown_start = params_.pivot_turn_heading_thresh;
     }
@@ -222,8 +224,8 @@ void NMPC::initialize(rclcpp::Node* node) {
         "NMPC 一阶滞后: tau_v=%.3f s, tau_w=%.3f s",
         params_.vel_lag_tau, params_.omega_lag_tau);
     RCLCPP_INFO(node_->get_logger(),
-        "NMPC 输出前瞻: preview_time=%.3f s",
-        params_.output_preview_time);
+        "NMPC 输出前馈: vel_ff=%.3f s, omega_ff=%.3f s",
+        params_.vel_ff_time, params_.omega_ff_time);
     RCLCPP_INFO(node_->get_logger(),
         "NMPC 曲率降速: enable=%d, kappa_ref=%.3f, min_factor=%.2f",
         params_.enable_curvature_speed_decay,
@@ -415,18 +417,8 @@ nav_core::ControlResult NMPC::computeVelocity(
     double alpha_cmd = u_opt[1];
     double v_cmd = x0[5] + a_cmd * dt;
     double omega_cmd = x0[6] + alpha_cmd * dt;
-    if (params_.output_preview_time > 1e-6) {
-        double preview_v_cmd = v_cmd;
-        double preview_omega_cmd = omega_cmd;
-        if (samplePreviewCommand(params_.output_preview_time, preview_v_cmd, preview_omega_cmd)) {
-            v_cmd = preview_v_cmd;
-            omega_cmd = preview_omega_cmd;
-        } else {
-            RCLCPP_WARN_THROTTLE(
-                node_->get_logger(), *node_->get_clock(), 1000,
-                "NMPC: 输出前瞻采样失败，回退到首步命令");
-        }
-    }
+    v_cmd += params_.vel_ff_time * a_cmd;
+    omega_cmd += params_.omega_ff_time * alpha_cmd;
     const double ref_v0 = yref_sequence.front()[3];
     const double ref_omega0 = yref_sequence.front()[4];
     const double v_cmd_before_latch = v_cmd;
@@ -995,11 +987,11 @@ void NMPC::updateNMPCParameters() {
     }
     
     RCLCPP_INFO(node_->get_logger(), 
-        "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, tau_v=%.2f, tau_w=%.2f, preview=%.3f, reverse=%d, Qp=%.2f, Rl=%.3f",
+        "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, tau_v=%.2f, tau_w=%.2f, ff_v=%.3f, ff_w=%.3f, reverse=%d, Qp=%.2f, Rl=%.3f",
         params_.max_linear_vel, params_.max_angular_vel,
         params_.max_linear_accel, params_.max_angular_accel,
         params_.vel_lag_tau, params_.omega_lag_tau,
-        params_.output_preview_time,
+        params_.vel_ff_time, params_.omega_ff_time,
         params_.allow_reverse,
         params_.Q_position, params_.R_linear);
 }
@@ -1137,37 +1129,6 @@ void NMPC::publishPredictedPath(const std_msgs::msg::Header& header, const std::
     }
     
     predicted_path_pub_->publish(predicted_path);
-}
-
-bool NMPC::samplePreviewCommand(double preview_time, double& v_cmd, double& omega_cmd) {
-    if (!acados_ocp_capsule_ || N_horizon_ <= 0) {
-        return false;
-    }
-
-    const double dt = T_horizon_ / static_cast<double>(N_horizon_);
-    if (dt <= 1e-6) {
-        return false;
-    }
-
-    const double clamped_time = std::clamp(preview_time, 0.0, T_horizon_);
-    const double normalized_step = clamped_time / dt;
-    int lower_idx = static_cast<int>(std::floor(normalized_step));
-    lower_idx = std::clamp(lower_idx, 0, N_horizon_);
-    int upper_idx = std::min(lower_idx + 1, N_horizon_);
-    const double ratio = std::clamp(normalized_step - static_cast<double>(lower_idx), 0.0, 1.0);
-
-    ocp_nlp_config* nlp_config = wheelleg_nmpc_acados_get_nlp_config(acados_ocp_capsule_);
-    ocp_nlp_dims* nlp_dims = wheelleg_nmpc_acados_get_nlp_dims(acados_ocp_capsule_);
-    ocp_nlp_out* nlp_out = wheelleg_nmpc_acados_get_nlp_out(acados_ocp_capsule_);
-
-    double x_lower[7] = {0.0};
-    double x_upper[7] = {0.0};
-    ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, lower_idx, "x", x_lower);
-    ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, upper_idx, "x", x_upper);
-
-    v_cmd = (1.0 - ratio) * x_lower[5] + ratio * x_upper[5];
-    omega_cmd = (1.0 - ratio) * x_lower[6] + ratio * x_upper[6];
-    return true;
 }
 
 double NMPC::computeLocalMaxCurvature(int start_idx, int num_points) const {
