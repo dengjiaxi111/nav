@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <chrono>
+#include <limits>
 
 // acados solver C 接口
 extern "C" {
@@ -86,6 +87,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     
     // 可视化选项
     node_->declare_parameter("nmpc.publish_predicted_path", true);
+    node_->declare_parameter("nmpc.publish_speed_observation", true);
     
     // ========== 读取参数 ==========
     params_.max_linear_vel = node_->get_parameter("nmpc.max_linear_vel").as_double();
@@ -169,6 +171,8 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.near_weight_multiplier = node_->get_parameter("nmpc.near_weight_multiplier").as_double();
     
     bool publish_path = node_->get_parameter("nmpc.publish_predicted_path").as_bool();
+    bool publish_speed_observation =
+        node_->get_parameter("nmpc.publish_speed_observation").as_bool();
     
     // ========== 创建 acados solver ==========
     acados_ocp_capsule_ = wheelleg_nmpc_acados_create_capsule();
@@ -203,6 +207,11 @@ void NMPC::initialize(rclcpp::Node* node) {
         predicted_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
             "nmpc/predicted_path", 10);
     }
+    if (publish_speed_observation) {
+        speed_observation_pub_ =
+            node_->create_publisher<geometry_msgs::msg::TwistStamped>(
+                "nmpc/speed_observation", 20);
+    }
     
     // ========== 订阅里程计（来自 small_point_lio）==========
     // 用于获取真实速度反馈，实现闭环控制
@@ -211,6 +220,15 @@ void NMPC::initialize(rclcpp::Node* node) {
         odom_topic, rclcpp::SensorDataQoS(),
         std::bind(&NMPC::odomCallback, this, std::placeholders::_1));
     RCLCPP_INFO(node_->get_logger(), "NMPC: 订阅里程计话题 %s", odom_topic.c_str());
+
+    std::string chassis_odom_topic =
+        node_->declare_parameter("nmpc.chassis_odom_topic", "/ChassisOdom");
+    chassis_odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+        chassis_odom_topic, rclcpp::SensorDataQoS(),
+        std::bind(&NMPC::chassisOdomCallback, this, std::placeholders::_1));
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC: 订阅底盘观测话题 %s (仅调试，不参与控制)",
+        chassis_odom_topic.c_str());
     
     RCLCPP_INFO(node_->get_logger(), 
         "✓ NMPC Controller initialized (N=%d, T=%.2f s, dt=%.3f s)", 
@@ -231,6 +249,11 @@ void NMPC::initialize(rclcpp::Node* node) {
         params_.enable_curvature_speed_decay,
         params_.curvature_decay_kappa_ref,
         params_.curvature_decay_min_factor);
+    if (speed_observation_pub_) {
+        RCLCPP_INFO(node_->get_logger(),
+            "NMPC 观测发布: nmpc/speed_observation "
+            "(lx=cmd_v, ly=chassis_v, lz=v_pred_1step, ax=a_cmd, ay=tau_v, az=v_cmd_pred_1step)");
+    }
     
     initialized_ = true;
 }
@@ -478,6 +501,34 @@ nav_core::ControlResult NMPC::computeVelocity(
     cmd_vel.linear.x = v_cmd;
     cmd_vel.angular.z = omega_cmd;
 
+    if (speed_observation_pub_) {
+        geometry_msgs::msg::TwistStamped obs;
+        obs.header = current_pose.header;
+        if (obs.header.stamp.nanosec == 0 && obs.header.stamp.sec == 0) {
+            obs.header.stamp = node_->now();
+        }
+        obs.header.frame_id = "base_link";
+        obs.twist.linear.x = cmd_vel.linear.x;
+        obs.twist.linear.y = std::numeric_limits<double>::quiet_NaN();
+        obs.twist.linear.z = std::numeric_limits<double>::quiet_NaN();
+        obs.twist.angular.x = a_cmd;
+        obs.twist.angular.y = params_.vel_lag_tau;
+        obs.twist.angular.z = std::numeric_limits<double>::quiet_NaN();
+
+        {
+            std::lock_guard<std::mutex> lock(odom_mutex_);
+            if (chassis_odom_received_) {
+                obs.twist.linear.y = latest_chassis_odom_.twist.twist.linear.x;
+            }
+        }
+        if (predicted_stage1_valid_) {
+            obs.twist.linear.z = predicted_stage1_state_[3];
+            obs.twist.angular.z = predicted_stage1_state_[5];
+        }
+
+        speed_observation_pub_->publish(obs);
+    }
+
     if (std::abs(v_cmd) < 1e-3 && std::abs(omega_cmd) > 0.1) {
         RCLCPP_WARN_THROTTLE(
             node_->get_logger(), *node_->get_clock(), 500,
@@ -516,8 +567,10 @@ void NMPC::reset() {
     std::fill(last_control_.begin(), last_control_.end(), 0.0);
     stats_ = {};
     odom_received_ = false;
+    chassis_odom_received_ = false;
     goal_brake_latched_ = false;
     goal_brake_speed_cap_ = 1e9;
+    predicted_stage1_valid_ = false;
     
     // 重置 solver
     if (acados_ocp_capsule_) {
@@ -529,6 +582,12 @@ void NMPC::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(odom_mutex_);
     latest_odom_ = *msg;
     odom_received_ = true;
+}
+
+void NMPC::chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    latest_chassis_odom_ = *msg;
+    chassis_odom_received_ = true;
 }
 
 // ========== 私有方法实现 ==========
@@ -585,6 +644,15 @@ int NMPC::solveNMPC(
         double u[2];
         ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, 0, "u", u);
         u_opt = {u[0], u[1]};
+
+        double x1[7] = {0.0};
+        ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, 1, "x", x1);
+        for (int i = 0; i < 7; ++i) {
+            predicted_stage1_state_[i] = x1[i];
+        }
+        predicted_stage1_valid_ = true;
+    } else {
+        predicted_stage1_valid_ = false;
     }
     
     return status;

@@ -5,9 +5,11 @@
 #include <nav_core/controller_base.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <array>
 
 // 前向声明 acados solver (使用正确的类型名称)
 extern "C" {
@@ -126,9 +128,15 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     nav_msgs::msg::Odometry latest_odom_;
     bool odom_received_ = false;
+
+    // 底盘速度观测（来自嵌入式回传 /ChassisOdom）
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr chassis_odom_sub_;
+    nav_msgs::msg::Odometry latest_chassis_odom_;
+    bool chassis_odom_received_ = false;
     mutable std::mutex odom_mutex_;
     
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     
     // ========== acados Solver ==========
     wheelleg_nmpc_solver_capsule* acados_ocp_capsule_ = nullptr;
@@ -217,6 +225,14 @@ private:
     
     // ========== ROS 接口 ==========
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr predicted_path_pub_;
+    // 速度观测调试话题（线速度辨识专用）
+    // linear.x = cmd_vel.v, linear.y = /ChassisOdom.v, linear.z = v_pred_1step
+    // angular.x = a_cmd, angular.y = tau_v, angular.z = v_cmd_state_pred_1step
+    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr speed_observation_pub_;
+
+    // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, v_cmd, omega_cmd]
+    std::array<double, 7> predicted_stage1_state_{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+    bool predicted_stage1_valid_ = false;
     
     // 性能统计
     struct {

@@ -174,6 +174,87 @@
 2. 若仅在某些速度段失配，按工况分段记录，必要时考虑 gain scheduling（本轮不实现）。
 3. 任何参数回灌必须保留前一版快照，可一键回滚。
 
+## 15. 当前实现状态（2026-04-09）
+已完成“仅观测增强，不改控制律”的首轮代码接入。
+
+新增参数：
+1. `nmpc.publish_speed_observation`（默认 `true`）
+2. `nmpc.chassis_odom_topic`（默认 `/ChassisOdom`）
+
+新增话题：
+1. `nmpc/speed_observation`（`geometry_msgs/msg/TwistStamped`）
+
+字段映射（`nmpc/speed_observation`）：
+1. `twist.linear.x` = `cmd_vel.linear.x`（外环下发线速度）
+2. `twist.linear.y` = `/ChassisOdom.twist.twist.linear.x`（底盘实测线速度）
+3. `twist.linear.z` = `v_pred_1step`（acados stage=1 预测线速度）
+4. `twist.angular.x` = `a_cmd`（本拍最优加速度控制量）
+5. `twist.angular.y` = `tau_v`（当前模型参数）
+6. `twist.angular.z` = `v_cmd_state_pred_1step`（acados stage=1 预测命令状态）
+
+说明：
+1. 该观测流用于 `tau_v` 离线辨识与对照验证，不参与控制闭环。
+2. 若 `linear.y/linear.z` 为 `NaN`，表示对应观测在该拍不可用（例如未收到底盘观测或该拍无有效预测）。
+
+## 16. 测试方法
+1. 编译并 `source`（仅第一次或代码更新后）：
+   - `colcon build --packages-select nav_components --symlink-install`
+   - `source install/setup.bash`
+2. 启动导航链路后确认话题：
+   - `ros2 topic list | grep -E \"cmd_vel|ChassisOdom|nmpc/speed_observation\"`
+3. 先看观测流是否正常：
+   - `ros2 topic echo /nmpc/speed_observation`
+4. 做激励（安全场地）：
+   - 斜坡：`0 -> v_target -> 0`，重复至少 3 次；
+   - 阶跃：`0 <-> v_target`，重复至少 3 次；
+   - 每次保留 5~10 秒稳态段。
+5. 采集时要求：
+   - 保持 50 Hz 控制与反馈；
+   - 单次测试期间不改参数；
+   - 若大量 `NaN`，先排查 `/ChassisOdom` 或 `nmpc/speed_observation` 连接。
+6. 验收最小标准：
+   - `v_pred_1step` 能跟随 `v_meas` 的主趋势；
+   - 脚本能输出非 `NaN` 的 `tau_v_fit`。
+
+## 17. 傻瓜脚本（采集+拟合）
+脚本路径：
+1. `src/tools/tau_v_fit/run_tau_v_fit.sh`
+2. `src/tools/tau_v_fit/tau_v_logger_fit.py`
+
+### 17.1 一键用法
+在仓库根目录执行：
+```bash
+source install/setup.bash
+bash src/tools/tau_v_fit/run_tau_v_fit.sh 90
+```
+
+含义：
+1. `90` 是采集秒数（可改）。
+2. 输出目录默认 `log/tau_v_fit/`。
+3. 自动输出两类文件：
+   - `*_timestamp.csv`：原始采样数据；
+   - `*_timestamp_report.txt`：`tau_v_fit` 与误差指标。
+4. 脚本会自动优先选择 `/usr/bin/python3`（规避 conda Python 与 ROS 版本不匹配）。
+
+### 17.2 带参数用法
+```bash
+bash src/tools/tau_v_fit/run_tau_v_fit.sh <duration_s> <out_dir> <prefix> <topic>
+```
+示例：
+```bash
+bash src/tools/tau_v_fit/run_tau_v_fit.sh 120 log/tau_v_fit ramp_case /nmpc/speed_observation
+```
+
+### 17.3 报告字段解释
+1. `tau_v_fit`：建议回灌到 `nmpc.vel_lag_tau` 的一阶时间常数估计值。
+2. `rmse_vpred_vs_vmeas`：当前 MPC 预测速度与实测速度的误差。
+3. `rmse_one_step_model`：用拟合 `tau_v` 构造的一阶模型一步预测误差。
+
+### 17.4 回灌建议
+1. 先取 `tau_v_fit` 为候选值；
+2. 按小步调整（例如每次不超过 20%）；
+3. 每次回灌后重复同工况测试，确认误差与稳定性都不恶化。
+
 ---
 临时结论（本阶段）：
 - 在你给出的背景下，引入一阶惯性建模是合理的最小方案；
