@@ -435,6 +435,15 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
             int nx = curr->x + dx[i];
             int ny = curr->y + dy[i];
 
+            // 对角扩展时，要求两个正交相邻格都可通行，防止穿角
+            if (dx[i] != 0 && dy[i] != 0) {
+                const int ortho_x = curr->x + dx[i];
+                const int ortho_y = curr->y + dy[i];
+                if (!isValid(ortho_x, curr->y) || !isValid(curr->x, ortho_y)) {
+                    continue;
+                }
+            }
+
             if (map_manager_ && !map_manager_->isTransitionAllowed(curr->x, curr->y, nx, ny)) {
                 continue;
             }
