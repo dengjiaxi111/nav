@@ -42,6 +42,13 @@ struct BSplineOptParams {
     double stair_align_up_post_dist = 0.6;
     double stair_align_down_pre_dist = 0.6;
     double stair_align_down_post_dist = 0.6;
+    // 曲线采样级优化参数（Phase B）
+    std::string stair_align_mode = "curve_sample"; // "control_point"(旧) or "curve_sample"(新)
+    double stair_sample_ds = 0.08; // 曲线采样间距 (m)
+    // Phase C: 锚点与走廊约束
+    double lambda_stair_anchor = 0.0;    // 锚点权重，0=禁用（纯 Phase B）
+    double lambda_stair_lateral = 0.0;   // 走廊权重，0=禁用
+    double stair_corridor_half_width = 0.30; // 走廊半宽 (m)
     
     // 优化器参数
     int max_iterations = 100;       // 最大迭代次数
@@ -49,6 +56,34 @@ struct BSplineOptParams {
     double min_step_size = 1e-4;    // 最小步长
     double cost_tolerance = 1e-4;   // 代价变化收敛阈值
     double grad_tolerance = 1e-3;   // 梯度范数收敛阈值
+};
+
+// 台阶对齐诊断信息（Phase A）
+struct StairAlignDiagnostics {
+    int num_clusters = 0;
+    int num_curve_samples = 0;
+    double mean_heading_err_deg = 0.0;
+    double max_heading_err_deg = 0.0;
+    struct ClusterInfo {
+        Eigen::Vector2d center_pos = Eigen::Vector2d::Zero();
+        Eigen::Vector2d normal = Eigen::Vector2d::Zero();
+        bool is_uphill = true;
+        double window_arc_start = 0.0;
+        double window_arc_end = 0.0;
+        Eigen::Vector2d anchor_pre = Eigen::Vector2d::Zero();
+        Eigen::Vector2d anchor_mid = Eigen::Vector2d::Zero();
+        Eigen::Vector2d anchor_post = Eigen::Vector2d::Zero();
+    };
+    std::vector<ClusterInfo> clusters;
+    struct SampleInfo {
+        Eigen::Vector2d position = Eigen::Vector2d::Zero();
+        Eigen::Vector2d tangent_unit = Eigen::Vector2d::Zero();
+        Eigen::Vector2d normal = Eigen::Vector2d::Zero();
+        double heading_err_deg = 0.0;
+    };
+    std::vector<SampleInfo> samples;
+    double mean_lateral_disp = 0.0;
+    double max_lateral_disp = 0.0;
 };
 
 // ESDF 查询回调类型
@@ -66,6 +101,8 @@ public:
     void setParams(const BSplineOptParams& params) { params_ = params; }
     void setESDFCallback(ESDFCallback cb) { esdf_callback_ = cb; }
     void setStairNormalCallback(StairNormalCallback cb) { stair_normal_callback_ = cb; }
+    void setInterval(double interval) { bspline_interval_ = interval; }
+    const StairAlignDiagnostics& getStairDiagnostics() const { return last_stair_diag_; }
     
     /**
      * 优化 B样条控制点
@@ -187,6 +224,37 @@ public:
         // 最终结果写回
         ctrl_pts.block(opt_start_, 0, n_opt_, 2) = x;
         
+        // 最终台阶对齐诊断（Phase A: 输出角度误差统计）
+        if (params_.stair_segment_align && stair_normal_callback_) {
+            Eigen::MatrixXd diag_grad = Eigen::MatrixXd::Zero(n_opt_, 2);
+            double diag_cost = 0.0;
+            computeStairAlignCostAndGrad(ctrl_pts, diag_grad, diag_cost);
+            if (last_stair_diag_.num_clusters > 0) {
+                RCLCPP_INFO(rclcpp::get_logger("bspline_opt"),
+                    "[StairAlign] mode=%s | clusters=%d, samples=%d | "
+                    "heading: mean=%.1f° max=%.1f° | lateral: mean=%.3fm max=%.3fm | cost=%.4f",
+                    params_.stair_align_mode.c_str(),
+                    last_stair_diag_.num_clusters, last_stair_diag_.num_curve_samples,
+                    last_stair_diag_.mean_heading_err_deg,
+                    last_stair_diag_.max_heading_err_deg,
+                    last_stair_diag_.mean_lateral_disp,
+                    last_stair_diag_.max_lateral_disp,
+                    diag_cost);
+                for (size_t ci = 0; ci < last_stair_diag_.clusters.size(); ++ci) {
+                    const auto& cl = last_stair_diag_.clusters[ci];
+                    RCLCPP_INFO(rclcpp::get_logger("bspline_opt"),
+                        "  cluster[%zu]: %s, n=(%.2f,%.2f), center=(%.2f,%.2f), "
+                        "window=[%.2f, %.2f]m, anchor_pre=(%.2f,%.2f), anchor_post=(%.2f,%.2f)",
+                        ci, cl.is_uphill ? "UP" : "DOWN",
+                        cl.normal.x(), cl.normal.y(),
+                        cl.center_pos.x(), cl.center_pos.y(),
+                        cl.window_arc_start, cl.window_arc_end,
+                        cl.anchor_pre.x(), cl.anchor_pre.y(),
+                        cl.anchor_post.x(), cl.anchor_post.y());
+                }
+            }
+        }
+        
         // 计算并输出优化时间统计
         auto t_end = std::chrono::high_resolution_clock::now();
         last_opt_time_ms_ = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -257,7 +325,7 @@ private:
         double total_cost = params_.lambda_smooth * cost_smooth 
                          + params_.lambda_collision * cost_collision
                          + params_.lambda_align * cost_align
-                         + params_.lambda_stair_align * cost_stair_align;
+                         + cost_stair_align;
         
         last_cost_ = total_cost;
         last_smooth_cost_ = cost_smooth;
@@ -643,10 +711,11 @@ private:
         }
     }
 
-    void computeStairAlignCostAndGrad(const Eigen::MatrixXd& ctrl_pts,
-                                      Eigen::MatrixXd& grad,
-                                      double& cost) {
+    void computeStairAlignLegacy(const Eigen::MatrixXd& ctrl_pts,
+                                 Eigen::MatrixXd& grad,
+                                 double& cost) {
         cost = 0.0;
+        last_stair_diag_ = StairAlignDiagnostics{};
         if (!stair_normal_callback_) {
             return;
         }
@@ -769,7 +838,7 @@ private:
             }
 
             Eigen::Vector2d tangent_perp = tangent - tangent.dot(normal) * normal;
-            cost += tangent_perp.squaredNorm();
+            cost += params_.lambda_stair_align * tangent_perp.squaredNorm();
 
             Eigen::Vector2d grad_tangent = 2.0 * tangent_perp;
             if (i + 1 >= opt_start_ && i + 1 < opt_end_) {
@@ -782,7 +851,377 @@ private:
             }
         }
     }
-    
+
+    // ===== 台阶方向约束：调度函数 =====
+    void computeStairAlignCostAndGrad(const Eigen::MatrixXd& ctrl_pts,
+                                      Eigen::MatrixXd& grad,
+                                      double& cost) {
+        if (params_.stair_align_mode == "control_point" || bspline_interval_ < 1e-9) {
+            computeStairAlignLegacy(ctrl_pts, grad, cost);
+        } else {
+            computeStairAlignCurveSample(ctrl_pts, grad, cost);
+        }
+    }
+
+    // ===== 新版：曲线采样级台阶对齐（Phase B）=====
+    void computeStairAlignCurveSample(const Eigen::MatrixXd& ctrl_pts,
+                                      Eigen::MatrixXd& grad,
+                                      double& cost) {
+        cost = 0.0;
+        last_stair_diag_ = StairAlignDiagnostics{};
+        if (!stair_normal_callback_ || bspline_interval_ < 1e-9) return;
+
+        const int p = order_;
+        const double h = bspline_interval_;
+        const double duration = static_cast<double>(n_ctrl_ - p) * h;
+        if (duration < 1e-6 || p != 3) return;
+
+        const double sample_ds = std::max(0.01, params_.stair_sample_ds);
+        const double dt = std::min(h * 0.5, sample_ds);
+        const int n_samples = std::max(2,
+            static_cast<int>(std::ceil(duration / dt)) + 1);
+
+        // Step 1: 密集采样曲线并检测台阶区域
+        struct CurveSample {
+            double t;
+            Eigen::Vector2d pos;
+            Eigen::Vector2d tangent;
+            double arc_len;
+            int span_k;
+            double local_s;
+            bool stair_hit = false;
+            Eigen::Vector2d normal = Eigen::Vector2d::Zero();
+            bool is_uphill = true;
+        };
+
+        std::vector<CurveSample> samples;
+        samples.reserve(n_samples);
+        double arc = 0.0;
+
+        for (int i = 0; i < n_samples; ++i) {
+            CurveSample cs;
+            cs.t = std::min(static_cast<double>(i) * dt, duration);
+            evalCubicBSpline(ctrl_pts, h, cs.t,
+                             cs.pos, cs.tangent, cs.span_k, cs.local_s);
+
+            if (!samples.empty()) {
+                arc += (cs.pos - samples.back().pos).norm();
+            }
+            cs.arc_len = arc;
+
+            double nx_val = 0.0, ny_val = 0.0;
+            if (stair_normal_callback_(cs.pos.x(), cs.pos.y(),
+                                       &nx_val, &ny_val)) {
+                Eigen::Vector2d nv(nx_val, ny_val);
+                double nn = nv.norm();
+                if (nn > 1e-6) {
+                    nv /= nn;
+                    cs.stair_hit = true;
+                    cs.normal = nv;
+                    if (cs.tangent.norm() > 1e-6) {
+                        cs.is_uphill = (cs.tangent.dot(nv) >= 0.0);
+                    }
+                }
+            }
+            samples.push_back(cs);
+        }
+
+        if (samples.empty()) return;
+
+        // Step 2: 聚类连续台阶命中点
+        struct StairCluster {
+            int start_idx = 0, end_idx = 0;
+            Eigen::Vector2d normal = Eigen::Vector2d::Zero();
+            bool is_uphill = true;
+            double center_arc = 0.0;
+            Eigen::Vector2d center_pos = Eigen::Vector2d::Zero();
+        };
+
+        std::vector<StairCluster> clusters;
+        {
+            int cl_s = -1;
+            Eigen::Vector2d cl_n = Eigen::Vector2d::Zero();
+            Eigen::Vector2d cl_p = Eigen::Vector2d::Zero();
+            int cl_up = 0, cl_cnt = 0;
+
+            auto flush = [&](int end_i) {
+                if (cl_s >= 0 && cl_cnt >= 1) {
+                    StairCluster cl;
+                    cl.start_idx = cl_s;
+                    cl.end_idx = end_i;
+                    Eigen::Vector2d avg = cl_n / cl_cnt;
+                    cl.normal = (avg.norm() > 1e-6)
+                        ? avg.normalized()
+                        : Eigen::Vector2d::UnitX();
+                    cl.is_uphill = (cl_up * 2 >= cl_cnt);
+                    cl.center_arc = (samples[cl_s].arc_len
+                                     + samples[end_i].arc_len) * 0.5;
+                    cl.center_pos = cl_p / cl_cnt;
+                    clusters.push_back(cl);
+                }
+                cl_s = -1;
+                cl_n.setZero();
+                cl_p.setZero();
+                cl_up = 0;
+                cl_cnt = 0;
+            };
+
+            for (int i = 0; i < static_cast<int>(samples.size()); ++i) {
+                if (samples[i].stair_hit) {
+                    if (cl_s < 0) cl_s = i;
+                    cl_n += samples[i].normal;
+                    cl_p += samples[i].pos;
+                    if (samples[i].is_uphill) cl_up++;
+                    cl_cnt++;
+                } else {
+                    flush(i - 1);
+                }
+            }
+            flush(static_cast<int>(samples.size()) - 1);
+        }
+
+        if (clusters.empty()) return;
+
+        // Step 3: 定义作用窗、计算锚点、将采样点分配到最近的台阶簇
+        const double up_pre = std::max(0.0, params_.stair_align_up_pre_dist);
+        const double up_post = std::max(0.0, params_.stair_align_up_post_dist);
+        const double down_pre = std::max(0.0, params_.stair_align_down_pre_dist);
+        const double down_post = std::max(0.0, params_.stair_align_down_post_dist);
+
+        struct ClusterAnchorInfo {
+            Eigen::Vector2d anchor_pre, anchor_mid, anchor_post;
+            Eigen::Vector2d t_stair;
+            double anchor_pre_arc, anchor_mid_arc, anchor_post_arc;
+        };
+        std::vector<ClusterAnchorInfo> cluster_anchors(clusters.size());
+        std::vector<int> sample_cluster(samples.size(), -1);
+
+        for (int ci = 0; ci < static_cast<int>(clusters.size()); ++ci) {
+            const auto& cl = clusters[ci];
+            double pre  = cl.is_uphill ? up_pre  : down_pre;
+            double post = cl.is_uphill ? up_post : down_post;
+            double w_start = cl.center_arc - pre;
+            double w_end   = cl.center_arc + post;
+
+            double dir = cl.is_uphill ? 1.0 : -1.0;
+            auto& anc = cluster_anchors[ci];
+            anc.t_stair = Eigen::Vector2d(-cl.normal.y(), cl.normal.x());
+            anc.anchor_pre  = cl.center_pos - dir * cl.normal * pre;
+            anc.anchor_mid  = cl.center_pos;
+            anc.anchor_post = cl.center_pos + dir * cl.normal * post;
+            anc.anchor_pre_arc  = w_start;
+            anc.anchor_mid_arc  = cl.center_arc;
+            anc.anchor_post_arc = w_end;
+
+            StairAlignDiagnostics::ClusterInfo ci_diag;
+            ci_diag.center_pos = cl.center_pos;
+            ci_diag.normal = cl.normal;
+            ci_diag.is_uphill = cl.is_uphill;
+            ci_diag.window_arc_start = w_start;
+            ci_diag.window_arc_end = w_end;
+            ci_diag.anchor_pre = anc.anchor_pre;
+            ci_diag.anchor_mid = anc.anchor_mid;
+            ci_diag.anchor_post = anc.anchor_post;
+            last_stair_diag_.clusters.push_back(ci_diag);
+
+            for (int si = 0; si < static_cast<int>(samples.size()); ++si) {
+                if (samples[si].arc_len >= w_start - 1e-6 &&
+                    samples[si].arc_len <= w_end + 1e-6 &&
+                    sample_cluster[si] < 0) {
+                    sample_cluster[si] = ci;
+                }
+            }
+        }
+
+        // Step 4: 计算航向/横向走廊代价与解析梯度
+        double sum_err = 0.0, max_err = 0.0;
+        double sum_lat = 0.0, max_lat = 0.0;
+        int cost_count = 0;
+        const double corr_hw = std::max(0.01, params_.stair_corridor_half_width);
+
+        for (int si = 0; si < static_cast<int>(samples.size()); ++si) {
+            if (sample_cluster[si] < 0) continue;
+
+            const auto& s = samples[si];
+            const int ci = sample_cluster[si];
+            const Eigen::Vector2d& n_vec = clusters[ci].normal;
+            const auto& anc = cluster_anchors[ci];
+
+            double t_norm = s.tangent.norm();
+            if (t_norm < 1e-6) continue;
+
+            Eigen::Vector2d t_hat = s.tangent / t_norm;
+            double a = t_hat.dot(n_vec);
+
+            // J_heading: lambda_heading * (1 - (T̂·n)²)
+            double c_heading = 1.0 - a * a;
+            cost += params_.lambda_stair_align * c_heading;
+
+            double err_deg = std::acos(std::min(1.0, std::abs(a)))
+                             * 180.0 / M_PI;
+            sum_err += err_deg;
+            max_err = std::max(max_err, err_deg);
+            cost_count++;
+
+            last_stair_diag_.samples.push_back(
+                {s.pos, t_hat, n_vec, err_deg});
+
+            int ctrl_idx[4] = {
+                s.span_k - 3, s.span_k - 2, s.span_k - 1, s.span_k};
+
+            // heading 梯度: dc/dP_j = -2a·B'_j(s)/(h·||T||) · (n - a·T̂)
+            {
+                Eigen::Vector2d v = n_vec - a * t_hat;
+                double w_coeff = -2.0 * a / (h * t_norm);
+                double dB[4];
+                cubicBasisDeriv(s.local_s, dB);
+                for (int j = 0; j < 4; ++j) {
+                    int idx = ctrl_idx[j];
+                    if (idx >= opt_start_ && idx < opt_end_) {
+                        Eigen::Vector2d g =
+                            (params_.lambda_stair_align * w_coeff * dB[j]) * v;
+                        grad.row(idx - opt_start_) += g.transpose();
+                    }
+                }
+            }
+
+            // J_lateral: lambda_lateral * huber(d_t / corridor_half_width)
+            if (params_.lambda_stair_lateral > 0.0) {
+                double d_t = (s.pos - clusters[ci].center_pos).dot(anc.t_stair);
+                double abs_d_t = std::abs(d_t);
+                sum_lat += abs_d_t;
+                max_lat = std::max(max_lat, abs_d_t);
+
+                double u = d_t / corr_hw;
+                double abs_u = std::abs(u);
+                double huber_val, dhuber_du;
+                if (abs_u <= 1.0) {
+                    huber_val = 0.5 * u * u;
+                    dhuber_du = u;
+                } else {
+                    huber_val = abs_u - 0.5;
+                    dhuber_du = (u > 0.0) ? 1.0 : -1.0;
+                }
+                cost += params_.lambda_stair_lateral * huber_val;
+
+                double Bvals[4];
+                cubicBasis(s.local_s, Bvals);
+                double g_scale = params_.lambda_stair_lateral * dhuber_du / corr_hw;
+                for (int j = 0; j < 4; ++j) {
+                    int idx = ctrl_idx[j];
+                    if (idx >= opt_start_ && idx < opt_end_) {
+                        Eigen::Vector2d g = (g_scale * Bvals[j]) * anc.t_stair;
+                        grad.row(idx - opt_start_) += g.transpose();
+                    }
+                }
+            }
+        }
+
+        // Step 5: 锚点代价 J_anchor — 对每个簇找最接近锚点弧长的采样点
+        if (params_.lambda_stair_anchor > 0.0) {
+            for (int ci = 0; ci < static_cast<int>(clusters.size()); ++ci) {
+                const auto& anc = cluster_anchors[ci];
+                double target_arcs[3] = {
+                    anc.anchor_pre_arc, anc.anchor_mid_arc, anc.anchor_post_arc};
+                Eigen::Vector2d targets[3] = {
+                    anc.anchor_pre, anc.anchor_mid, anc.anchor_post};
+
+                for (int ai = 0; ai < 3; ++ai) {
+                    int best_si = -1;
+                    double best_dist = std::numeric_limits<double>::max();
+                    for (int si = 0; si < static_cast<int>(samples.size()); ++si) {
+                        if (sample_cluster[si] != ci) continue;
+                        double d = std::abs(samples[si].arc_len - target_arcs[ai]);
+                        if (d < best_dist) {
+                            best_dist = d;
+                            best_si = si;
+                        }
+                    }
+                    if (best_si < 0) continue;
+
+                    const auto& s = samples[best_si];
+                    Eigen::Vector2d err = s.pos - targets[ai];
+                    double sq = err.squaredNorm();
+                    cost += params_.lambda_stair_anchor * sq;
+
+                    double Bvals[4];
+                    cubicBasis(s.local_s, Bvals);
+                    int ctrl_idx[4] = {
+                        s.span_k - 3, s.span_k - 2, s.span_k - 1, s.span_k};
+                    for (int j = 0; j < 4; ++j) {
+                        int idx = ctrl_idx[j];
+                        if (idx >= opt_start_ && idx < opt_end_) {
+                            Eigen::Vector2d g =
+                                (2.0 * params_.lambda_stair_anchor * Bvals[j]) * err;
+                            grad.row(idx - opt_start_) += g.transpose();
+                        }
+                    }
+                }
+            }
+        }
+
+        last_stair_diag_.num_clusters =
+            static_cast<int>(clusters.size());
+        last_stair_diag_.num_curve_samples = cost_count;
+        last_stair_diag_.mean_heading_err_deg =
+            (cost_count > 0) ? sum_err / cost_count : 0.0;
+        last_stair_diag_.max_heading_err_deg = max_err;
+        last_stair_diag_.mean_lateral_disp =
+            (cost_count > 0) ? sum_lat / cost_count : 0.0;
+        last_stair_diag_.max_lateral_disp = max_lat;
+    }
+
+    // ===== 均匀三次 B-spline 基函数 =====
+    static void cubicBasis(double s, double B[4]) {
+        double oms = 1.0 - s;
+        double s2 = s * s;
+        double s3 = s2 * s;
+        B[0] = oms * oms * oms / 6.0;
+        B[1] = (3.0 * s3 - 6.0 * s2 + 4.0) / 6.0;
+        B[2] = (-3.0 * s3 + 3.0 * s2 + 3.0 * s + 1.0) / 6.0;
+        B[3] = s3 / 6.0;
+    }
+
+    static void cubicBasisDeriv(double s, double dB[4]) {
+        double oms = 1.0 - s;
+        double s2 = s * s;
+        dB[0] = -oms * oms / 2.0;
+        dB[1] = (9.0 * s2 - 12.0 * s) / 6.0;
+        dB[2] = (-9.0 * s2 + 6.0 * s + 3.0) / 6.0;
+        dB[3] = s2 / 2.0;
+    }
+
+    // 求值均匀三次 B-spline 位置与切向
+    // t ∈ [0, duration], duration = (n_ctrl_ - order_) * h
+    void evalCubicBSpline(const Eigen::MatrixXd& ctrl_pts, double h,
+                          double t, Eigen::Vector2d& pos,
+                          Eigen::Vector2d& tangent,
+                          int& span_k, double& local_s) const {
+        double u = std::max(0.0,
+            std::min(static_cast<double>(n_ctrl_ - order_) * h, t));
+        span_k = static_cast<int>(std::floor(u / h + 1e-10)) + order_;
+        span_k = std::max(order_, std::min(span_k, n_ctrl_ - 1));
+        local_s = (h > 1e-10)
+            ? (u - static_cast<double>(span_k - order_) * h) / h
+            : 0.0;
+        local_s = std::max(0.0, std::min(1.0, local_s));
+
+        double B[4], dB[4];
+        cubicBasis(local_s, B);
+        cubicBasisDeriv(local_s, dB);
+
+        int indices[4] = {span_k - 3, span_k - 2, span_k - 1, span_k};
+        pos.setZero();
+        tangent.setZero();
+        for (int j = 0; j < 4; ++j) {
+            int ci = std::max(0, std::min(n_ctrl_ - 1, indices[j]));
+            Eigen::Vector2d p = ctrl_pts.row(ci).head<2>();
+            pos += B[j] * p;
+            tangent += dB[j] * p;
+        }
+        tangent /= h;
+    }
+
     BSplineOptParams params_;
     ESDFCallback esdf_callback_;
     StairNormalCallback stair_normal_callback_;
@@ -800,6 +1239,8 @@ private:
     double last_align_cost_ = 0;
     double last_stair_align_cost_ = 0;
     double last_opt_time_ms_ = 0;
+    double bspline_interval_ = 0.0;
+    StairAlignDiagnostics last_stair_diag_;
 };
 
 }  // namespace nav_components

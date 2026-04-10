@@ -46,6 +46,11 @@ struct SmoothParams {
     double stair_align_up_post_dist_m = 0.6;
     double stair_align_down_pre_dist_m = 0.6;
     double stair_align_down_post_dist_m = 0.6;
+    std::string stair_align_mode = "curve_sample";
+    double stair_sample_ds_m = 0.08;
+    double lambda_stair_anchor = 0.0;
+    double lambda_stair_lateral = 0.0;
+    double stair_corridor_half_width_m = 0.30;
 };
 
 class PathSmoother {
@@ -59,6 +64,7 @@ public:
         params_ = params; 
         updateOptimizerParams();
     }
+    const SmoothParams& getParams() const { return params_; }
     
     void setESDFCallback(ESDFCallback cb) { 
         optimizer_.setESDFCallback(cb); 
@@ -97,6 +103,10 @@ public:
             return true;
         }
         auto t3 = std::chrono::high_resolution_clock::now();
+        
+        // 将节点间隔传递给优化器（曲线采样级台阶约束需要）
+        last_interval_ = interval;
+        optimizer_.setInterval(interval);
         
         // Step 2.5: B样条优化（可选）
         auto t_opt_start = std::chrono::high_resolution_clock::now();
@@ -191,6 +201,12 @@ public:
     const std::vector<Eigen::Vector2d>& getLastControlPoints() const {
         return last_ctrl_pts_;
     }
+    
+    const StairAlignDiagnostics& getStairDiagnostics() const {
+        return optimizer_.getStairDiagnostics();
+    }
+    
+    double getLastInterval() const { return last_interval_; }
 
 private:
     void updateOptimizerParams() {
@@ -213,6 +229,11 @@ private:
         opt_params.stair_align_up_post_dist = params_.stair_align_up_post_dist_m;
         opt_params.stair_align_down_pre_dist = params_.stair_align_down_pre_dist_m;
         opt_params.stair_align_down_post_dist = params_.stair_align_down_post_dist_m;
+        opt_params.stair_align_mode = params_.stair_align_mode;
+        opt_params.stair_sample_ds = params_.stair_sample_ds_m;
+        opt_params.lambda_stair_anchor = params_.lambda_stair_anchor;
+        opt_params.lambda_stair_lateral = params_.lambda_stair_lateral;
+        opt_params.stair_corridor_half_width = params_.stair_corridor_half_width_m;
         optimizer_.setParams(opt_params);
     }
     
@@ -335,6 +356,7 @@ private:
     SmoothParams params_;
     BSplineOptimizer optimizer_;
     std::vector<Eigen::Vector2d> last_ctrl_pts_;  // 调试用：最近一次的控制点
+    double last_interval_ = 0.0;
 };
 
 }  // namespace nav_components

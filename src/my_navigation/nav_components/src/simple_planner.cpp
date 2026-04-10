@@ -3,6 +3,7 @@
 
 #include "nav_components/simple_planner.hpp"
 #include "nav_components/layered_map_manager.hpp"
+#include <std_msgs/msg/color_rgba.hpp>
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -76,6 +77,16 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.stair_align_down_pre_dist_m", stair_legacy_window_m);
     smooth_params.stair_align_down_post_dist_m =
         node_->declare_parameter("planner.stair_align_down_post_dist_m", stair_legacy_window_m);
+    smooth_params.stair_align_mode =
+        node_->declare_parameter("planner.stair_segment_align_mode", std::string("curve_sample"));
+    smooth_params.stair_sample_ds_m =
+        node_->declare_parameter("planner.stair_sample_ds_m", 0.08);
+    smooth_params.lambda_stair_anchor =
+        node_->declare_parameter("planner.opt_lambda_stair_anchor", 0.0);
+    smooth_params.lambda_stair_lateral =
+        node_->declare_parameter("planner.opt_lambda_stair_lateral", 0.0);
+    smooth_params.stair_corridor_half_width_m =
+        node_->declare_parameter("planner.stair_corridor_half_width_m", 0.30);
 
     smoother_.setParams(smooth_params);
     
@@ -84,6 +95,8 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         "plan_astar_raw", 10);
     ctrl_pts_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
         "debug/control_points", 10);
+    stair_debug_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+        "debug/stair_align", 10);
 }
 
 void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
@@ -356,6 +369,7 @@ bool SimplePlanner::plan(
                 }
                 
                 publishControlPoints(smoother_.getLastControlPoints(), goal.header.frame_id);
+                publishStairDebugMarkers(smoother_.getStairDiagnostics(), goal.header.frame_id);
             }
         } else {
             smoothed_path = raw_path;
@@ -683,6 +697,228 @@ nav_msgs::msg::Path SimplePlanner::prunePath(
     pruned_path.poses.assign(path.poses.begin() + prune_start_idx, path.poses.end());
     
     return pruned_path;
+}
+
+void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
+                                              const std::string& frame_id) {
+    if (!stair_debug_pub_) return;
+    
+    visualization_msgs::msg::MarkerArray markers;
+    auto stamp = node_->now();
+    int id = 0;
+
+    // 清除旧标记
+    {
+        visualization_msgs::msg::Marker del;
+        del.header.frame_id = frame_id;
+        del.header.stamp = stamp;
+        del.ns = "stair_normals";
+        del.action = visualization_msgs::msg::Marker::DELETEALL;
+        markers.markers.push_back(del);
+        del.ns = "stair_samples";
+        markers.markers.push_back(del);
+        del.ns = "stair_window";
+        markers.markers.push_back(del);
+        del.ns = "stair_anchors";
+        markers.markers.push_back(del);
+        del.ns = "stair_corridor";
+        markers.markers.push_back(del);
+    }
+
+    if (diag.clusters.empty() && diag.samples.empty()) {
+        stair_debug_pub_->publish(markers);
+        return;
+    }
+
+    // 台阶法向箭头（每个 cluster 一个）
+    for (size_t i = 0; i < diag.clusters.size(); ++i) {
+        const auto& cl = diag.clusters[i];
+        visualization_msgs::msg::Marker arrow;
+        arrow.header.frame_id = frame_id;
+        arrow.header.stamp = stamp;
+        arrow.ns = "stair_normals";
+        arrow.id = id++;
+        arrow.type = visualization_msgs::msg::Marker::ARROW;
+        arrow.action = visualization_msgs::msg::Marker::ADD;
+        arrow.scale.x = 0.04;
+        arrow.scale.y = 0.08;
+        arrow.scale.z = 0.0;
+        arrow.color.r = 0.0f;
+        arrow.color.g = 1.0f;
+        arrow.color.b = 1.0f;
+        arrow.color.a = 1.0f;
+
+        geometry_msgs::msg::Point p_start, p_end;
+        p_start.x = cl.center_pos.x();
+        p_start.y = cl.center_pos.y();
+        p_start.z = 0.12;
+        p_end.x = cl.center_pos.x() + cl.normal.x() * 0.5;
+        p_end.y = cl.center_pos.y() + cl.normal.y() * 0.5;
+        p_end.z = 0.12;
+        arrow.points.push_back(p_start);
+        arrow.points.push_back(p_end);
+        markers.markers.push_back(arrow);
+
+        // 台阶切向箭头（紫色）
+        visualization_msgs::msg::Marker t_arrow = arrow;
+        t_arrow.id = id++;
+        t_arrow.color.r = 0.8f;
+        t_arrow.color.g = 0.0f;
+        t_arrow.color.b = 0.8f;
+        Eigen::Vector2d tangent_dir(-cl.normal.y(), cl.normal.x());
+        t_arrow.points[1].x = cl.center_pos.x() + tangent_dir.x() * 0.4;
+        t_arrow.points[1].y = cl.center_pos.y() + tangent_dir.y() * 0.4;
+        markers.markers.push_back(t_arrow);
+
+        // UP/DOWN 文字标记
+        visualization_msgs::msg::Marker text;
+        text.header.frame_id = frame_id;
+        text.header.stamp = stamp;
+        text.ns = "stair_normals";
+        text.id = id++;
+        text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        text.action = visualization_msgs::msg::Marker::ADD;
+        text.pose.position.x = cl.center_pos.x();
+        text.pose.position.y = cl.center_pos.y();
+        text.pose.position.z = 0.25;
+        text.scale.z = 0.12;
+        text.color.r = 1.0f;
+        text.color.g = 1.0f;
+        text.color.b = 1.0f;
+        text.color.a = 1.0f;
+        text.text = cl.is_uphill ? "UP" : "DOWN";
+        markers.markers.push_back(text);
+    }
+
+    // 采样点球体（按航向误差着色：绿→黄→红）
+    if (!diag.samples.empty()) {
+        visualization_msgs::msg::Marker pts;
+        pts.header.frame_id = frame_id;
+        pts.header.stamp = stamp;
+        pts.ns = "stair_samples";
+        pts.id = id++;
+        pts.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        pts.action = visualization_msgs::msg::Marker::ADD;
+        pts.scale.x = 0.04;
+        pts.scale.y = 0.04;
+        pts.scale.z = 0.04;
+
+        for (const auto& s : diag.samples) {
+            geometry_msgs::msg::Point p;
+            p.x = s.position.x();
+            p.y = s.position.y();
+            p.z = 0.08;
+            pts.points.push_back(p);
+
+            // 绿(0°) → 黄(8°) → 红(20°+)
+            std_msgs::msg::ColorRGBA c;
+            double ratio = std::min(1.0, s.heading_err_deg / 20.0);
+            c.r = static_cast<float>(std::min(1.0, ratio * 2.0));
+            c.g = static_cast<float>(std::min(1.0, (1.0 - ratio) * 2.0));
+            c.b = 0.0f;
+            c.a = 1.0f;
+            pts.colors.push_back(c);
+        }
+        markers.markers.push_back(pts);
+
+        // 每个采样点的切向小箭头
+        for (size_t si = 0; si < diag.samples.size(); si += 3) {
+            const auto& s = diag.samples[si];
+            visualization_msgs::msg::Marker ta;
+            ta.header.frame_id = frame_id;
+            ta.header.stamp = stamp;
+            ta.ns = "stair_samples";
+            ta.id = id++;
+            ta.type = visualization_msgs::msg::Marker::ARROW;
+            ta.action = visualization_msgs::msg::Marker::ADD;
+            ta.scale.x = 0.02;
+            ta.scale.y = 0.04;
+            ta.scale.z = 0.0;
+
+            double ratio = std::min(1.0, s.heading_err_deg / 20.0);
+            ta.color.r = static_cast<float>(std::min(1.0, ratio * 2.0));
+            ta.color.g = static_cast<float>(std::min(1.0, (1.0 - ratio) * 2.0));
+            ta.color.b = 0.0f;
+            ta.color.a = 0.7f;
+
+            geometry_msgs::msg::Point ps, pe;
+            ps.x = s.position.x();
+            ps.y = s.position.y();
+            ps.z = 0.08;
+            pe.x = s.position.x() + s.tangent_unit.x() * 0.15;
+            pe.y = s.position.y() + s.tangent_unit.y() * 0.15;
+            pe.z = 0.08;
+            ta.points.push_back(ps);
+            ta.points.push_back(pe);
+            markers.markers.push_back(ta);
+        }
+    }
+
+    // 锚点球体（P_pre=红, P_mid=白, P_post=蓝）
+    for (size_t i = 0; i < diag.clusters.size(); ++i) {
+        const auto& cl = diag.clusters[i];
+        struct AnchorVis {
+            Eigen::Vector2d pos;
+            float r, g, b;
+        };
+        AnchorVis anchors[3] = {
+            {cl.anchor_pre,  1.0f, 0.2f, 0.2f},
+            {cl.anchor_mid,  1.0f, 1.0f, 1.0f},
+            {cl.anchor_post, 0.2f, 0.4f, 1.0f}
+        };
+        for (int ai = 0; ai < 3; ++ai) {
+            visualization_msgs::msg::Marker sp;
+            sp.header.frame_id = frame_id;
+            sp.header.stamp = stamp;
+            sp.ns = "stair_anchors";
+            sp.id = id++;
+            sp.type = visualization_msgs::msg::Marker::SPHERE;
+            sp.action = visualization_msgs::msg::Marker::ADD;
+            sp.pose.position.x = anchors[ai].pos.x();
+            sp.pose.position.y = anchors[ai].pos.y();
+            sp.pose.position.z = 0.15;
+            sp.pose.orientation.w = 1.0;
+            sp.scale.x = 0.08;
+            sp.scale.y = 0.08;
+            sp.scale.z = 0.08;
+            sp.color.r = anchors[ai].r;
+            sp.color.g = anchors[ai].g;
+            sp.color.b = anchors[ai].b;
+            sp.color.a = 0.9f;
+            markers.markers.push_back(sp);
+        }
+
+        // 走廊边界线（两条沿法向偏移 corridor_half_width 的线段）
+        Eigen::Vector2d t_stair(-cl.normal.y(), cl.normal.x());
+        double hw = smoother_.getParams().stair_corridor_half_width_m;
+        for (int side = -1; side <= 1; side += 2) {
+            Eigen::Vector2d offset = static_cast<double>(side) * hw * t_stair;
+            visualization_msgs::msg::Marker line;
+            line.header.frame_id = frame_id;
+            line.header.stamp = stamp;
+            line.ns = "stair_corridor";
+            line.id = id++;
+            line.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            line.action = visualization_msgs::msg::Marker::ADD;
+            line.scale.x = 0.02;
+            line.color.r = 1.0f;
+            line.color.g = 0.6f;
+            line.color.b = 0.0f;
+            line.color.a = 0.6f;
+            line.pose.orientation.w = 1.0;
+
+            geometry_msgs::msg::Point p1, p2;
+            Eigen::Vector2d start = cl.anchor_pre + offset;
+            Eigen::Vector2d end = cl.anchor_post + offset;
+            p1.x = start.x(); p1.y = start.y(); p1.z = 0.05;
+            p2.x = end.x();   p2.y = end.y();   p2.z = 0.05;
+            line.points.push_back(p1);
+            line.points.push_back(p2);
+            markers.markers.push_back(line);
+        }
+    }
+
+    stair_debug_pub_->publish(markers);
 }
 
 }  // namespace nav_components

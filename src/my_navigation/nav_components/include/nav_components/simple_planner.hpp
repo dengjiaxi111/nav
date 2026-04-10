@@ -96,8 +96,11 @@ private:
     // 调试可视化
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr astar_raw_path_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr ctrl_pts_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_debug_pub_;
     void publishControlPoints(const std::vector<Eigen::Vector2d>& ctrl_pts, 
                               const std::string& frame_id);
+    void publishStairDebugMarkers(const StairAlignDiagnostics& diag,
+                                  const std::string& frame_id);
 };
 
 }  // namespace nav_components
