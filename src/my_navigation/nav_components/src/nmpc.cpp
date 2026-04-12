@@ -55,6 +55,15 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.enable_curvature_speed_decay", params_.enable_curvature_speed_decay);
     node_->declare_parameter("nmpc.curvature_decay_kappa_ref", params_.curvature_decay_kappa_ref);
     node_->declare_parameter("nmpc.curvature_decay_min_factor", params_.curvature_decay_min_factor);
+    node_->declare_parameter("nmpc.speed_profile.enable", params_.speed_profile_enable);
+    node_->declare_parameter("nmpc.speed_profile.v_cruise", params_.speed_profile_v_cruise);
+    node_->declare_parameter("nmpc.speed_profile.v_min", params_.speed_profile_v_min);
+    node_->declare_parameter("nmpc.speed_profile.max_lateral_accel",
+                             params_.speed_profile_max_lateral_accel);
+    node_->declare_parameter("nmpc.speed_profile.kappa_epsilon",
+                             params_.speed_profile_kappa_epsilon);
+    node_->declare_parameter("nmpc.speed_profile.curvature_window_m",
+                             params_.speed_profile_curvature_window_m);
     node_->declare_parameter("nmpc.enable_curvature_horizon_adapt", params_.enable_curvature_horizon_adapt);
     node_->declare_parameter("nmpc.horizon_kappa_scale", params_.horizon_kappa_scale);
     node_->declare_parameter("nmpc.horizon_min_length", params_.horizon_min_length);
@@ -123,6 +132,16 @@ void NMPC::initialize(rclcpp::Node* node) {
         node_->get_parameter("nmpc.curvature_decay_kappa_ref").as_double();
     params_.curvature_decay_min_factor =
         node_->get_parameter("nmpc.curvature_decay_min_factor").as_double();
+    params_.speed_profile_enable = node_->get_parameter("nmpc.speed_profile.enable").as_bool();
+    params_.speed_profile_v_cruise =
+        node_->get_parameter("nmpc.speed_profile.v_cruise").as_double();
+    params_.speed_profile_v_min = node_->get_parameter("nmpc.speed_profile.v_min").as_double();
+    params_.speed_profile_max_lateral_accel =
+        node_->get_parameter("nmpc.speed_profile.max_lateral_accel").as_double();
+    params_.speed_profile_kappa_epsilon =
+        node_->get_parameter("nmpc.speed_profile.kappa_epsilon").as_double();
+    params_.speed_profile_curvature_window_m =
+        node_->get_parameter("nmpc.speed_profile.curvature_window_m").as_double();
     params_.odom_feedback_alpha = node_->get_parameter("nmpc.odom_feedback_alpha").as_double();
     params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
     params_.goal_decel_start_dist = std::max(0.1, params_.goal_decel_start_dist);
@@ -137,6 +156,16 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.curvature_decay_kappa_ref = std::max(1e-3, params_.curvature_decay_kappa_ref);
     params_.curvature_decay_min_factor =
         std::clamp(params_.curvature_decay_min_factor, 0.05, 1.0);
+    params_.speed_profile_v_cruise = std::max(0.0, params_.speed_profile_v_cruise);
+    params_.speed_profile_v_min = std::max(0.0, params_.speed_profile_v_min);
+    params_.speed_profile_v_min =
+        std::min(params_.speed_profile_v_min, params_.speed_profile_v_cruise);
+    params_.speed_profile_max_lateral_accel =
+        std::max(0.05, params_.speed_profile_max_lateral_accel);
+    params_.speed_profile_kappa_epsilon =
+        std::max(1e-4, params_.speed_profile_kappa_epsilon);
+    params_.speed_profile_curvature_window_m =
+        std::max(0.05, params_.speed_profile_curvature_window_m);
     params_.enable_curvature_horizon_adapt =
         node_->get_parameter("nmpc.enable_curvature_horizon_adapt").as_bool();
     params_.horizon_kappa_scale =
@@ -249,6 +278,14 @@ void NMPC::initialize(rclcpp::Node* node) {
         params_.enable_curvature_speed_decay,
         params_.curvature_decay_kappa_ref,
         params_.curvature_decay_min_factor);
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC speed_profile: enable=%d, v_cruise=%.2f, v_min=%.2f, ay_max=%.2f, kappa_eps=%.3f, window=%.2fm",
+        params_.speed_profile_enable,
+        params_.speed_profile_v_cruise,
+        params_.speed_profile_v_min,
+        params_.speed_profile_max_lateral_accel,
+        params_.speed_profile_kappa_epsilon,
+        params_.speed_profile_curvature_window_m);
     if (speed_observation_pub_) {
         RCLCPP_INFO(node_->get_logger(),
             "NMPC 观测发布: nmpc/speed_observation "
@@ -692,11 +729,15 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         total_dist_to_goal += std::hypot(p2.x - p1.x, p2.y - p1.y);
     }
 
+    const double base_cruise_v = params_.speed_profile_enable
+        ? params_.speed_profile_v_cruise
+        : params_.desired_velocity;
+
     // 终点减速锁存逻辑：进入减速区后，速度上限只减不增，避免停车阶段速度回跳
     if (total_dist_to_goal < params_.goal_decel_start_dist) {
         if (!goal_brake_latched_) {
             goal_brake_latched_ = true;
-            goal_brake_speed_cap_ = params_.desired_velocity;
+            goal_brake_speed_cap_ = base_cruise_v;
             RCLCPP_INFO(node_->get_logger(),
                 "NMPC: 进入终点减速锁存 total_dist_to_goal=%.3f, dist_to_goal_now=%.3f, init_cap=%.3f",
                 total_dist_to_goal, dist_to_goal_now, goal_brake_speed_cap_);
@@ -706,7 +747,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         const double aggressive_decel = params_.max_linear_accel * 1.2;
         double current_brake_cap = std::sqrt(
             std::max(0.0, 2.0 * aggressive_decel * dist_to_goal_now));
-        current_brake_cap = std::min(params_.desired_velocity, current_brake_cap);
+        current_brake_cap = std::min(base_cruise_v, current_brake_cap);
         if (dist_to_goal_now <= 0.05) {
             current_brake_cap = 0.0;
         }
@@ -772,12 +813,13 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 
                 // 终点平滑刹车：靠近目标时将参考速度连续收敛到 0
                 double remaining_dist = std::max(0.0, total_dist_to_goal - dist);
-                double desired_v = params_.desired_velocity;
+                double desired_v = base_cruise_v;
                 bool remaining_dist_stop = false;
                 bool pivot_turn_stop = false;
                 double heading_speed_factor = 1.0;
                 double curvature_decay = 1.0;
                 double lateral_shrink_ratio = 1.0;
+                double v_curve_limit = params_.max_linear_vel;
 
 
                 // 1. 计算运动学刹车所需的极限速度
@@ -788,7 +830,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 // 2. 取期望速度与刹车极限速度的最小值
                 // 这样在距离较远时，它会保持 desired_velocity 巡航；
                 // 一旦进入 v_limit 曲线，它会立刻沿着抛物线非线性降速
-                desired_v = std::min(params_.desired_velocity, v_limit);
+                desired_v = std::min(base_cruise_v, v_limit);
 
                 // 3. 终点临界处理
                 // 当距离小于 0.05m 时，直接给 0，消除末端积分漂移
@@ -833,8 +875,26 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     }
                 }
 
+                // Speed profile: 基于横向加速度上限的曲率限速（与几何前视解耦）
+                if (params_.speed_profile_enable) {
+                    double window_kappa = computeLocalMaxCurvatureByDistance(
+                        idx, params_.speed_profile_curvature_window_m);
+                    double seg_len = std::hypot(p2.x - p1.x, p2.y - p1.y);
+                    if (window_kappa < 1e-6 && seg_len > 1e-3) {
+                        window_kappa = std::abs(theta_diff) / seg_len;
+                    }
+                    double kappa_denom = std::max(window_kappa, params_.speed_profile_kappa_epsilon);
+                    v_curve_limit = std::sqrt(params_.speed_profile_max_lateral_accel / kappa_denom);
+                    desired_v = std::min(desired_v, v_curve_limit);
+                }
+
                 if (goal_brake_latched_) {
                     desired_v = std::min(desired_v, goal_brake_speed_cap_);
+                }
+
+                if (params_.speed_profile_enable && !pivot_turn_stop &&
+                    remaining_dist > params_.goal_decel_start_dist) {
+                    desired_v = std::max(params_.speed_profile_v_min, desired_v);
                 }
                 
                 // ========== 横向误差自适应速度缩减 (首次规划 i=0 时) ==========
@@ -894,22 +954,31 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     RCLCPP_INFO_THROTTLE(
                         node_->get_logger(), *node_->get_clock(), 500,
                         "NMPC ref[0]: dist_goal=%.3f remain=%.3f v_ref=%.3f v_limit=%.3f "
-                        "heading_err=%.1fdeg heading_factor=%.2f pivot_stop=%d remain_stop=%d "
+                        "v_curve=%.3f heading_err=%.1fdeg heading_factor=%.2f pivot_stop=%d remain_stop=%d "
                         "curvature_decay=%.2f lateral_ratio=%.2f latch=%d cap_before=%.3f cap_after=%.3f idx=%d",
                         dist_to_goal_now, remaining_dist, desired_v, v_limit,
-                        heading_err * 180.0 / M_PI, heading_speed_factor,
+                        v_curve_limit, heading_err * 180.0 / M_PI, heading_speed_factor,
                         pivot_turn_stop, remaining_dist_stop,
                         curvature_decay, lateral_shrink_ratio,
                         goal_brake_latched_, goal_brake_speed_cap_, goal_brake_speed_cap_,
                         nearest_idx_);
                 }
                 
-                // 运动学一致性约束：速度参考不得超过位置参考间距所隐含的速度上限
-                // implicit_v = step_dist / dt_solver
-                // 若 desired_v > implicit_v，则位置代价（Q_position*||e_pos||²）与速度代价
-                // （Q_velocity*(v-v_ref)²）方向相反，会造成代价函数内耗，实际速度被过度压低
+                // 速度-几何解耦：
+                // 不再使用 implicit_v = step_dist / dt 对 desired_v 做硬钳制，
+                // 避免“前视长度同时决定几何与速度上限”的参数耦合。
+                // 这里仅保留观测日志，便于评估速度参考与几何采样的一致性风险。
                 const double implicit_v = step_dist / dt;
-                desired_v = std::min(desired_v, implicit_v);
+                if (i == 0 && desired_v > implicit_v + 1e-3) {
+                    RCLCPP_DEBUG_THROTTLE(
+                        node_->get_logger(), *node_->get_clock(), 1000,
+                        "NMPC ref decoupled: desired_v(%.3f) > implicit_v(%.3f), "
+                        "horizon=%.3f, step=%.4f, dt=%.4f",
+                        desired_v, implicit_v, effective_horizon, step_dist, dt);
+                }
+
+                // 仍由现有运动约束参数兜底，保证参考速度不超过物理上限。
+                desired_v = std::clamp(desired_v, 0.0, params_.max_linear_vel);
 
                 // 角速度参考（默认关闭，避免离散路径噪声引入尖峰）
                 double omega_ref = 0.0;
@@ -1225,6 +1294,43 @@ double NMPC::computeLocalMaxCurvature(int start_idx, int num_points) const {
         double kappa = std::abs(dtheta) / seg_len;
         max_kappa = std::max(max_kappa, kappa);
     }
+    return max_kappa;
+}
+
+double NMPC::computeLocalMaxCurvatureByDistance(int start_idx, double window_dist_m) const {
+    if (global_path_.poses.size() < 2 || window_dist_m <= 0.0) {
+        return 0.0;
+    }
+
+    double max_kappa = 0.0;
+    double accum_dist = 0.0;
+    int begin = std::max(0, start_idx);
+    int end = static_cast<int>(global_path_.poses.size()) - 1;
+
+    for (int k = begin; k < end; ++k) {
+        const auto& p1 = global_path_.poses[k].pose;
+        const auto& p2 = global_path_.poses[k + 1].pose;
+        double seg_len = std::hypot(
+            p2.position.x - p1.position.x,
+            p2.position.y - p1.position.y);
+
+        if (seg_len < 1e-4) {
+            continue;
+        }
+
+        double t1 = tf2::getYaw(p1.orientation);
+        double t2 = tf2::getYaw(p2.orientation);
+        double dtheta = t2 - t1;
+        while (dtheta > M_PI) dtheta -= 2.0 * M_PI;
+        while (dtheta < -M_PI) dtheta += 2.0 * M_PI;
+
+        max_kappa = std::max(max_kappa, std::abs(dtheta) / seg_len);
+        accum_dist += seg_len;
+        if (accum_dist >= window_dist_m) {
+            break;
+        }
+    }
+
     return max_kappa;
 }
 

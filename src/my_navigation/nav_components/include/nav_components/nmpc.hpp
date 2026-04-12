@@ -106,6 +106,7 @@ private:
      * @return 最大曲率 (1/m)
      */
     double computeLocalMaxCurvature(int start_idx, int num_points) const;
+    double computeLocalMaxCurvatureByDistance(int start_idx, double window_dist_m) const;
     
     // ========== 状态变量 ==========
     rclcpp::Node* node_;
@@ -198,6 +199,14 @@ private:
         bool enable_curvature_speed_decay = true;   // 启用曲率速度衰减
         double curvature_decay_kappa_ref = 0.8;     // 曲率参考值 (1/m)
         double curvature_decay_min_factor = 0.45;   // 曲率衰减最小倍率
+
+    // 速度规划（第一批参数）
+    bool speed_profile_enable = true;
+    double speed_profile_v_cruise = 1.0;          // 巡航参考速度 (m/s)
+    double speed_profile_v_min = 0.05;            // 非终点最低参考速度 (m/s)
+    double speed_profile_max_lateral_accel = 1.5; // 横向加速度上限 (m/s^2)
+    double speed_profile_kappa_epsilon = 0.05;    // 曲率下限，防止分母过小 (1/m)
+    double speed_profile_curvature_window_m = 1.5; // 曲率统计窗口长度 (m)
 
         // 速度反馈融合（用于缓解物理里程计对指令的拖拽）
         // x0_vel = alpha * odom_vel + (1-alpha) * last_cmd_vel

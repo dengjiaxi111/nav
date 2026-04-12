@@ -3,9 +3,9 @@
 nav_server:
   ros__parameters:
     # 静态重定位开关 (true: 从RViz的"2D Pose Estimate"接收初始位姿并作为固定的map->odom; false: 实际场地使用NDT重定位)
-    use_static_map_odom: false
+    use_static_map_odom: true
     # 调试开关：重定位或给初始位姿后强制 odom==base_link（仅用于路径规划调试）
-    debug_reset_odom_to_base_link: false
+    debug_reset_odom_to_base_link: true
     
     # 地图路径由 navigation.launch.py 注入
     map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
@@ -160,14 +160,6 @@ nav_server:
       opt_lambda_stair_align: 25.0
       stair_sample_ds_m: 0.09  # 曲线采样间距(米)，仅 curve_sample 模式生效
       # Phase C: 锚点与走廊约束
-<<<<<<< Updated upstream
-      opt_lambda_stair_anchor: 50.0    # 锚点约束权重 (P_pre/P_mid/P_post)
-      opt_lambda_stair_lateral: 25.0   # 横向走廊约束权重 (Huber loss)
-      stair_corridor_half_width_m: 0.40  # 走廊半宽(米)，抑制沿台阶边沿滑行
-      stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
-      # 推荐：按弧长定义窗口，并区分上/下台阶
-      stair_align_up_pre_dist_m: 1.4
-=======
       opt_lambda_stair_anchor: 3.0    # 锚点约束权重 (P_pre/P_mid/P_post)
       opt_lambda_stair_lateral: 3.0   # 横向走廊约束权重 (Huber loss)
       stair_corridor_half_width_m: 0.30  # 走廊半宽(米)，抑制沿台阶边沿滑行
@@ -177,7 +169,6 @@ nav_server:
       stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
       # 推荐：按弧长定义窗口，并区分上/下台阶
       stair_align_up_pre_dist_m: 0.9
->>>>>>> Stashed changes
       stair_align_up_post_dist_m: 0.2
       stair_align_down_pre_dist_m: 0.1
       stair_align_down_post_dist_m: 0.1
@@ -206,8 +197,15 @@ nav_server:
       #   故推荐 horizon_length = desired_velocity * T_horizon_solver (= 1.5 * 1.5 = 2.25m)
       # 速度一致性补丁（代码中已实施）：desired_v = min(desired_v, step_dist/dt)，
       #   确保速度参考不超过位置间距隐含的速度上限，消除代价函数内耗
-      horizon_length: 2.5     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
+      horizon_length: 2.25     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
       desired_velocity: 2.5      # 期望巡航速度 (m/s)
+      speed_profile:
+        enable: true
+        v_cruise: 2.5              # 解耦后的巡航参考速度 (m/s)
+        v_min: 0.15                # 非终点工况最低参考速度 (m/s)
+        max_lateral_accel: 1.6     # 横向加速度上限，用于曲率限速 (m/s^2)
+        kappa_epsilon: 0.08        # 曲率分母下限，防止小曲率时限速发散 (1/m)
+        curvature_window_m: 1.5    # 曲率统计窗口长度 (m)
 
       # 曲率自适应 horizon：effective_horizon = horizon_length / (1 + kappa_scale * kappa_max)
       # 同时自动压缩位置间距和速度参考上限（运动学一致），一致降低弯道速度
@@ -230,8 +228,8 @@ nav_server:
       heading_slowdown_start: 0.5       # 航向误差>该值开始降速 (rad)
       heading_slowdown_min_factor: 0.6  # 航向降速最小倍率
       enable_curvature_speed_decay: true  # 高曲率路段启用参考速度衰减
-      curvature_decay_kappa_ref: 3.0      # 曲率参考值(1/m)，越小衰减越明显
-      curvature_decay_min_factor: 1.2    # 曲率衰减最小倍率
+      curvature_decay_kappa_ref: 1.0      # 曲率参考值(1/m)，越小衰减越明显
+      curvature_decay_min_factor: 0.3    # 曲率衰减最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
       chassis_odom_topic: "/Odometry" # 需为 nav_msgs/msg/Odometry，避免与 /ChassisOdom 多类型冲突
