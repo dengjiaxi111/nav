@@ -7,6 +7,7 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <Eigen/Dense>
 
 #include "nav_components/static_map_loader.hpp"
 #include "nav_components/costmap_inflater.hpp"
@@ -145,11 +146,32 @@ public:
         int oneway_gray_max{230};
     };
 
+    struct StairCrossingBand {
+        // 沿台阶法向的低侧(negative)/高侧(positive)作用距离
+        double low_side_dist_m{0.0};
+        double high_side_dist_m{0.0};
+        // 沿台阶切向的半宽（通常可与 half_length 一致）
+        double tangent_half_width_m{0.0};
+    };
+
+    struct StairPrimitive {
+        int stair_id{-1};
+        Eigen::Vector2d center = Eigen::Vector2d::Zero();
+        Eigen::Vector2d normal = Eigen::Vector2d::Zero();
+        Eigen::Vector2d tangent = Eigen::Vector2d::Zero();
+        double half_length{0.0};
+        StairCrossingBand crossing_band{};
+        bool is_oneway_down{false};
+    };
+
     void setStairLayerConfig(const StairLayerConfig& cfg);
 
     bool isTransitionAllowed(int from_x, int from_y, int to_x, int to_y) const;
     void getForbiddenTransitionSegments(std::vector<std::array<double, 4>>& segments) const;
     bool getStairTraverseNormal(double wx, double wy, double& nx, double& ny) const;
+    bool getStairPrimitiveAt(double wx, double wy, StairPrimitive& primitive) const;
+    bool getStairPrimitiveById(int stair_id, StairPrimitive& primitive) const;
+    std::vector<StairPrimitive> getStairPrimitives() const;
 
     // ============ MapInterface实现 ============
 
@@ -272,6 +294,8 @@ private:
     std::vector<float> stair_normal_x_{};
     std::vector<float> stair_normal_y_{};
     std::vector<uint8_t> stair_normal_valid_{};
+    std::vector<StairPrimitive> stair_primitives_{};
+    std::vector<int> stair_primitive_id_map_{};  // global idx -> stair_id, -1 表示无
 };
 
 }  // namespace nav_components

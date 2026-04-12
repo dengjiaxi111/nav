@@ -49,6 +49,9 @@ struct BSplineOptParams {
     double lambda_stair_anchor = 0.0;    // 锚点权重，0=禁用（纯 Phase B）
     double lambda_stair_lateral = 0.0;   // 走廊权重，0=禁用
     double stair_corridor_half_width = 0.30; // 走廊半宽 (m)
+    // 使用 A* 命中的台阶点作为锚点中心（减少 A*/B-spline 横向偏移）
+    bool use_astar_stair_anchors = true;
+    double astar_stair_anchor_match_max_dist = 0.6;
     
     // 优化器参数
     int max_iterations = 100;       // 最大迭代次数
@@ -73,8 +76,12 @@ struct StairAlignDiagnostics {
         Eigen::Vector2d anchor_pre = Eigen::Vector2d::Zero();
         Eigen::Vector2d anchor_mid = Eigen::Vector2d::Zero();
         Eigen::Vector2d anchor_post = Eigen::Vector2d::Zero();
+        bool has_astar_match = false;
+        Eigen::Vector2d astar_match_point = Eigen::Vector2d::Zero();
+        double astar_match_dist = -1.0;
     };
     std::vector<ClusterInfo> clusters;
+    std::vector<Eigen::Vector2d> astar_hit_points;
     struct SampleInfo {
         Eigen::Vector2d position = Eigen::Vector2d::Zero();
         Eigen::Vector2d tangent_unit = Eigen::Vector2d::Zero();
@@ -101,6 +108,9 @@ public:
     void setParams(const BSplineOptParams& params) { params_ = params; }
     void setESDFCallback(ESDFCallback cb) { esdf_callback_ = cb; }
     void setStairNormalCallback(StairNormalCallback cb) { stair_normal_callback_ = cb; }
+    void setAstarStairHits(const std::vector<Eigen::Vector2d>& hits) {
+        astar_stair_hits_ = hits;
+    }
     void setInterval(double interval) { bspline_interval_ = interval; }
     const StairAlignDiagnostics& getStairDiagnostics() const { return last_stair_diag_; }
     
@@ -244,13 +254,16 @@ public:
                     const auto& cl = last_stair_diag_.clusters[ci];
                     RCLCPP_INFO(rclcpp::get_logger("bspline_opt"),
                         "  cluster[%zu]: %s, n=(%.2f,%.2f), center=(%.2f,%.2f), "
-                        "window=[%.2f, %.2f]m, anchor_pre=(%.2f,%.2f), anchor_post=(%.2f,%.2f)",
+                        "window=[%.2f, %.2f]m, anchor_pre=(%.2f,%.2f), anchor_post=(%.2f,%.2f), "
+                        "astar_match=%s, d_pre=%.3fm",
                         ci, cl.is_uphill ? "UP" : "DOWN",
                         cl.normal.x(), cl.normal.y(),
                         cl.center_pos.x(), cl.center_pos.y(),
                         cl.window_arc_start, cl.window_arc_end,
                         cl.anchor_pre.x(), cl.anchor_pre.y(),
-                        cl.anchor_post.x(), cl.anchor_post.y());
+                        cl.anchor_post.x(), cl.anchor_post.y(),
+                        cl.has_astar_match ? "yes" : "no",
+                        cl.astar_match_dist);
                 }
             }
         }
@@ -996,6 +1009,8 @@ private:
         std::vector<ClusterAnchorInfo> cluster_anchors(clusters.size());
         std::vector<int> sample_cluster(samples.size(), -1);
 
+    last_stair_diag_.astar_hit_points = astar_stair_hits_;
+
         for (int ci = 0; ci < static_cast<int>(clusters.size()); ++ci) {
             const auto& cl = clusters[ci];
             double pre  = cl.is_uphill ? up_pre  : down_pre;
@@ -1003,18 +1018,39 @@ private:
             double w_start = cl.center_arc - pre;
             double w_end   = cl.center_arc + post;
 
+            Eigen::Vector2d center_pos = cl.center_pos;
+            bool has_match = false;
+            Eigen::Vector2d matched_pt = center_pos;
+            double matched_dist = -1.0;
+            if (params_.use_astar_stair_anchors && !astar_stair_hits_.empty()) {
+                double best_d = std::numeric_limits<double>::max();
+                Eigen::Vector2d best_pt = center_pos;
+                for (const auto& hp : astar_stair_hits_) {
+                    double d = (hp - center_pos).norm();
+                    if (d < best_d) {
+                        best_d = d;
+                        best_pt = hp;
+                    }
+                }
+                if (best_d <= std::max(0.05, params_.astar_stair_anchor_match_max_dist)) {
+                    center_pos = best_pt;
+                    has_match = true;
+                    matched_pt = best_pt;
+                }
+            }
+
             double dir = cl.is_uphill ? 1.0 : -1.0;
             auto& anc = cluster_anchors[ci];
             anc.t_stair = Eigen::Vector2d(-cl.normal.y(), cl.normal.x());
-            anc.anchor_pre  = cl.center_pos - dir * cl.normal * pre;
-            anc.anchor_mid  = cl.center_pos;
-            anc.anchor_post = cl.center_pos + dir * cl.normal * post;
+            anc.anchor_pre  = center_pos - dir * cl.normal * pre;
+            anc.anchor_mid  = center_pos;
+            anc.anchor_post = center_pos + dir * cl.normal * post;
             anc.anchor_pre_arc  = w_start;
             anc.anchor_mid_arc  = cl.center_arc;
             anc.anchor_post_arc = w_end;
 
             StairAlignDiagnostics::ClusterInfo ci_diag;
-            ci_diag.center_pos = cl.center_pos;
+            ci_diag.center_pos = center_pos;
             ci_diag.normal = cl.normal;
             ci_diag.is_uphill = cl.is_uphill;
             ci_diag.window_arc_start = w_start;
@@ -1022,6 +1058,12 @@ private:
             ci_diag.anchor_pre = anc.anchor_pre;
             ci_diag.anchor_mid = anc.anchor_mid;
             ci_diag.anchor_post = anc.anchor_post;
+            ci_diag.has_astar_match = has_match;
+            ci_diag.astar_match_point = matched_pt;
+            if (has_match) {
+                matched_dist = (anc.anchor_pre - matched_pt).norm();
+            }
+            ci_diag.astar_match_dist = has_match ? matched_dist : -1.0;
             last_stair_diag_.clusters.push_back(ci_diag);
 
             for (int si = 0; si < static_cast<int>(samples.size()); ++si) {
@@ -1241,6 +1283,7 @@ private:
     double last_opt_time_ms_ = 0;
     double bspline_interval_ = 0.0;
     StairAlignDiagnostics last_stair_diag_;
+    std::vector<Eigen::Vector2d> astar_stair_hits_;
 };
 
 }  // namespace nav_components

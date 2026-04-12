@@ -57,6 +57,10 @@ private:
     bool runAstar(int sx, int sy, int gx, int gy,
                   const std_msgs::msg::Header& header,
                   nav_msgs::msg::Path& path);
+
+    // A* 台阶感知形态代价：入口附近抑制切向掠过、约束中垂线
+    double computeStairShapeCost(int from_x, int from_y,
+                                 int to_x, int to_y);
     
     // 脱困：BFS搜索最近的可通行格子
     bool findNearestFreeCell(int cx, int cy, int& fx, int& fy, int max_radius = 50);
@@ -92,6 +96,28 @@ private:
     bool enable_auto_prune_ = true;  // 启用自动剪枝
     double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
     bool publish_astar_raw_path_ = true;  // 发布原始A*路径（平滑前）
+
+    // A* 台阶感知形态参数（不含外切奖励）
+    bool astar_stair_shape_enable_ = false;
+    int astar_stair_search_radius_cells_ = 4;
+    double astar_stair_trigger_dist_m_ = 1.2;
+    double astar_stair_tangent_penalty_weight_ = 2.0;
+    double astar_stair_centerline_penalty_weight_ = 1.0;
+    bool astar_stair_lock_cluster_center_ = true;
+    // A* 台阶段窗口长度（与 B-spline stair_align_*_pre/post 参数同源）
+    double astar_stair_up_pre_dist_m_ = 0.6;
+    double astar_stair_up_post_dist_m_ = 0.6;
+    double astar_stair_down_pre_dist_m_ = 0.6;
+    double astar_stair_down_post_dist_m_ = 0.6;
+
+    // A* 单次规划内锁定的台阶簇中心与法向
+    bool astar_stair_cluster_locked_ = false;
+    Eigen::Vector2d astar_stair_locked_center_ = Eigen::Vector2d::Zero();
+    Eigen::Vector2d astar_stair_locked_normal_ = Eigen::Vector2d::Zero();
+
+    // B-spline 锚点与 A* 台阶命中点对齐
+    bool use_astar_stair_anchors_ = true;
+    double astar_stair_anchor_match_max_dist_m_ = 0.6;
     
     // 调试可视化
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr astar_raw_path_pub_;

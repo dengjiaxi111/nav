@@ -59,3 +59,29 @@ git remote add upstream <地址>：关联原作者的仓库（用于同步更新
 ```
 git submodule update --init --recursive：初始化并下载所有子模块（如果你 clone 完发现文件夹是空的，必执行此条）。
 ```
+解决nav_params.yaml冲突问题：
+按顺序执行：
+1）只看远程会动你哪些行（不改动工作区）
+```
+git fetch origin
+git diff HEAD..origin/master -- src/my_navigation/nav_bringup/config/nav_params.yaml
+```
+2）把当前未提交修改收起来
+```
+git stash push -m "wip nav_params" -- src/my_navigation/nav_bringup/config/nav_params.yaml
+```
+（若不止这一个文件，可去掉 -- 路径 整仓 stash。）
+
+3）合并远程
+```
+git merge origin/master
+```
+或用习惯写法：
+```
+git pull origin master
+```
+4）把本地改动拿回来，在文件里自己决定保留
+
+```
+git stash pop
+```

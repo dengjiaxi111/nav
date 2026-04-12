@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <cstdio>
 
 namespace nav_components {
 
@@ -27,6 +28,22 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_threshold_step_ = node_->declare_parameter("planner.astar_threshold_step", 10);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
     publish_astar_raw_path_ = node_->declare_parameter("planner.publish_astar_raw_path", true);
+    astar_stair_shape_enable_ =
+        node_->declare_parameter("planner.astar_stair_shape_enable", false);
+    astar_stair_search_radius_cells_ =
+        node_->declare_parameter("planner.astar_stair_search_radius_cells", 4);
+    astar_stair_trigger_dist_m_ =
+        node_->declare_parameter("planner.astar_stair_trigger_dist_m", 1.2);
+    astar_stair_tangent_penalty_weight_ =
+        node_->declare_parameter("planner.astar_stair_tangent_penalty_weight", 2.0);
+    astar_stair_centerline_penalty_weight_ =
+        node_->declare_parameter("planner.astar_stair_centerline_penalty_weight", 1.0);
+    astar_stair_lock_cluster_center_ =
+        node_->declare_parameter("planner.astar_stair_lock_cluster_center", true);
+    use_astar_stair_anchors_ =
+        node_->declare_parameter("planner.use_astar_stair_anchors", true);
+    astar_stair_anchor_match_max_dist_m_ =
+        node_->declare_parameter("planner.astar_stair_anchor_match_max_dist_m", 0.6);
 
     if (astar_max_attempts_ < 1) {
         RCLCPP_WARN(node_->get_logger(),
@@ -37,6 +54,21 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         RCLCPP_WARN(node_->get_logger(),
             "planner.astar_threshold_step=%d 非法，自动修正为 0", astar_threshold_step_);
         astar_threshold_step_ = 0;
+    }
+    if (astar_stair_search_radius_cells_ < 1) {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.astar_stair_search_radius_cells=%d 非法，自动修正为1",
+            astar_stair_search_radius_cells_);
+        astar_stair_search_radius_cells_ = 1;
+    }
+    if (astar_stair_trigger_dist_m_ < 0.0) {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.astar_stair_trigger_dist_m=%.3f 非法，自动修正为0",
+            astar_stair_trigger_dist_m_);
+        astar_stair_trigger_dist_m_ = 0.0;
+    }
+    if (astar_stair_anchor_match_max_dist_m_ < 0.0) {
+        astar_stair_anchor_match_max_dist_m_ = 0.0;
     }
     
     SmoothParams smooth_params;
@@ -77,6 +109,10 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.stair_align_down_pre_dist_m", stair_legacy_window_m);
     smooth_params.stair_align_down_post_dist_m =
         node_->declare_parameter("planner.stair_align_down_post_dist_m", stair_legacy_window_m);
+    astar_stair_up_pre_dist_m_ = smooth_params.stair_align_up_pre_dist_m;
+    astar_stair_up_post_dist_m_ = smooth_params.stair_align_up_post_dist_m;
+    astar_stair_down_pre_dist_m_ = smooth_params.stair_align_down_pre_dist_m;
+    astar_stair_down_post_dist_m_ = smooth_params.stair_align_down_post_dist_m;
     smooth_params.stair_align_mode =
         node_->declare_parameter("planner.stair_segment_align_mode", std::string("curve_sample"));
     smooth_params.stair_sample_ds_m =
@@ -87,6 +123,8 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.opt_lambda_stair_lateral", 0.0);
     smooth_params.stair_corridor_half_width_m =
         node_->declare_parameter("planner.stair_corridor_half_width_m", 0.30);
+    smooth_params.use_astar_stair_anchors = use_astar_stair_anchors_;
+    smooth_params.astar_stair_anchor_match_max_dist_m = astar_stair_anchor_match_max_dist_m_;
 
     smoother_.setParams(smooth_params);
     
@@ -190,6 +228,119 @@ double SimplePlanner::getCost(int x, int y) {
 
 double SimplePlanner::heuristic(int x1, int y1, int x2, int y2) {
     return std::hypot(x2 - x1, y2 - y1);
+}
+
+double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
+                                            int to_x, int to_y) {
+    if (!astar_stair_shape_enable_ || !map_manager_ ||
+        astar_stair_trigger_dist_m_ <= 1e-6 || resolution_ <= 1e-9) {
+        return 0.0;
+    }
+
+    auto cellToWorld = [this](int mx, int my) -> Eigen::Vector2d {
+        return Eigen::Vector2d(origin_x_ + (mx + 0.5) * resolution_,
+                               origin_y_ + (my + 0.5) * resolution_);
+    };
+
+    const Eigen::Vector2d p_from = cellToWorld(from_x, from_y);
+    const Eigen::Vector2d p_to = cellToWorld(to_x, to_y);
+    Eigen::Vector2d move = p_to - p_from;
+    double mv_norm = move.norm();
+    if (mv_norm < 1e-6) {
+        return 0.0;
+    }
+    Eigen::Vector2d move_dir = move / mv_norm;
+
+    const int r = std::max(1, astar_stair_search_radius_cells_);
+    bool found = false;
+    double min_dist = std::numeric_limits<double>::max();
+    double w_sum = 0.0;
+    Eigen::Vector2d n_sum = Eigen::Vector2d::Zero();
+    Eigen::Vector2d c_sum = Eigen::Vector2d::Zero();
+
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+            int mx = to_x + dx;
+            int my = to_y + dy;
+            if (mx < 0 || mx >= width_ || my < 0 || my >= height_) {
+                continue;
+            }
+            const Eigen::Vector2d p = cellToWorld(mx, my);
+            double nx = 0.0, ny = 0.0;
+            if (!map_manager_->getStairTraverseNormal(p.x(), p.y(), nx, ny)) {
+                continue;
+            }
+            Eigen::Vector2d n(nx, ny);
+            double nn = n.norm();
+            if (nn < 1e-6) {
+                continue;
+            }
+            n /= nn;
+            double d = (p - p_to).norm();
+            min_dist = std::min(min_dist, d);
+            double w = 1.0 / (d * d + 1e-4);
+            w_sum += w;
+            n_sum += w * n;
+            c_sum += w * p;
+            found = true;
+        }
+    }
+
+    if (!found || w_sum < 1e-9) {
+        return 0.0;
+    }
+
+    Eigen::Vector2d n = n_sum;
+    double nn = n.norm();
+    if (nn < 1e-6) {
+        return 0.0;
+    }
+    n /= nn;
+    Eigen::Vector2d center = c_sum / w_sum;
+
+    // 首次命中后在单次A*搜索中锁定同一个簇中心和法向
+    if (astar_stair_lock_cluster_center_) {
+        if (!astar_stair_cluster_locked_) {
+            astar_stair_cluster_locked_ = true;
+            astar_stair_locked_center_ = center;
+            astar_stair_locked_normal_ = n;
+        }
+        center = astar_stair_locked_center_;
+        n = astar_stair_locked_normal_;
+    }
+
+    Eigen::Vector2d t(-n.y(), n.x());
+
+    // 与 B-spline 一致：按上下台阶方向选择 pre/post 弧长窗口
+    const bool is_uphill = (move_dir.dot(n) >= 0.0);
+    const double pre = std::max(0.0,
+        is_uphill ? astar_stair_up_pre_dist_m_ : astar_stair_down_pre_dist_m_);
+    const double post = std::max(0.0,
+        is_uphill ? astar_stair_up_post_dist_m_ : astar_stair_down_post_dist_m_);
+    const double dir = is_uphill ? 1.0 : -1.0;
+    const double s_n = dir * (p_to - center).dot(n);
+
+    // 外层兜底触发门限（避免远离台阶时误触发）；若设置偏小，自动放宽到窗口尺度
+    const double min_required_trigger = std::max(pre, post);
+    const double effective_trigger = std::max(astar_stair_trigger_dist_m_, min_required_trigger);
+    if (min_dist > effective_trigger) {
+        return 0.0;
+    }
+
+    // 核心窗口：长度直接来自 stair_align_*_pre/post，与 B-spline 一致
+    if (s_n < -pre - 1e-6 || s_n > post + 1e-6) {
+        return 0.0;
+    }
+
+    double tan_comp = move_dir.dot(t);
+    double c_tan = astar_stair_tangent_penalty_weight_ * tan_comp * tan_comp;
+
+    double d_t = (p_to - center).dot(t);
+    double denom = std::max(0.05, (pre + post) * 0.5);
+    double u = d_t / denom;
+    double c_center = astar_stair_centerline_penalty_weight_ * u * u;
+
+    return c_tan + c_center;
 }
 
 bool SimplePlanner::findNearestFreeCell(int cx, int cy, int& fx, int& fy, int max_radius) {
@@ -405,6 +556,11 @@ bool SimplePlanner::plan(
 bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
                               const std_msgs::msg::Header& header,
                               nav_msgs::msg::Path& path) {
+    // 每次A*搜索开始前重置簇锁定状态
+    astar_stair_cluster_locked_ = false;
+    astar_stair_locked_center_.setZero();
+    astar_stair_locked_normal_.setZero();
+
     auto cmp = [](Node* a, Node* b) { return a->f() > b->f(); };
     std::priority_queue<Node*, std::vector<Node*>, decltype(cmp)> open(cmp);
     std::vector<std::unique_ptr<Node>> all_nodes;
@@ -471,7 +627,8 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
             }
             
             double cell_cost = getCost(nx, ny);
-            double total_cost = move_cost[i] + cost_weight_ * cell_cost;
+            double stair_shape_cost = computeStairShapeCost(curr->x, curr->y, nx, ny);
+            double total_cost = move_cost[i] + cost_weight_ * cell_cost + stair_shape_cost;
             double tentative_g = curr->g + total_cost;
 
             if (tentative_g + 1e-9 >= best_g[nidx]) {
@@ -706,6 +863,10 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
     visualization_msgs::msg::MarkerArray markers;
     auto stamp = node_->now();
     int id = 0;
+    std::vector<LayeredMapManager::StairPrimitive> primitives;
+    if (map_manager_) {
+        primitives = map_manager_->getStairPrimitives();
+    }
 
     // 清除旧标记
     {
@@ -723,11 +884,196 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
         markers.markers.push_back(del);
         del.ns = "stair_corridor";
         markers.markers.push_back(del);
+        del.ns = "stair_astar_hits";
+        markers.markers.push_back(del);
+        del.ns = "stair_anchor_match";
+        markers.markers.push_back(del);
+        del.ns = "stair_primitive_center";
+        markers.markers.push_back(del);
+        del.ns = "stair_primitive_normal";
+        markers.markers.push_back(del);
+        del.ns = "stair_primitive_tangent";
+        markers.markers.push_back(del);
+        del.ns = "stair_primitive_half_length";
+        markers.markers.push_back(del);
+        del.ns = "stair_primitive_band";
+        markers.markers.push_back(del);
+        del.ns = "stair_primitive_id";
+        markers.markers.push_back(del);
     }
 
-    if (diag.clusters.empty() && diag.samples.empty()) {
+    if (diag.clusters.empty() && diag.samples.empty() && primitives.empty()) {
         stair_debug_pub_->publish(markers);
         return;
+    }
+
+    // StairPrimitive 对象化可视化（center/normal/tangent/half_length/crossing_band）
+    if (!primitives.empty()) {
+        visualization_msgs::msg::Marker centers;
+        centers.header.frame_id = frame_id;
+        centers.header.stamp = stamp;
+        centers.ns = "stair_primitive_center";
+        centers.id = id++;
+        centers.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        centers.action = visualization_msgs::msg::Marker::ADD;
+        centers.scale.x = 0.10;
+        centers.scale.y = 0.10;
+        centers.scale.z = 0.10;
+        centers.color.r = 0.0f;
+        centers.color.g = 0.7f;
+        centers.color.b = 1.0f;
+        centers.color.a = 0.95f;
+
+        for (const auto& p : primitives) {
+            geometry_msgs::msg::Point c;
+            c.x = p.center.x();
+            c.y = p.center.y();
+            c.z = 0.18;
+            centers.points.push_back(c);
+
+            visualization_msgs::msg::Marker n_arrow;
+            n_arrow.header.frame_id = frame_id;
+            n_arrow.header.stamp = stamp;
+            n_arrow.ns = "stair_primitive_normal";
+            n_arrow.id = id++;
+            n_arrow.type = visualization_msgs::msg::Marker::ARROW;
+            n_arrow.action = visualization_msgs::msg::Marker::ADD;
+            n_arrow.scale.x = 0.03;
+            n_arrow.scale.y = 0.06;
+            n_arrow.scale.z = 0.0;
+            n_arrow.color.r = 0.0f;
+            n_arrow.color.g = 1.0f;
+            n_arrow.color.b = 1.0f;
+            n_arrow.color.a = 0.9f;
+
+            geometry_msgs::msg::Point ns, ne;
+            ns.x = p.center.x();
+            ns.y = p.center.y();
+            ns.z = 0.16;
+            ne.x = p.center.x() + p.normal.x() * 0.45;
+            ne.y = p.center.y() + p.normal.y() * 0.45;
+            ne.z = 0.16;
+            n_arrow.points.push_back(ns);
+            n_arrow.points.push_back(ne);
+            markers.markers.push_back(n_arrow);
+
+            visualization_msgs::msg::Marker t_arrow = n_arrow;
+            t_arrow.ns = "stair_primitive_tangent";
+            t_arrow.id = id++;
+            t_arrow.color.r = 0.9f;
+            t_arrow.color.g = 0.1f;
+            t_arrow.color.b = 0.9f;
+            t_arrow.points[1].x = p.center.x() + p.tangent.x() * 0.45;
+            t_arrow.points[1].y = p.center.y() + p.tangent.y() * 0.45;
+            markers.markers.push_back(t_arrow);
+
+            visualization_msgs::msg::Marker hl;
+            hl.header.frame_id = frame_id;
+            hl.header.stamp = stamp;
+            hl.ns = "stair_primitive_half_length";
+            hl.id = id++;
+            hl.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            hl.action = visualization_msgs::msg::Marker::ADD;
+            hl.scale.x = 0.03;
+            hl.color.r = 0.3f;
+            hl.color.g = 0.9f;
+            hl.color.b = 0.2f;
+            hl.color.a = 0.85f;
+            hl.pose.orientation.w = 1.0;
+
+            geometry_msgs::msg::Point l1, l2;
+            l1.x = p.center.x() - p.tangent.x() * p.half_length;
+            l1.y = p.center.y() - p.tangent.y() * p.half_length;
+            l1.z = 0.14;
+            l2.x = p.center.x() + p.tangent.x() * p.half_length;
+            l2.y = p.center.y() + p.tangent.y() * p.half_length;
+            l2.z = 0.14;
+            hl.points.push_back(l1);
+            hl.points.push_back(l2);
+            markers.markers.push_back(hl);
+
+            const double low = std::max(0.0, p.crossing_band.low_side_dist_m);
+            const double high = std::max(0.0, p.crossing_band.high_side_dist_m);
+            const double tw = std::max(0.05, p.crossing_band.tangent_half_width_m);
+            Eigen::Vector2d c0 = p.center;
+            Eigen::Vector2d a = c0 - p.normal * low - p.tangent * tw;
+            Eigen::Vector2d b = c0 - p.normal * low + p.tangent * tw;
+            Eigen::Vector2d cpt = c0 + p.normal * high + p.tangent * tw;
+            Eigen::Vector2d d = c0 + p.normal * high - p.tangent * tw;
+
+            visualization_msgs::msg::Marker band;
+            band.header.frame_id = frame_id;
+            band.header.stamp = stamp;
+            band.ns = "stair_primitive_band";
+            band.id = id++;
+            band.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            band.action = visualization_msgs::msg::Marker::ADD;
+            band.scale.x = 0.02;
+            band.color.r = 1.0f;
+            band.color.g = 0.75f;
+            band.color.b = 0.0f;
+            band.color.a = 0.75f;
+            band.pose.orientation.w = 1.0;
+
+            auto push_pt = [&](const Eigen::Vector2d& v) {
+                geometry_msgs::msg::Point q;
+                q.x = v.x();
+                q.y = v.y();
+                q.z = 0.06;
+                band.points.push_back(q);
+            };
+            push_pt(a);
+            push_pt(b);
+            push_pt(cpt);
+            push_pt(d);
+            push_pt(a);
+            markers.markers.push_back(band);
+
+            visualization_msgs::msg::Marker txt;
+            txt.header.frame_id = frame_id;
+            txt.header.stamp = stamp;
+            txt.ns = "stair_primitive_id";
+            txt.id = id++;
+            txt.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+            txt.action = visualization_msgs::msg::Marker::ADD;
+            txt.pose.position.x = p.center.x();
+            txt.pose.position.y = p.center.y();
+            txt.pose.position.z = 0.30;
+            txt.scale.z = 0.11;
+            txt.color.r = 1.0f;
+            txt.color.g = 1.0f;
+            txt.color.b = 1.0f;
+            txt.color.a = 0.95f;
+            txt.text = std::string("id=") + std::to_string(p.stair_id);
+            markers.markers.push_back(txt);
+        }
+        markers.markers.push_back(centers);
+    }
+
+    // A* 台阶命中点（青绿色）
+    if (!diag.astar_hit_points.empty()) {
+        visualization_msgs::msg::Marker hit_pts;
+        hit_pts.header.frame_id = frame_id;
+        hit_pts.header.stamp = stamp;
+        hit_pts.ns = "stair_astar_hits";
+        hit_pts.id = id++;
+        hit_pts.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        hit_pts.action = visualization_msgs::msg::Marker::ADD;
+        hit_pts.scale.x = 0.05;
+        hit_pts.scale.y = 0.05;
+        hit_pts.scale.z = 0.05;
+        hit_pts.color.r = 0.1f;
+        hit_pts.color.g = 1.0f;
+        hit_pts.color.b = 0.6f;
+        hit_pts.color.a = 0.95f;
+        for (const auto& hp : diag.astar_hit_points) {
+            geometry_msgs::msg::Point p;
+            p.x = hp.x();
+            p.y = hp.y();
+            p.z = 0.11;
+            hit_pts.points.push_back(p);
+        }
+        markers.markers.push_back(hit_pts);
     }
 
     // 台阶法向箭头（每个 cluster 一个）
@@ -886,6 +1232,54 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
             sp.color.b = anchors[ai].b;
             sp.color.a = 0.9f;
             markers.markers.push_back(sp);
+        }
+
+        // anchor_pre -> A*命中点连线（若匹配成功）
+        if (cl.has_astar_match) {
+            visualization_msgs::msg::Marker match_line;
+            match_line.header.frame_id = frame_id;
+            match_line.header.stamp = stamp;
+            match_line.ns = "stair_anchor_match";
+            match_line.id = id++;
+            match_line.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            match_line.action = visualization_msgs::msg::Marker::ADD;
+            match_line.scale.x = 0.02;
+            match_line.color.r = 1.0f;
+            match_line.color.g = 0.0f;
+            match_line.color.b = 1.0f;
+            match_line.color.a = 0.9f;
+            match_line.pose.orientation.w = 1.0;
+
+            geometry_msgs::msg::Point p1, p2;
+            p1.x = cl.anchor_pre.x();
+            p1.y = cl.anchor_pre.y();
+            p1.z = 0.13;
+            p2.x = cl.astar_match_point.x();
+            p2.y = cl.astar_match_point.y();
+            p2.z = 0.13;
+            match_line.points.push_back(p1);
+            match_line.points.push_back(p2);
+            markers.markers.push_back(match_line);
+
+            visualization_msgs::msg::Marker txt;
+            txt.header.frame_id = frame_id;
+            txt.header.stamp = stamp;
+            txt.ns = "stair_anchor_match";
+            txt.id = id++;
+            txt.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+            txt.action = visualization_msgs::msg::Marker::ADD;
+            txt.pose.position.x = 0.5 * (p1.x + p2.x);
+            txt.pose.position.y = 0.5 * (p1.y + p2.y);
+            txt.pose.position.z = 0.22;
+            txt.scale.z = 0.10;
+            txt.color.r = 1.0f;
+            txt.color.g = 0.9f;
+            txt.color.b = 1.0f;
+            txt.color.a = 0.95f;
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "d=%.2fm", cl.astar_match_dist);
+            txt.text = buf;
+            markers.markers.push_back(txt);
         }
 
         // 走廊边界线（两条沿法向偏移 corridor_half_width 的线段）

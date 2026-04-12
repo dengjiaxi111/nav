@@ -9,6 +9,7 @@
 #include <chrono>
 #include <limits>
 #include <unordered_set>
+#include <Eigen/Eigenvalues>
 
 namespace nav_components {
 
@@ -43,6 +44,8 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
         stair_normal_x_.clear();
         stair_normal_y_.clear();
         stair_normal_valid_.clear();
+        stair_primitives_.clear();
+        stair_primitive_id_map_.clear();
         stair_mask_loaded_ = false;
         return;
     }
@@ -211,19 +214,63 @@ bool LayeredMapManager::getStairTraverseNormal(double wx, double wy, double& nx,
     return true;
 }
 
+bool LayeredMapManager::getStairPrimitiveAt(
+    double wx, double wy, StairPrimitive& primitive) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (!stair_layer_cfg_.enable || stair_primitives_.empty() || stair_primitive_id_map_.empty()) {
+        return false;
+    }
+
+    int idx = -1;
+    if (!worldToGlobalIndex(wx, wy, idx)) {
+        return false;
+    }
+    if (idx < 0 || idx >= static_cast<int>(stair_primitive_id_map_.size())) {
+        return false;
+    }
+
+    const int stair_id = stair_primitive_id_map_[idx];
+    if (stair_id < 0 || stair_id >= static_cast<int>(stair_primitives_.size())) {
+        return false;
+    }
+
+    primitive = stair_primitives_[stair_id];
+    return true;
+}
+
+bool LayeredMapManager::getStairPrimitiveById(
+    int stair_id, StairPrimitive& primitive) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (stair_id < 0 || stair_id >= static_cast<int>(stair_primitives_.size())) {
+        return false;
+    }
+    primitive = stair_primitives_[stair_id];
+    return true;
+}
+
+std::vector<LayeredMapManager::StairPrimitive> LayeredMapManager::getStairPrimitives() const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    return stair_primitives_;
+}
+
 void LayeredMapManager::rebuildStairLayerCache() {
     stair_clear_indices_.clear();
     stair_forbidden_transitions_.clear();
+    stair_primitives_.clear();
 
     if (width_ > 0 && height_ > 0) {
         const size_t n = static_cast<size_t>(width_ * height_);
         stair_normal_x_.assign(n, 0.0f);
         stair_normal_y_.assign(n, 0.0f);
         stair_normal_valid_.assign(n, 0);
+        stair_primitive_id_map_.assign(n, -1);
     } else {
         stair_normal_x_.clear();
         stair_normal_y_.clear();
         stair_normal_valid_.clear();
+        stair_primitive_id_map_.clear();
     }
 
     if (!stair_layer_cfg_.enable || stair_layer_cfg_.mask_yaml_path.empty()) {
@@ -280,6 +327,70 @@ void LayeredMapManager::rebuildStairLayerCache() {
         return;
     }
 
+    struct PrimitiveAccumulator {
+        bool is_oneway_down{false};
+        std::vector<std::pair<int, int>> black_cells;
+        Eigen::Vector2d normal_sum = Eigen::Vector2d::Zero();
+        int normal_count{0};
+    };
+    std::vector<PrimitiveAccumulator> primitive_acc;
+    std::vector<int> mask_primitive_id(
+        static_cast<size_t>(stair_mask_width_ * stair_mask_height_), -1);
+
+    auto is_black_cell = [&](int cls) {
+        return (cls == 1) || (stair_layer_cfg_.enable_oneway_stair_down && cls == 3);
+    };
+
+    for (int my = 0; my < stair_mask_height_; ++my) {
+        for (int mx = 0; mx < stair_mask_width_; ++mx) {
+            const int idx = my * stair_mask_width_ + mx;
+            if (!is_black_cell(class_map[idx]) || mask_primitive_id[idx] >= 0) {
+                continue;
+            }
+
+            PrimitiveAccumulator acc;
+            std::vector<int> stack;
+            stack.push_back(idx);
+            mask_primitive_id[idx] = static_cast<int>(primitive_acc.size());
+
+            while (!stack.empty()) {
+                const int cur = stack.back();
+                stack.pop_back();
+                const int cx = cur % stair_mask_width_;
+                const int cy = cur / stair_mask_width_;
+
+                const int cls = class_map[cur];
+                if (cls == 3) {
+                    acc.is_oneway_down = true;
+                }
+                acc.black_cells.emplace_back(cx, cy);
+
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) {
+                            continue;
+                        }
+                        const int nx = cx + dx;
+                        const int ny = cy + dy;
+                        if (nx < 0 || nx >= stair_mask_width_ || ny < 0 || ny >= stair_mask_height_) {
+                            continue;
+                        }
+                        const int nidx = ny * stair_mask_width_ + nx;
+                        if (!is_black_cell(class_map[nidx]) || mask_primitive_id[nidx] >= 0) {
+                            continue;
+                        }
+                        mask_primitive_id[nidx] = static_cast<int>(primitive_acc.size());
+                        stack.push_back(nidx);
+                    }
+                }
+            }
+
+            if (!acc.black_cells.empty()) {
+                primitive_acc.push_back(std::move(acc));
+            }
+        }
+    }
+
     std::unordered_set<int> clear_idx_set;
     clear_idx_set.reserve((bidir_black_cells.size() + oneway_black_cells.size()) * 8);
 
@@ -299,7 +410,7 @@ void LayeredMapManager::rebuildStairLayerCache() {
     const int clear_low_steps =
         std::max(0, static_cast<int>(std::ceil(clear_low_m / resolution_)));
 
-    auto add_clear_sample = [&](double wx, double wy, double nx, double ny) {
+    auto add_clear_sample = [&](double wx, double wy, double nx, double ny, int stair_id) {
         int global_idx = -1;
         if (worldToGlobalIndex(wx, wy, global_idx)) {
             clear_idx_set.insert(global_idx);
@@ -307,6 +418,12 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 stair_normal_x_[global_idx] += static_cast<float>(nx);
                 stair_normal_y_[global_idx] += static_cast<float>(ny);
                 stair_normal_valid_[global_idx] = 1;
+                if (stair_id >= 0 &&
+                    stair_id < static_cast<int>(primitive_acc.size()) &&
+                    global_idx < static_cast<int>(stair_primitive_id_map_.size()) &&
+                    stair_primitive_id_map_[global_idx] < 0) {
+                    stair_primitive_id_map_[global_idx] = stair_id;
+                }
             }
         }
     };
@@ -317,6 +434,11 @@ void LayeredMapManager::rebuildStairLayerCache() {
         for (size_t i = 0; i < black_cells.size(); ++i) {
             int bx = black_cells[i].first;
             int by = black_cells[i].second;
+            int stair_id = -1;
+            const int mask_idx = by * stair_mask_width_ + bx;
+            if (mask_idx >= 0 && mask_idx < static_cast<int>(mask_primitive_id.size())) {
+                stair_id = mask_primitive_id[mask_idx];
+            }
 
             double best_dist2 = std::numeric_limits<double>::max();
             int gx_best = -1;
@@ -359,6 +481,10 @@ void LayeredMapManager::rebuildStairLayerCache() {
             }
             nx /= norm;
             ny /= norm;
+            if (stair_id >= 0 && stair_id < static_cast<int>(primitive_acc.size())) {
+                primitive_acc[stair_id].normal_sum += Eigen::Vector2d(nx, ny);
+                primitive_acc[stair_id].normal_count++;
+            }
 
             // 1) 完整清除已匹配的高低像素对：灰侧->黑侧连线（包含两端）
             const double pair_dist = std::hypot(bwx - gwx, bwy - gwy);
@@ -367,19 +493,19 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 const double t = static_cast<double>(s) / static_cast<double>(pair_steps);
                 const double wx = gwx + (bwx - gwx) * t;
                 const double wy = gwy + (bwy - gwy) * t;
-                add_clear_sample(wx, wy, nx, ny);
+                add_clear_sample(wx, wy, nx, ny, stair_id);
             }
 
             // 2) 沿法向扩展清除（高侧 +n，低侧 -n），距离可调
             for (int s = 1; s <= clear_high_steps; ++s) {
                 const double wx = bwx + nx * (s * resolution_);
                 const double wy = bwy + ny * (s * resolution_);
-                add_clear_sample(wx, wy, nx, ny);
+                add_clear_sample(wx, wy, nx, ny, stair_id);
             }
             for (int s = 1; s <= clear_low_steps; ++s) {
                 const double wx = gwx - nx * (s * resolution_);
                 const double wy = gwy - ny * (s * resolution_);
-                add_clear_sample(wx, wy, nx, ny);
+                add_clear_sample(wx, wy, nx, ny, stair_id);
             }
 
             if (build_oneway_forbidden) {
@@ -447,10 +573,78 @@ void LayeredMapManager::rebuildStairLayerCache() {
 
     stair_clear_indices_.assign(clear_idx_set.begin(), clear_idx_set.end());
 
+    stair_primitives_.reserve(primitive_acc.size());
+    for (size_t pid = 0; pid < primitive_acc.size(); ++pid) {
+        const auto& acc = primitive_acc[pid];
+        if (acc.black_cells.empty()) {
+            continue;
+        }
+
+        Eigen::Vector2d center = Eigen::Vector2d::Zero();
+        std::vector<Eigen::Vector2d> pts;
+        pts.reserve(acc.black_cells.size());
+        for (const auto& c : acc.black_cells) {
+            const double wx = stair_mask_origin_x_ + (c.first + 0.5) * stair_mask_resolution_;
+            const double wy = stair_mask_origin_y_ + (c.second + 0.5) * stair_mask_resolution_;
+            Eigen::Vector2d p(wx, wy);
+            pts.push_back(p);
+            center += p;
+        }
+        center /= static_cast<double>(pts.size());
+
+        Eigen::Vector2d normal = Eigen::Vector2d::UnitX();
+        if (acc.normal_count > 0 && acc.normal_sum.norm() > 1e-6) {
+            normal = acc.normal_sum.normalized();
+        }
+
+        Eigen::Vector2d tangent(-normal.y(), normal.x());
+        if (pts.size() >= 2) {
+            Eigen::Matrix2d cov = Eigen::Matrix2d::Zero();
+            for (const auto& p : pts) {
+                Eigen::Vector2d d = p - center;
+                cov += d * d.transpose();
+            }
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
+            if (solver.info() == Eigen::Success) {
+                tangent = solver.eigenvectors().col(1);
+            }
+        }
+
+        tangent -= tangent.dot(normal) * normal;
+        if (tangent.norm() < 1e-6) {
+            tangent = Eigen::Vector2d(-normal.y(), normal.x());
+        }
+        tangent.normalize();
+
+        if (normal.norm() < 1e-6) {
+            normal = Eigen::Vector2d(-tangent.y(), tangent.x());
+        } else {
+            normal.normalize();
+        }
+
+        double half_length = 0.5 * stair_mask_resolution_;
+        for (const auto& p : pts) {
+            half_length = std::max(half_length, std::abs((p - center).dot(tangent)));
+        }
+
+        StairPrimitive primitive;
+        primitive.stair_id = static_cast<int>(pid);
+        primitive.center = center;
+        primitive.normal = normal;
+        primitive.tangent = tangent;
+        primitive.half_length = half_length;
+        primitive.crossing_band.low_side_dist_m = clear_low_m;
+        primitive.crossing_band.high_side_dist_m = clear_high_m;
+        primitive.crossing_band.tangent_half_width_m = half_length;
+        primitive.is_oneway_down = acc.is_oneway_down;
+        stair_primitives_.push_back(primitive);
+    }
+
     RCLCPP_INFO(logger_,
-                "stair_layer: 双向黑线=%zu, 单向黑线=%zu, 清除栅格=%zu, 禁止边=%zu",
+                "stair_layer: 双向黑线=%zu, 单向黑线=%zu, 对象=%zu, 清除栅格=%zu, 禁止边=%zu",
                 bidir_black_cells.size(),
                 oneway_black_cells.size(),
+                stair_primitives_.size(),
                 stair_clear_indices_.size(),
                 stair_forbidden_transitions_.size());
 }

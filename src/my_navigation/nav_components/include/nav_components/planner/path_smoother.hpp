@@ -51,6 +51,8 @@ struct SmoothParams {
     double lambda_stair_anchor = 0.0;
     double lambda_stair_lateral = 0.0;
     double stair_corridor_half_width_m = 0.30;
+    bool use_astar_stair_anchors = true;
+    double astar_stair_anchor_match_max_dist_m = 0.6;
 };
 
 class PathSmoother {
@@ -71,6 +73,7 @@ public:
     }
 
     void setStairNormalCallback(StairNormalCallback cb) {
+        stair_normal_callback_ = cb;
         optimizer_.setStairNormalCallback(cb);
     }
     
@@ -107,6 +110,25 @@ public:
         // 将节点间隔传递给优化器（曲线采样级台阶约束需要）
         last_interval_ = interval;
         optimizer_.setInterval(interval);
+
+        // 将 A* 原始路径中的台阶命中点传给优化器，减少锚点横向偏移
+        std::vector<Eigen::Vector2d> astar_stair_hits;
+        if (stair_normal_callback_) {
+            astar_stair_hits.reserve(input.poses.size());
+            for (const auto& pose : input.poses) {
+                const double x = pose.pose.position.x;
+                const double y = pose.pose.position.y;
+                double nx = 0.0, ny = 0.0;
+                if (stair_normal_callback_(x, y, &nx, &ny)) {
+                    Eigen::Vector2d p(x, y);
+                    if (astar_stair_hits.empty() ||
+                        (p - astar_stair_hits.back()).norm() > 0.05) {
+                        astar_stair_hits.push_back(p);
+                    }
+                }
+            }
+        }
+        optimizer_.setAstarStairHits(astar_stair_hits);
         
         // Step 2.5: B样条优化（可选）
         auto t_opt_start = std::chrono::high_resolution_clock::now();
@@ -234,6 +256,9 @@ private:
         opt_params.lambda_stair_anchor = params_.lambda_stair_anchor;
         opt_params.lambda_stair_lateral = params_.lambda_stair_lateral;
         opt_params.stair_corridor_half_width = params_.stair_corridor_half_width_m;
+        opt_params.use_astar_stair_anchors = params_.use_astar_stair_anchors;
+        opt_params.astar_stair_anchor_match_max_dist =
+            params_.astar_stair_anchor_match_max_dist_m;
         optimizer_.setParams(opt_params);
     }
     
@@ -355,6 +380,7 @@ private:
     
     SmoothParams params_;
     BSplineOptimizer optimizer_;
+    StairNormalCallback stair_normal_callback_;
     std::vector<Eigen::Vector2d> last_ctrl_pts_;  // 调试用：最近一次的控制点
     double last_interval_ = 0.0;
 };

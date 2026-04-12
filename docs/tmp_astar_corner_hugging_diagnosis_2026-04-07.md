@@ -133,3 +133,6 @@
    - 检查并梳理 `LayeredMapManager` 与 `SimplePlanner` 的障碍阈值语义是否一致。
    - 目标：避免 costmap/ESDF/query/planner 各自使用不同阈值造成长期维护风险。
 
+
+
+finished

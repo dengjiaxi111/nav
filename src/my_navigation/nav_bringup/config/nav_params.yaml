@@ -126,6 +126,15 @@ nav_server:
       astar_max_attempts: 1           # A* 尝试次数（避免无效重试）
       astar_max_iterations: 3000000   # A* 单次搜索最大迭代次数(<=0 自动)，复杂长路径可适当调大
       astar_threshold_step: 0         # 关闭反向收紧阈值重试
+      # A* 台阶形态代价（不含外切奖励）：抑制切向掠过并约束到中垂线
+      # 说明：A* 台阶段“垂直段长度”由下方 stair_align_*_pre/post_dist_m 决定，
+      # 这里的 trigger 仅作外层兜底触发门限。
+      astar_stair_shape_enable: true
+      astar_stair_search_radius_cells: 4
+      astar_stair_trigger_dist_m: 1.5
+      astar_stair_tangent_penalty_weight: 3.0
+      astar_stair_centerline_penalty_weight: 1.0
+      astar_stair_lock_cluster_center: true  # 单次A*内锁定同一个台阶簇中心
       prune_distance: 1.0            # 剪枝保留距离(米), 保留当前位置前方此距离内的点
       publish_astar_raw_path: true   # 发布原始A*路径到 /plan_astar_raw（平滑前）
       
@@ -148,15 +157,27 @@ nav_server:
       # 台阶段方向约束（经过台阶时尽量垂直边沿）
       stair_segment_align: true
       stair_segment_align_mode: "curve_sample"  # "control_point"(旧控制点级) / "curve_sample"(新曲线采样级)
-      opt_lambda_stair_align: 50.0
+      opt_lambda_stair_align: 25.0
       stair_sample_ds_m: 0.09  # 曲线采样间距(米)，仅 curve_sample 模式生效
       # Phase C: 锚点与走廊约束
+<<<<<<< Updated upstream
       opt_lambda_stair_anchor: 50.0    # 锚点约束权重 (P_pre/P_mid/P_post)
       opt_lambda_stair_lateral: 25.0   # 横向走廊约束权重 (Huber loss)
       stair_corridor_half_width_m: 0.40  # 走廊半宽(米)，抑制沿台阶边沿滑行
       stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
       # 推荐：按弧长定义窗口，并区分上/下台阶
       stair_align_up_pre_dist_m: 1.4
+=======
+      opt_lambda_stair_anchor: 3.0    # 锚点约束权重 (P_pre/P_mid/P_post)
+      opt_lambda_stair_lateral: 3.0   # 横向走廊约束权重 (Huber loss)
+      stair_corridor_half_width_m: 0.30  # 走廊半宽(米)，抑制沿台阶边沿滑行
+      # B-spline 锚点对齐到 A* 台阶命中点（减少横向偏移）
+      use_astar_stair_anchors: true
+      astar_stair_anchor_match_max_dist_m: 0.6
+      stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
+      # 推荐：按弧长定义窗口，并区分上/下台阶
+      stair_align_up_pre_dist_m: 0.9
+>>>>>>> Stashed changes
       stair_align_up_post_dist_m: 0.2
       stair_align_down_pre_dist_m: 0.1
       stair_align_down_post_dist_m: 0.1
