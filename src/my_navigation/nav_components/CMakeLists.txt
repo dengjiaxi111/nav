@@ -55,6 +55,7 @@ set(NAV_SERVER_SOURCES
   src/spin_recovery.cpp
   src/recovery_manager.cpp
   src/layered_map_manager.cpp
+    src/stair_controller.cpp
 )
 
 # 如果有 NMPC solver, 添加 NMPC 源文件
@@ -74,18 +75,18 @@ ament_target_dependencies(two_point_patrol ${DEPS})
 
 target_include_directories(nav_server
   PRIVATE
-    /usr/local/include
-    /usr/local/include/blasfeo/include
-    /usr/local/include/hpipm/include
+    $ENV{ACADOS_SOURCE_DIR}/include
+    $ENV{ACADOS_SOURCE_DIR}/include/blasfeo/include
+    $ENV{ACADOS_SOURCE_DIR}/include/hpipm/include
 )
 
 # 链接 acados solver
 if(HAS_NMPC)
     target_link_libraries(nav_server 
         acados_nmpc_solver
-        /usr/local/lib/libacados.so
-        /usr/local/lib/libhpipm.so
-        /usr/local/lib/libblasfeo.so
+        $ENV{ACADOS_SOURCE_DIR}/lib/libacados.so
+        $ENV{ACADOS_SOURCE_DIR}/lib/libhpipm.so
+        $ENV{ACADOS_SOURCE_DIR}/lib/libblasfeo.so
     )
 endif()
 

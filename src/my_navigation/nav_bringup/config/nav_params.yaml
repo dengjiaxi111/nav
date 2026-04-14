@@ -8,7 +8,7 @@ nav_server:
     debug_reset_odom_to_base_link: true
     
     # 地图路径由 navigation.launch.py 注入
-    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
+    map_file: "/home/li/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
     control_rate: 50.0
     goal_timeout: 60.0
     goal_tolerance: 0.1
@@ -71,27 +71,64 @@ nav_server:
       oneway_black_max: 100
       oneway_gray_min: 141
       oneway_gray_max: 230
+
+    # === 台阶语义调试可视化 ===
       publish_stair_debug_markers: true
       debug_marker_max_segments: 1500
-      # 台阶模式输出（发布 stair_mode: 0=正常, 1=准备/执行跨阶）
+
+      # === 台阶动作状态机（阶段B，不含冷却） ===
+      # 总开关：false 时退化为旧逻辑（仅 stair_mode 检测/透传）
+      enable_stair_fsm: true
+
+    # [兼容输出] stair_mode: 0=正常, 1=准备/执行跨阶（给外部低层/嵌入式）
       enable_stair_mode_detection: true
+
+    # [候选检测窗口] 何时识别“即将上台阶”
       stair_mode_trigger_distance_m: 1.1
       stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
-      stair_mode_entry_heading_error_max_rad: 0.2  # 进入 stair_mode=1 前航向对齐阈值(|path_heading - yaw|)
+      stair_mode_entry_heading_error_max_rad: 0.2  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
+
+    # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       stair_mode_release_grace_cycles: 2
       stair_mode_min_hold_sec: 0.40  # 抬腿信号最小保持时间(秒)，用于抑制 1->0 瞬时抖动
       stair_mode_force_release_distance_m: 2.6  # mode=1 时若检测到台阶距离过远(或无 upcoming)，强制回0
       stair_mode_max_assert_sec: 8.0   # mode=1 最大持续时间(秒)，超时强制回0，便于下次上升沿再次触发
       stair_mode_omega_limit_rad_s: 2.0  # stair_mode=1 时角速度上限 |omega| (rad/s)
       stair_mode_omega_slew_rate_rad_s2: 1.5  # stair_mode=1 时角速度斜坡限幅 (rad/s^2)
-      # stair_mode=1 时采用固定速度，越过台阶段后自动回到 NMPC
+
+      # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
+      stair_contact_distance_m: 0.25              # 接触判定阈值(米)
+      stair_commit_success_dist_m: 0.2          # 越过台阶中心线后的成功法向距离阈值(米)
+      stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
+
+      # [失败判据] A(stair_mode腿长信号: 1=长腿长, 0=短腿长) + B(弧长进展超时)
+      stair_fail_a_precontact_miss_cycles: 3     # 判据A: 接触前 stair_mode 连续为0的周期数阈值
+      stair_progress_timeout_sec: 1.2            # COMMIT_ASCENT 进展超时(秒)
+      stair_progress_min_arc_m: 0.18             # 进展判据B所需最小弧长增量(米)
+
+    # [提交段控制] COMMIT_ASCENT 固定速度策略（与旧参数同名，统一纳入FSM段）
       enable_stair_fixed_velocity_strategy: true
       stair_fixed_velocity_trigger_distance_m: 1.25 # 固定速度启用距离(米)，可与 stair_mode_trigger_distance_m 分离
       stair_fixed_linear_vel: 1.6
       stair_fixed_heading_kp: 1.0
       stair_fixed_max_angular_vel: 0.9
       stair_fixed_heading_deadband: 0.05
+
+    # [失败退让与重试] FAIL_RETRY_BACKOFF
+      stair_backoff_distance_m: 0.60             # 失败后沿法向退让距离(米)
+      stair_backoff_tangent_search_half_width_m: 0.30  # 中垂线局部搜索半宽(米)
+      stair_backoff_linear_vel: 0.30             # 退让线速度(米/秒)
+      stair_backoff_heading_kp: 2.0              # 退让航向控制增益
+      stair_backoff_max_angular_vel: 1.0         # 退让角速度上限(rad/s)
+      stair_backoff_pos_tolerance_m: 0.08        # 退让完成判定容差(米)
+      stair_retry_max_attempts: 3                # 单次任务最大重试次数（阶段B）
+      stair_request_recovery_on_max_attempts: true  # 超过最大重试后请求恢复，否则请求重规划
+
+      # [阶段C] 同台阶失败统计与冷却（按 stair_id）
+      enable_stair_cooldown: true
+      stair_cooldown_fail_threshold: 3           # 同一 stair_id 连续失败达到阈值进入冷却
+      stair_cooldown_duration_sec: 30.0          # 冷却时长(秒)，期间触发 REQUEST_REPLAN
     
     # ============ 地图更新性能日志 ============
     enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)

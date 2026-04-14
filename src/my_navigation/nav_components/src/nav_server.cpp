@@ -27,6 +27,8 @@
 #include "nav_components/spin_recovery.hpp"
 #include "nav_components/recovery_manager.hpp"
 #include "nav_components/layered_map_manager.hpp"
+#include "nav_components/stair_controller.hpp"
+#include <nav_core/special_terrain_controller.hpp>
 
 using Navigate = nav_interfaces::action::Navigate;
 using GoalHandle = rclcpp_action::ServerGoalHandle<Navigate>;
@@ -407,6 +409,10 @@ public:
         map_manager_->setStaticLayerEnabled(enable_static_layer_);  // 设置静态层开关
         map_manager_->setStairLayerConfig(stair_layer_cfg);
 
+    terrain_controller_ = std::make_shared<nav_components::StairController>();
+    terrain_controller_->initialize(this);
+    terrain_controller_->setMap(map_manager_);
+
         if (stair_layer_cfg.enable) {
             RCLCPP_INFO(get_logger(),
                         "stair_layer 启用: mask=%s, clear_perp=%.2fm",
@@ -670,6 +676,9 @@ private:
         // 将地图接口传递给控制器（用于 ESDF 障碍物代价）
         if (map_manager_) {
             controller_.setMap(map_manager_);
+            if (terrain_controller_) {
+                terrain_controller_->setMap(map_manager_);
+            }
         }
         
         auto vel_pub = [this](const geometry_msgs::msg::Twist& cmd) {
@@ -724,7 +733,9 @@ private:
     void controlLoop() {
         // 支持 Action 和 RViz 两种目标来源
         if (!goal_handle_ && !rviz_goal_active_) {
-            publishStairMode(0, true, true);
+            if (terrain_controller_) {
+                terrain_controller_->onNavStateChanged(nav_core::NavState::IDLE);
+            }
             return;
         }
         
@@ -732,7 +743,9 @@ private:
         if (!updateRobotPose()) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
                 "无法获取 %s -> %s 变换", map_frame_.c_str(), base_frame_.c_str());
-            publishStairMode(0, true, true);
+            if (terrain_controller_) {
+                terrain_controller_->onNavStateChanged(fsm_.state());
+            }
             return;
         }
         
@@ -745,7 +758,9 @@ private:
             goal_handle_->canceled(result);
             goal_handle_ = nullptr;
             fsm_.transitionTo(nav_core::NavState::IDLE);
-            publishStairMode(0, true, true);
+            if (terrain_controller_) {
+                terrain_controller_->onNavStateChanged(nav_core::NavState::IDLE);
+            }
             return;
         }
         
@@ -763,8 +778,8 @@ private:
             default: break;
         }
 
-        if (fsm_.state() != nav_core::NavState::CONTROLLING) {
-            publishStairMode(0, true);
+        if (terrain_controller_) {
+            terrain_controller_->onNavStateChanged(fsm_.state());
         }
         
         publishFeedback();
@@ -1634,8 +1649,6 @@ private:
     
     void doControlling() {
         control_count_++;
-
-        updateStairModeDetection();
         
         auto wall_now = std::chrono::steady_clock::now();
         double time_since_check = std::chrono::duration<double>(
@@ -1706,82 +1719,39 @@ private:
             last_progress_pose_ = current_pose_;
         }
 
-        bool fixed_strategy_active = false;
-        if (enable_stair_fixed_velocity_strategy_ && stair_mode_current_ == 1) {
-            double dist_to_stair_m = std::numeric_limits<double>::infinity();
-            const bool has_upcoming_stair = detectUpcomingStairDistance(dist_to_stair_m);
-            const bool close_to_stair = has_upcoming_stair &&
-                (dist_to_stair_m <= stair_fixed_velocity_trigger_distance_m_);
-
-            double curr_nx = 0.0;
-            double curr_ny = 0.0;
-            bool on_stair_uphill_now = false;
-            const bool on_stair_now = map_manager_ && map_manager_->getStairTraverseNormal(
-                current_pose_.pose.position.x,
-                current_pose_.pose.position.y,
-                curr_nx,
-                curr_ny);
-            if (on_stair_now) {
-                double heading_ref = 0.0;
-                if (queryPathHeadingNearRobot(heading_ref)) {
-                    const double dir_x = std::cos(heading_ref);
-                    const double dir_y = std::sin(heading_ref);
-                    const double dot = dir_x * curr_nx + dir_y * curr_ny;
-                    on_stair_uphill_now = (dot >= 0.0);
-                }
-            }
-
-            fixed_strategy_active = close_to_stair || on_stair_uphill_now;
-        }
-
-        if (fixed_strategy_active) {
-            const double goal_dx = goal_.pose.position.x - current_pose_.pose.position.x;
-            const double goal_dy = goal_.pose.position.y - current_pose_.pose.position.y;
-            const double goal_dist = std::hypot(goal_dx, goal_dy);
-
-            if (goal_dist <= goal_tolerance_) {
-                stopRobot();
-                RCLCPP_INFO(get_logger(),
-                            "StairFixed: 到达目标 (xy距离=%.3fm)", goal_dist);
-                fsm_.transitionTo(nav_core::NavState::SUCCEEDED);
-                return;
-            }
-
-            geometry_msgs::msg::Twist stair_cmd;
-            stair_cmd.linear.x = stair_fixed_linear_vel_;
-            stair_cmd.angular.z = 0.0;
-
-            double heading_ref = 0.0;
-            if (queryPathHeadingNearRobot(heading_ref)) {
-                tf2::Quaternion q;
-                tf2::fromMsg(current_pose_.pose.orientation, q);
-                double roll, pitch, yaw;
-                tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-
-                double heading_err = normalizeAngle(heading_ref - yaw);
-                if (std::abs(heading_err) < stair_fixed_heading_deadband_) {
-                    heading_err = 0.0;
-                }
-
-                stair_cmd.angular.z = std::clamp(
-                    stair_fixed_heading_kp_ * heading_err,
-                    -stair_fixed_max_angular_vel_,
-                    stair_fixed_max_angular_vel_);
-            }
-
-            applyStairModeOmegaLimit(stair_cmd);
-
-            cmd_vel_pub_->publish(stair_cmd);
-            return;
-        }
-        
         geometry_msgs::msg::Twist cmd;
         auto result = controller_.computeVelocity(current_pose_, cmd);
         
         switch (result) {
             case nav_core::ControlResult::RUNNING:
-                applyStairModeOmegaLimit(cmd);
-                cmd_vel_pub_->publish(cmd);
+                if (terrain_controller_) {
+                    nav_core::TerrainControlContext terrain_ctx;
+                    terrain_ctx.current_pose = current_pose_;
+                    terrain_ctx.goal_pose = goal_;
+                    terrain_ctx.current_path = current_path_;
+                    terrain_ctx.control_rate_hz = control_rate_;
+                    terrain_ctx.goal_tolerance = goal_tolerance_;
+
+                    geometry_msgs::msg::Twist terrain_cmd = cmd;
+                    const auto decision = terrain_controller_->update(
+                        terrain_ctx, cmd, terrain_cmd);
+                    switch (decision) {
+                        case nav_core::TerrainControlDecision::PASS_THROUGH:
+                        case nav_core::TerrainControlDecision::OVERRIDE_CMD:
+                            cmd_vel_pub_->publish(terrain_cmd);
+                            break;
+                        case nav_core::TerrainControlDecision::REQUEST_REPLAN:
+                            stopRobot();
+                            fsm_.transitionTo(nav_core::NavState::PLANNING);
+                            break;
+                        case nav_core::TerrainControlDecision::REQUEST_RECOVERY:
+                            stopRobot();
+                            fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
+                            break;
+                    }
+                } else {
+                    cmd_vel_pub_->publish(cmd);
+                }
                 break;
             case nav_core::ControlResult::SUCCEEDED:
                 stopRobot();
@@ -1871,6 +1841,7 @@ private:
     nav_components::SimplePlanner planner_;
     nav_components::NMPC controller_;  
     nav_components::RecoveryManager recovery_mgr_;
+    std::shared_ptr<nav_core::SpecialTerrainController> terrain_controller_;
     
     rclcpp_action::Server<Navigate>::SharedPtr action_server_;
     std::shared_ptr<GoalHandle> goal_handle_;
