@@ -113,25 +113,6 @@ struct ProjectorConfig {
     int normal_min_points = 5;              // 法向量估计最小点数
     float planarity_thresh = 0.7f;          // 平面性阈值，大于此值认为是平面
     
-    // === 台阶检测参数 ===
-    float step_15cm_min = 0.12f;            // 15cm台阶识别下限
-    float step_15cm_max = 0.18f;            // 15cm台阶识别上限
-    float step_20cm_min = 0.17f;            // 20cm台阶识别下限
-    float step_20cm_max = 0.23f;            // 20cm台阶识别上限
-    float step_continuity_thresh = 0.03f;   // 台阶连续性阈值（同一平面容差）
-    int step_neighbor_min_count = 2;        // 台阶两侧最小邻域数
-    float step_edge_ratio_thresh = 0.3f;    // 台阶边缘占比阈值
-    
-    // === 悬崖/下行台阶检测参数 ===
-    int cliff_search_radius = 5;            // 悬崖边缘搜索半径（栅格数）
-    float cliff_min_drop = 0.10f;           // 最小高度跌落（识别为悬崖边缘）
-    int cliff_min_lower_points = 3;         // 下方平面最小有效栅格数
-    
-    // === 坡面检测参数（梯度连续性分析）===
-    float slope_gradient_thresh = 0.577f;   // tan(30°)，最大允许坡度
-    float slope_continuity_thresh = 0.03f;  // 梯度连续性阈值
-    int slope_min_continuous_count = 3;     // 判定为坡面的最小连续邻域数
-    
     // === 地图范围参数 ===
     float map_range_x = 10.0f;           // X方向范围
     float map_range_y = 10.0f;           // Y方向范围
@@ -247,43 +228,6 @@ private:
      * 高占据率柱体直接跳过（避免人/车等动态物体误判）
      */
     void normalEstimation(std::unordered_map<int64_t, ColumnMetrics>& columns);
-    
-    /**
-     * @brief 悬崖边缘检测：识别下行台阶，推断下方高度
-     */
-    void cliffEdgeDetection(
-        std::unordered_map<int64_t, ColumnMetrics>& columns,
-        float robot_z);
-    
-    /**
-     * @brief 坡面检测：结合法向量和梯度连续性
-     */
-    void slopeDetection(std::unordered_map<int64_t, ColumnMetrics>& columns);
-    
-    /**
-     * @brief 检查单个栅格是否为坡面（结合法向量）
-     */
-    bool isSlopeCell(
-        int64_t key,
-        const std::unordered_map<int64_t, ColumnMetrics>& columns);
-    
-    /**
-     * @brief 台阶检测：基于邻域分析区分台阶和矮墙
-     * 
-     * @param columns 高程分析结果（会更新cell_type字段）
-     * @param robot_z 机器人当前z坐标
-     */
-    void stepDetection(
-        std::unordered_map<int64_t, ColumnMetrics>& columns,
-        float robot_z);
-    
-    /**
-     * @brief 检查单个栅格是否为台阶（含下行台阶检测）
-     */
-    bool isStepCell(
-        int64_t key,
-        const std::unordered_map<int64_t, ColumnMetrics>& columns,
-        float robot_z);
     
     /**
      * @brief 根据高程特征判定可通行性

@@ -28,7 +28,8 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     // 从参数服务器加载配置
     cfg_.robot_height = this->declare_parameter<double>("robot_height", 0.5);
     cfg_.robot_width = this->declare_parameter<double>("robot_width", 0.4);
-    cfg_.base_to_ground_default = this->declare_parameter<double>("base_to_ground_default", 0.10);  // 适配SLAM坐标系偏移
+    cfg_.base_to_ground_default = this->declare_parameter<double>("base_to_ground_default", 0.10);
+
     cfg_.ground_tolerance = this->declare_parameter<double>("ground_tolerance", 0.08);  // 增加地面容差
     
     cfg_.enable_dynamic_leg_length = this->declare_parameter<bool>("enable_dynamic_leg_length", false);
@@ -46,7 +47,7 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.normal_z_wall_thresh = this->declare_parameter<double>("normal_z_wall_thresh", 0.5);
     cfg_.normal_min_points = this->declare_parameter<int>("normal_min_points", 5);
     cfg_.planarity_thresh = this->declare_parameter<double>("planarity_thresh", 0.7);
-    
+
     cfg_.map_range_x = this->declare_parameter<double>("map_range_x", 10.0);
     cfg_.map_range_y = this->declare_parameter<double>("map_range_y", 10.0);
     cfg_.resolution = this->declare_parameter<double>("resolution", 0.05);
@@ -56,7 +57,7 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.publish_rate = this->declare_parameter<double>("publish_rate", 10.0);
     cfg_.frame_id = this->declare_parameter<std::string>("frame_id", "odom");
     cfg_.topic_name = this->declare_parameter<std::string>("topic_name", "rog_map/map_2d");
-    
+
     current_leg_length_ = cfg_.base_to_ground_default;
     current_base_to_ground_ = cfg_.base_to_ground_default;
     
@@ -78,6 +79,12 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     // 发布2D地图
     map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
         cfg_.topic_name, qos);
+
+    // 可选发布台阶调试可视化
+    if (cfg_.enable_step_debug_viz) {
+        step_debug_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+            cfg_.step_debug_topic, qos);
+    }
     
     // 定时更新器（直接调用 boxSearchInflate）
     int update_period_ms = static_cast<int>(1000.0 / cfg_.publish_rate);
@@ -170,20 +177,14 @@ void Map2DProjector::updateTimerCallback() {
     // Step 2: 法向量估计（仅低占据率柱体，跳过高占据率障碍物）
     normalEstimation(columns);
     
-    // Step 3: 悬崖边缘检测（下行台阶识别）
-    cliffEdgeDetection(columns, robot_position_.z());
-    
-    // Step 4: 坡面检测（结合法向量）
-    slopeDetection(columns);
-    
-    // Step 5: 台阶检测（邻域分析）
-    stepDetection(columns, robot_position_.z());
-    
     // Step 6: 写入2D地图
     update2DMap(columns, robot_position_);
     
     // 发布地图
     publishMap();
+
+    // 发布台阶调试可视化
+   
 }
 
 bool Map2DProjector::getRobotPose(geometry_msgs::msg::Pose& robot_pose) {
@@ -408,410 +409,6 @@ void Map2DProjector::normalEstimation(std::unordered_map<int64_t, ColumnMetrics>
         
         col.normal_valid = true;
     }
-}
-
-void Map2DProjector::cliffEdgeDetection(
-    std::unordered_map<int64_t, ColumnMetrics>& columns,
-    float robot_z) {
-    
-    /**
-     * 悬崖边缘检测（下行台阶识别）
-     * 
-     * 问题：激光雷达无法扫到台阶正下方，只能看到远处的地面
-     * 方案：检测边缘栅格，向远处搜索低位平面，推断台阶高度
-     * 
-     * 流程：
-     * 1. 找到可能的边缘栅格（有地面点，但邻域出现unknown或高度突降）
-     * 2. 沿8方向搜索，寻找低位平面
-     * 3. 验证高度差是否在台阶范围内（15cm或20cm）
-     * 4. 标记为可通行台阶边缘
-     */
-    
-    float ground_level = robot_z - current_base_to_ground_ + cfg_.ground_tolerance;
-    
-    for (auto& [key, col] : columns) {
-        // 只对地面附近的栅格进行边缘检测
-        if (col.point_count < 2) continue;
-        if (col.height_diff > cfg_.slope_height_max) continue;  // 非平面
-        if (col.min_z > ground_level + 0.1f) continue;  // 太高，不是地面
-        
-        auto neighbors = getNeighborKeys(key);
-        
-        int unknown_neighbor_count = 0;
-        int lower_neighbor_count = 0;
-        float best_lower_z = col.min_z;
-        
-        // 扩展搜索：不仅看8邻域，还要向远处搜索
-        int ix, iy;
-        gridKeyToXY(key, ix, iy);
-        
-        // 8方向搜索
-        const int dx[] = {1, 1, 0, -1, -1, -1, 0, 1};
-        const int dy[] = {0, 1, 1, 1, 0, -1, -1, -1};
-        
-        for (int dir = 0; dir < 8; ++dir) {
-            float dir_lower_z = col.min_z;
-            bool found_lower_plane = false;
-            
-            // 沿该方向搜索
-            for (int step = 1; step <= cfg_.cliff_search_radius; ++step) {
-                int nx = ix + dx[dir] * step;
-                int ny = iy + dy[dir] * step;
-                int64_t nkey = (static_cast<int64_t>(nx) << 32) | 
-                               (static_cast<int64_t>(ny) & 0xFFFFFFFF);
-                
-                auto it = columns.find(nkey);
-                if (it == columns.end()) {
-                    // 远处是unknown，记录
-                    if (step == 1) unknown_neighbor_count++;
-                    continue;
-                }
-                
-                const auto& ncol = it->second;
-                
-                // 检查是否是平坦的低位平面
-                if (ncol.height_diff < cfg_.slope_height_max && 
-                    ncol.point_count >= 3) {
-                    
-                    float z_drop = col.min_z - ncol.min_z;
-                    
-                    // 高度跌落在台阶范围内
-                    if (z_drop >= cfg_.step_height_min && z_drop <= cfg_.step_height_max) {
-                        found_lower_plane = true;
-                        if (ncol.min_z < dir_lower_z) {
-                            dir_lower_z = ncol.min_z;
-                        }
-                        lower_neighbor_count++;
-                        break;  // 找到就停止该方向搜索
-                    }
-                }
-            }
-            
-            if (found_lower_plane && dir_lower_z < best_lower_z) {
-                best_lower_z = dir_lower_z;
-            }
-        }
-        
-        // 判定条件：有unknown邻域 + 找到足够的低位平面
-        bool has_cliff_feature = (unknown_neighbor_count >= 1) || 
-                                  (lower_neighbor_count >= cfg_.cliff_min_lower_points);
-        
-        if (has_cliff_feature && lower_neighbor_count >= cfg_.cliff_min_lower_points) {
-            float step_height = col.min_z - best_lower_z;
-            
-            // 验证台阶高度是否符合15cm或20cm规格
-            bool is_15cm_step = (step_height >= cfg_.step_15cm_min && step_height <= cfg_.step_15cm_max);
-            bool is_20cm_step = (step_height >= cfg_.step_20cm_min && step_height <= cfg_.step_20cm_max);
-            
-            if (is_15cm_step || is_20cm_step) {
-                col.is_cliff_edge = true;
-                col.inferred_lower_z = best_lower_z;
-                col.lower_z_valid = true;
-            }
-        }
-    }
-}
-
-void Map2DProjector::slopeDetection(std::unordered_map<int64_t, ColumnMetrics>& columns) {
-    /**
-     * 坡面检测（结合法向量和梯度连续性）
-     * 
-     * 优化后方案：
-     * 1. 法向量有效且|nz| >= slope_thresh → 直接判定为坡面
-     * 2. 法向量有效且|nz|在中间范围 + 低占据率 → 倾向于判断为坡面
-     * 3. 法向量无效时，回退到梯度连续性分析
-     * 4. 占据率高的已在normalEstimation中跳过，不会误判
-     */
-    
-    for (auto& [key, col] : columns) {
-        // 跳过已经分类的或点数太少的
-        if (col.cell_type != CellType::UNKNOWN || col.point_count < 2) {
-            continue;
-        }
-        
-        // H很小，直接标记为FREE（平坦地面）
-        if (col.height_diff < cfg_.slope_height_max) {
-            col.cell_type = CellType::FREE;
-            continue;
-        }
-        
-        // 方法1：法向量判定（优先）
-        if (col.normal_valid) {
-            // |nz| >= slope_thresh → 坡面（放宽平面性要求，因为真实坡面可能不够平坦）
-            if (col.normal_z_abs >= cfg_.normal_z_slope_thresh) {
-                col.cell_type = CellType::FREE;
-                continue;
-            }
-            
-            // |nz| 在中间范围 [wall_thresh, slope_thresh) + 低占据率 → 更可能是坡面
-            if (col.normal_z_abs >= cfg_.normal_z_wall_thresh && 
-                col.occupancy_rate < cfg_.high_occupancy_thresh * 0.7f) {
-                // 进一步检查平面性
-                if (col.planarity > cfg_.planarity_thresh * 0.8f) {
-                    col.cell_type = CellType::FREE;
-                    continue;
-                }
-            }
-            
-            // |nz| < wall_thresh → 垂直障碍物（但不在这里标记，留给classify）
-            if (col.normal_z_abs < cfg_.normal_z_wall_thresh) {
-                continue;  // 跳过，让classify处理
-            }
-        }
-        
-        // 方法2：梯度连续性分析（回退方案，用于法向量无效的情况）
-        if (isSlopeCell(key, columns)) {
-            col.cell_type = CellType::FREE;
-        }
-    }
-}
-
-bool Map2DProjector::isSlopeCell(
-    int64_t key,
-    const std::unordered_map<int64_t, ColumnMetrics>& columns) {
-    
-    /**
-     * 坡面判定：基于 median_z 梯度连续性
-     * 
-     * 为什么用 median_z 而不是 min_z 或 max_z？
-     * - min_z：易受地面噪声/草皮影响，可能偏低
-     * - max_z：易受障碍物顶部影响，可能偏高  
-     * - median_z：代表点云的"主体高度"，对噪声鲁棒
-     * 
-     * 坡面特征：median_z 沿某方向平滑单调变化
-     * 墙壁特征：median_z 突变或梯度不连续
-     */
-    
-    const auto& col = columns.at(key);
-    float this_median_z = col.median_z;
-    
-    // 占据率过高 → 更像墙壁而非坡面
-    if (col.occupancy_rate > cfg_.high_occupancy_thresh) {
-        return false;
-    }
-    
-    auto neighbors = getNeighborKeys(key);
-    
-    // 收集邻域梯度信息
-    std::vector<float> gradients;
-    int valid_neighbor_count = 0;
-    int continuous_gradient_count = 0;
-    
-    for (int64_t nkey : neighbors) {
-        auto it = columns.find(nkey);
-        if (it == columns.end()) continue;
-        
-        const auto& ncol = it->second;
-        if (ncol.point_count < 2) continue;
-        
-        valid_neighbor_count++;
-        
-        // 计算梯度：(邻域median_z - 当前median_z) / 距离
-        int nix, niy, ix, iy;
-        gridKeyToXY(nkey, nix, niy);
-        gridKeyToXY(key, ix, iy);
-        
-        float dist = cfg_.resolution;
-        if (std::abs(nix - ix) + std::abs(niy - iy) == 2) {
-            dist = cfg_.resolution * 1.414f;  // 对角线
-        }
-        
-        float z_diff = ncol.median_z - this_median_z;
-        float gradient = z_diff / dist;
-        
-        gradients.push_back(gradient);
-        
-        // 检查梯度是否在合理坡度范围内
-        if (std::abs(gradient) <= cfg_.slope_gradient_thresh) {
-            continuous_gradient_count++;
-        }
-    }
-    
-    // 条件1：必须有足够的有效邻域
-    if (valid_neighbor_count < 3) {
-        return false;
-    }
-    
-    // 条件2：大部分邻域的梯度都在合理范围内
-    float continuous_ratio = static_cast<float>(continuous_gradient_count) / valid_neighbor_count;
-    if (continuous_ratio < 0.6f) {
-        return false;  // 超过40%的邻域梯度过大，不是平滑坡面
-    }
-    
-    // 条件3：检查梯度的一致性（方差不能太大）
-    if (gradients.size() >= 3) {
-        float mean = 0.0f;
-        for (float g : gradients) {
-            mean += g;
-        }
-        mean /= gradients.size();
-        
-        float variance = 0.0f;
-        for (float g : gradients) {
-            variance += (g - mean) * (g - mean);
-        }
-        variance /= gradients.size();
-        
-        // 梯度方差过大说明高度变化不规则，不是平滑坡面
-        float stddev = std::sqrt(variance);
-        if (stddev > cfg_.slope_continuity_thresh * 2.0f) {
-            return false;
-        }
-    }
-    
-    // 条件4：至少有一定数量的连续邻域
-    if (continuous_gradient_count < cfg_.slope_min_continuous_count) {
-        return false;
-    }
-    
-    return true;
-}
-
-void Map2DProjector::stepDetection(
-    std::unordered_map<int64_t, ColumnMetrics>& columns,
-    float robot_z) {
-    
-    step_cells_.clear();
-    
-    // 计算机器人通行高度范围（使用动态腿长）
-    float robot_bottom = robot_z - current_base_to_ground_;
-    float robot_top = robot_bottom + cfg_.robot_height;
-    float ground_level = robot_bottom + cfg_.ground_tolerance;
-    
-    // 统计变量
-    int candidates = 0;
-    int cliff_edge_steps = 0;  // 下行台阶（悬崖边缘）
-    int normal_steps = 0;      // 常规台阶（上行）
-    int skipped_by_slope = 0;
-    
-    for (auto& [key, col] : columns) {
-        // 跳过已经被坡面检测标记为FREE的
-        if (col.cell_type == CellType::FREE) {
-            skipped_by_slope++;
-            continue;
-        }
-        
-        // === 情况1：悬崖边缘（下行台阶）===
-        if (col.is_cliff_edge && col.lower_z_valid) {
-            // 已在cliffEdgeDetection中验证过高度差
-            col.cell_type = CellType::STEP;
-            step_cells_.insert(key);
-            cliff_edge_steps++;
-            continue;
-        }
-        
-        // === 情况2：常规台阶（上行）===
-        const float H = col.height_diff;
-        
-        // 只对台阶高度范围内的栅格进行邻域分析
-        if (H < cfg_.step_height_min || H > cfg_.step_height_max) {
-            continue;
-        }
-        
-        candidates++;
-        
-        // 检查是否阻挡通行
-        bool blocks_passage = (col.min_z < robot_top) && (col.max_z > ground_level);
-        if (!blocks_passage) {
-            continue;
-        }
-        
-        // 邻域分析判断是否为台阶
-        if (isStepCell(key, columns, robot_z)) {
-            col.cell_type = CellType::STEP;
-            step_cells_.insert(key);
-            normal_steps++;
-        }
-    }
-    
-    // 定期日志
-    static int log_counter = 0;
-    if (++log_counter % 100 == 0) {
-        RCLCPP_INFO(this->get_logger(), 
-            "[StepDetect] cliff_edge=%d, normal=%d, skipped_slope=%d | total=%zu",
-            cliff_edge_steps, normal_steps, skipped_by_slope, step_cells_.size());
-    }
-}
-
-bool Map2DProjector::isStepCell(
-    int64_t key,
-    const std::unordered_map<int64_t, ColumnMetrics>& columns,
-    float /*robot_z*/) {
-    
-    /**
-     * 台阶检测核心逻辑
-     * 
-     * 台阶特征：
-     * 1. 当前栅格高度差在台阶范围 [step_height_min, step_height_max]
-     * 2. 邻域存在两个不同高度的平面（上下台阶面）
-     * 3. 占据率不能太高（太高说明是密集墙壁）
-     */
-    
-    const auto& col = columns.at(key);
-    
-    // 占据率过高 → 更像墙壁而非台阶边缘
-    if (col.occupancy_rate > cfg_.high_occupancy_thresh) {
-        return false;
-    }
-    
-    auto neighbors = getNeighborKeys(key);
-    
-    // 统计邻域特征
-    int higher_plane_count = 0;   // 比当前高的平面邻域数
-    int lower_plane_count = 0;    // 比当前低的平面邻域数
-    float higher_z_sum = 0.0f;
-    float lower_z_sum = 0.0f;
-    
-    float this_min_z = col.min_z;
-    
-    for (int64_t nkey : neighbors) {
-        auto it = columns.find(nkey);
-        if (it == columns.end()) continue;
-        
-        const auto& ncol = it->second;
-        
-        // 噪声过滤：点数太少不可靠
-        if (ncol.point_count < 2) continue;
-        
-        // 邻域必须是相对平坦的（高度差小）才能算作平面
-        // 如果邻域本身也是大高度差，说明是复杂结构，不作为参考
-        if (ncol.height_diff > cfg_.step_height_min) {
-            continue;
-        }
-        
-        float z_diff = ncol.min_z - this_min_z;
-        
-        if (z_diff > cfg_.step_continuity_thresh) {
-            // 邻域更高 → 当前可能是台阶下层
-            higher_plane_count++;
-            higher_z_sum += ncol.min_z;
-        } else if (z_diff < -cfg_.step_continuity_thresh) {
-            // 邻域更低 → 当前可能是台阶上层
-            lower_plane_count++;
-            lower_z_sum += ncol.min_z;
-        }
-        // 否则：同一高度平面，不计入
-    }
-    
-    // === 台阶判定条件 ===
-    // 必须两侧都有足够的平面邻域（表示这是两个平面的交界）
-    if (higher_plane_count < cfg_.step_neighbor_min_count || 
-        lower_plane_count < cfg_.step_neighbor_min_count) {
-        return false;  // 一侧缺少平面 → 可能是矮墙边缘
-    }
-    
-    // 验证高低平面的高度差是否合理
-    float avg_higher_z = higher_z_sum / higher_plane_count;
-    float avg_lower_z = lower_z_sum / lower_plane_count;
-    float plane_diff = avg_higher_z - avg_lower_z;
-    
-    // 平面高度差应该在合理的台阶范围内
-    if (plane_diff < cfg_.step_height_min || plane_diff > cfg_.step_height_max * 1.5f) {
-        return false;
-    }
-    
-    // 通过所有检查 → 判定为台阶
-    return true;
 }
 
 int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_z) {
@@ -1054,6 +651,7 @@ nav_msgs::msg::OccupancyGrid::SharedPtr Map2DProjector::getLatestMap() {
 }
 
 void Map2DProjector::publishStepDebugMarkers() {
+
     if (step_cells_.empty()) {
         return;
     }

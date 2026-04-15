@@ -1,47 +1,56 @@
-# ROS2标准参数文件：Map2DProjector参数
-# 注意：这些参数会被 integration_component 加载并传递给 Map2DProjector
+# ROS2 标准参数文件：Map2DProjector 参数
+#
+# 参数加载链路：
+#   launch/yaml -> integration_component(读取 projector.*) -> Map2DProjector(去前缀后读取)
+#
+# 重要说明（根据当前源码核对）：
+# 1) 推荐使用 `projector.base_to_ground_default`。
+# 2) 为兼容旧配置，代码仍支持 `projector.base_to_ground`（但建议后续迁移）。
 
 /**:
   ros__parameters:
-    projector.robot_height: 0.8
-    projector.robot_width: 0.4
-    projector.base_to_ground: 0.05
-    projector.ground_tolerance: 0.08
-    projector.enable_dynamic_leg_length: false
-    projector.wheel_frame: "wheel_link"
-    projector.leg_length_min: 0.08
-    projector.leg_length_max: 0.25
-    projector.slope_height_max: 0.30
-    projector.step_height_min: 0.12
-    projector.step_height_max: 0.23
-    projector.obstacle_height_min: 0.25
-    projector.high_occupancy_thresh: 0.6
-    projector.normal_z_slope_thresh: 0.70
-    projector.normal_z_wall_thresh: 0.42
-    projector.normal_min_points: 3
-    projector.planarity_thresh: 0.6
-    projector.step_15cm_min: 0.12
-    projector.step_15cm_max: 0.18
-    projector.step_20cm_min: 0.17
-    projector.step_20cm_max: 0.23
-    projector.step_continuity_thresh: 0.03
-    projector.step_neighbor_min_count: 2
-    projector.step_edge_ratio_thresh: 0.3
-    projector.cliff_search_radius: 5
-    projector.cliff_min_drop: 0.10
-    projector.cliff_min_lower_points: 3
-    projector.slope_gradient_thresh: 1.00
-    projector.slope_continuity_thresh: 0.05
-    projector.slope_min_continuous_count: 2
-    projector.map_range_x: 10.0
-    projector.map_range_y: 10.0
-    projector.resolution: 0.05
-    projector.z_min_relative: -0.5
-    projector.z_max_relative: 2.0
-    projector.publish_rate: 20.0
-    projector.frame_id: "odom"
-    projector.topic_name: "/rog_map/map_2d"
-    projector.input_cloud_topic: "/rog_map/inf_occ"
-    projector.enable_debug_log: false
-    projector.enable_step_debug_viz: true
-    projector.step_debug_topic: "rog_map/step_debug"
+    # === 机器人几何参数 ===
+    projector.robot_height: 0.8           # [m] 机器人本体高度（用于可通过高度判断）
+    projector.robot_width: 0.4            # [m] 机器人宽度（用于邻域/可通行性分析）
+    projector.base_to_ground_default: 0.05 # [m] base_link 到地面的默认距离（推荐键名）
+    projector.base_to_ground: 0.05         # [m] 兼容旧键名（仍可用，建议迁移到 base_to_ground_default）
+    projector.ground_tolerance: 0.08      # [m] 地面高度容差，抑制小起伏误判
+
+    # === 动态腿长相关 ===
+    projector.enable_dynamic_leg_length: false   # 是否通过 TF(base_link->wheel_frame)动态估计离地高度
+    projector.wheel_frame: "wheel_link"          # 动态腿长查询的轮子坐标系
+    projector.leg_length_min: 0.08               # [m] 动态腿长最小夹紧值
+    projector.leg_length_max: 0.25               # [m] 动态腿长最大夹紧值
+
+    # === 柱状高程分类阈值 ===
+    projector.slope_height_max: 0.30       # [m] 高度差低于该值倾向视作可通行坡/平面
+    projector.step_height_min: 0.12         # [m] 台阶高度下限（低于此值视作小起伏）
+    projector.step_height_max: 0.23         # [m] 台阶高度上限（高于此值倾向障碍）
+    projector.obstacle_height_min: 0.25     # [m] 障碍物高度下限
+    projector.high_occupancy_thresh: 0.6    # 占据率阈值（高占据柱体更偏向障碍判断）
+
+    # === 法向量/PCA判别参数 ===
+    projector.normal_z_slope_thresh: 0.70   # |nz| 阈值，越大越接近水平地面/缓坡
+    projector.normal_z_wall_thresh: 0.42    # |nz| 阈值，低于该值更接近垂直墙体
+    projector.normal_min_points: 3           # 每柱计算法向量所需最少点数
+    projector.planarity_thresh: 0.6          # 平面性阈值（PCA 特征值比）
+
+    # === 地图范围/分辨率 ===
+    projector.map_range_x: 10.0              # [m] 机器人中心前后左右窗口 X 范围
+    projector.map_range_y: 10.0              # [m] 机器人中心前后左右窗口 Y 范围
+    projector.resolution: 0.05               # [m/cell] 2D 栅格分辨率
+
+    # === 3D查询高度窗口（相对机器人高度）===
+    projector.z_min_relative: -0.5           # [m] 查询框下边界（robot_z + 此值）
+    projector.z_max_relative: 2.0            # [m] 查询框上边界（robot_z + 此值）
+
+    # === 发布配置 ===
+    projector.publish_rate: 20.0             # [Hz] 地图更新/发布频率
+    projector.frame_id: "odom"              # 输出 OccupancyGrid 坐标系
+    projector.topic_name: "/rog_map/map_2d" # 输出 2D 地图话题名
+
+    # === 兼容/调试项 ===
+    projector.input_cloud_topic: "/rog_map/inf_occ"   # 历史topic模式参数（当前直连 ROG-Map，预留兼容）
+    projector.enable_debug_log: false                  # 详细日志开关
+    projector.enable_step_debug_viz: true              # 台阶调试可视化开关
+    projector.step_debug_topic: "rog_map/step_debug"  # 台阶调试可视化话题

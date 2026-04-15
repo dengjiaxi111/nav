@@ -51,15 +51,12 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
     // 直接从父节点声明并获取所有 projector 参数
     // 参数格式: projector.robot_height, projector.base_to_ground_default 等
     std::vector<std::string> projector_param_names = {
-        "robot_height", "robot_width", "base_to_ground_default", "ground_tolerance",
+        "robot_height", "robot_width", "base_to_ground_default",
+        "ground_tolerance",
         "enable_dynamic_leg_length", "wheel_frame", "leg_length_min", "leg_length_max",
         "slope_height_max", "step_height_min", "step_height_max", "obstacle_height_min",
         "high_occupancy_thresh", "normal_z_slope_thresh", "normal_z_wall_thresh",
         "normal_min_points", "planarity_thresh",
-        "step_15cm_min", "step_15cm_max", "step_20cm_min", "step_20cm_max",
-        "step_continuity_thresh", "step_neighbor_min_count", "step_edge_ratio_thresh",
-        "cliff_search_radius", "cliff_min_drop", "cliff_min_lower_points",
-        "slope_gradient_thresh", "slope_continuity_thresh", "slope_min_continuous_count",
         "map_range_x", "map_range_y", "resolution", "z_min_relative", "z_max_relative",
         "publish_rate", "frame_id", "topic_name",
         "enable_debug_log", "enable_step_debug_viz", "step_debug_topic"
