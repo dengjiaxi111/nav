@@ -99,6 +99,9 @@ private:
     double stair_fixed_max_angular_vel_{0.8};
     double stair_fixed_heading_deadband_{0.05};
 
+    // 独立动作阈值（在 COMMIT_ASCENT 及以内生效）
+    double stair_raise_leg_distance_m_{0.40};
+
     // 阶段B FSM 参数（不含冷却）
     double stair_contact_distance_m_{0.25};
     double stair_commit_success_dist_m_{0.18};

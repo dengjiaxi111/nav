@@ -6,7 +6,9 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <queue>
+#include <string>
 #include <unordered_set>
+#include <vector>
 #include "nav_components/planner/path_smoother.hpp"
 
 namespace nav_components {
@@ -56,7 +58,9 @@ private:
     // A*搜索（独立函数，支持自适应重规划）
     bool runAstar(int sx, int sy, int gx, int gy,
                   const std_msgs::msg::Header& header,
-                  nav_msgs::msg::Path& path);
+                  nav_msgs::msg::Path& path,
+                  int* fail_best_x = nullptr,
+                  int* fail_best_y = nullptr);
 
     // A* 台阶感知形态代价：入口附近抑制切向掠过、约束中垂线
     double computeStairShapeCost(int from_x, int from_y,
@@ -123,10 +127,29 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr astar_raw_path_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr ctrl_pts_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_debug_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr plan_failure_pub_;
+    bool publish_failure_debug_markers_ = true;
+    double failure_marker_scale_ = 0.14;
+    bool has_last_validate_fail_point_ = false;
+    double last_validate_fail_x_ = 0.0;
+    double last_validate_fail_y_ = 0.0;
+
+    struct FailurePoint {
+        double x = 0.0;
+        double y = 0.0;
+        std::string label;
+        float r = 1.0f;
+        float g = 0.0f;
+        float b = 0.0f;
+    };
+
     void publishControlPoints(const std::vector<Eigen::Vector2d>& ctrl_pts, 
                               const std::string& frame_id);
     void publishStairDebugMarkers(const StairAlignDiagnostics& diag,
                                   const std::string& frame_id);
+    void publishPlanningFailureMarkers(const std::string& frame_id,
+                                       const std::vector<FailurePoint>& points);
+    void clearPlanningFailureMarkers(const std::string& frame_id);
 };
 
 }  // namespace nav_components

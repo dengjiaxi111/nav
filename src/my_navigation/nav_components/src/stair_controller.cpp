@@ -36,6 +36,7 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_mode_omega_slew_rate_rad_s2", 1.2);
     declare_if_needed("special_terrain.enable_stair_fixed_velocity_strategy", false);
     declare_if_needed("special_terrain.stair_fixed_velocity_trigger_distance_m", 0.35);
+    declare_if_needed("special_terrain.stair_raise_leg_distance_m", 0.40);
     declare_if_needed("special_terrain.stair_fixed_linear_vel", 0.35);
     declare_if_needed("special_terrain.stair_fixed_heading_kp", 1.8);
     declare_if_needed("special_terrain.stair_fixed_max_angular_vel", 0.8);
@@ -86,6 +87,8 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.enable_stair_fixed_velocity_strategy").as_bool();
     stair_fixed_velocity_trigger_distance_m_ =
         node_->get_parameter("special_terrain.stair_fixed_velocity_trigger_distance_m").as_double();
+    stair_raise_leg_distance_m_ =
+        node_->get_parameter("special_terrain.stair_raise_leg_distance_m").as_double();
     stair_fixed_linear_vel_ =
         node_->get_parameter("special_terrain.stair_fixed_linear_vel").as_double();
     stair_fixed_heading_kp_ =
@@ -258,11 +261,10 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::PRE_ALIGN: {
-            publishStairMode(1, true);
+            publishStairMode(0, true); // 抬腿动作已推迟到 COMMIT_ASCENT，此处只做预对准不发1
 
             if (!has_candidate) {
                 transitionFsmState(StairFsmState::NORMAL, "candidate lost in pre-align");
-                publishStairMode(0, true, true);
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
                 break;
             }
@@ -278,16 +280,8 @@ nav_core::TerrainControlDecision StairController::update(
 
             active_stair_ = candidate;
 
-            // 判据A：接触前若虚拟腿长连续为0(短腿)则判定失败
-            if (candidate.dist_to_stair_m > stair_contact_distance_m_ &&
-                virtual_leg_length_ == 0) {
-                ++precontact_miss_counter_;
-                if (precontact_miss_counter_ >= std::max(1, stair_fail_a_precontact_miss_cycles_)) {
-                    enter_fail_backoff("criterion A: virtual short-leg before contact");
-                }
-            } else {
-                precontact_miss_counter_ = 0;
-            }
+            // PRE_ALIGN 阶段尚未下令抬腿，因此不应再检查判据A短腿失败
+            precontact_miss_counter_ = 0;
 
             if (fsm_state_ == StairFsmState::PRE_ALIGN &&
                 candidate.dist_to_stair_m <= stair_contact_distance_m_ &&
@@ -305,7 +299,17 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::COMMIT_ASCENT: {
-            publishStairMode(1, true);
+            bool do_raise = false;
+            bool do_fix_vel = false;
+            if (has_candidate && active_stair_.stair_id == candidate.stair_id) {
+                do_raise = (candidate.dist_to_stair_m <= stair_raise_leg_distance_m_);
+                do_fix_vel = (candidate.dist_to_stair_m <= stair_fixed_velocity_trigger_distance_m_);
+            } else {
+                // 如果丢失候选（比如车体已经踩在台阶上导致盲区），默认保持动作生效
+                do_raise = true;
+                do_fix_vel = true;
+            }
+            publishStairMode(do_raise ? 1 : 0, true);
 
             if (has_candidate) {
                 if (candidate_in_cooldown) {
@@ -319,10 +323,8 @@ nav_core::TerrainControlDecision StairController::update(
                 active_stair_ = candidate;
             }
 
-            // 判据A：接触前若虚拟腿长连续为0(短腿)则判定失败
-            if (has_candidate &&
-                candidate.dist_to_stair_m > stair_contact_distance_m_ &&
-                virtual_leg_length_ == 0) {
+            // 判据A：已触发抬腿且距离未到固定速度区间，若虚拟腿长连续为0(短腿)则判定失败
+            if (do_raise && !do_fix_vel && virtual_leg_length_ == 0) {
                 ++precontact_miss_counter_;
                 if (precontact_miss_counter_ >= std::max(1, stair_fail_a_precontact_miss_cycles_)) {
                     enter_fail_backoff("criterion A: virtual short-leg in commit");
@@ -359,25 +361,29 @@ nav_core::TerrainControlDecision StairController::update(
             }
 
             if (fsm_state_ == StairFsmState::COMMIT_ASCENT) {
-                out_cmd.linear.x = stair_fixed_linear_vel_;
-                out_cmd.angular.z = 0.0;
-                double heading_ref = 0.0;
-                if (queryPathHeadingNearRobot(context, heading_ref)) {
-                    tf2::Quaternion q;
-                    tf2::fromMsg(context.current_pose.pose.orientation, q);
-                    double roll, pitch, yaw;
-                    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+                if (do_fix_vel) {
+                    out_cmd.linear.x = stair_fixed_linear_vel_;
+                    out_cmd.angular.z = 0.0;
+                    double heading_ref = 0.0;
+                    if (queryPathHeadingNearRobot(context, heading_ref)) {
+                        tf2::Quaternion q;
+                        tf2::fromMsg(context.current_pose.pose.orientation, q);
+                        double roll, pitch, yaw;
+                        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-                    double err = normalizeAngle(heading_ref - yaw);
-                    if (std::abs(err) < stair_fixed_heading_deadband_) {
-                        err = 0.0;
+                        double err = normalizeAngle(heading_ref - yaw);
+                        if (std::abs(err) < stair_fixed_heading_deadband_) {
+                            err = 0.0;
+                        }
+                        out_cmd.angular.z = std::clamp(
+                            stair_fixed_heading_kp_ * err,
+                            -stair_fixed_max_angular_vel_,
+                            stair_fixed_max_angular_vel_);
                     }
-                    out_cmd.angular.z = std::clamp(
-                        stair_fixed_heading_kp_ * err,
-                        -stair_fixed_max_angular_vel_,
-                        stair_fixed_max_angular_vel_);
+                    decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+                } else {
+                    decision = nav_core::TerrainControlDecision::PASS_THROUGH;
                 }
-                decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
             }
             break;
         }
@@ -450,7 +456,7 @@ nav_core::TerrainControlDecision StairController::update(
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
                 } else if (active_attempt_count_ < std::max(1, stair_retry_max_attempts_)) {
                     transitionFsmState(StairFsmState::PRE_ALIGN, "backoff done -> retry");
-                    decision = nav_core::TerrainControlDecision::PASS_THROUGH;
+                    decision = nav_core::TerrainControlDecision::REQUEST_REPLAN; // 触发重规划以刷新实际距离
                 } else {
                     if (stair_request_recovery_on_max_attempts_) {
                         decision = nav_core::TerrainControlDecision::REQUEST_RECOVERY;

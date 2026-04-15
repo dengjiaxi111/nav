@@ -28,6 +28,10 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_threshold_step_ = node_->declare_parameter("planner.astar_threshold_step", 10);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
     publish_astar_raw_path_ = node_->declare_parameter("planner.publish_astar_raw_path", true);
+    publish_failure_debug_markers_ =
+        node_->declare_parameter("planner.publish_failure_debug_markers", true);
+    failure_marker_scale_ =
+        node_->declare_parameter("planner.failure_marker_scale", 0.14);
     astar_stair_shape_enable_ =
         node_->declare_parameter("planner.astar_stair_shape_enable", false);
     astar_stair_search_radius_cells_ =
@@ -135,6 +139,8 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         "debug/control_points", 10);
     stair_debug_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
         "debug/stair_align", 10);
+    plan_failure_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+        "debug/planner_failures", 10);
 }
 
 void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
@@ -371,6 +377,7 @@ bool SimplePlanner::plan(
     const geometry_msgs::msg::PoseStamped& goal,
     nav_msgs::msg::Path& path)
 {
+    clearPlanningFailureMarkers(goal.header.frame_id);
     
     if (map_manager_) {
         auto latest_costmap = map_manager_->getCostmap();
@@ -386,6 +393,9 @@ bool SimplePlanner::plan(
     
     if (!grid_map_) {
         RCLCPP_ERROR(node_->get_logger(), "地图未设置或 costmap 不可用");
+        publishPlanningFailureMarkers(goal.header.frame_id,
+            {{start.pose.position.x, start.pose.position.y, "start(no_map)", 1.0f, 0.1f, 0.1f},
+             {goal.pose.position.x, goal.pose.position.y, "goal(no_map)", 1.0f, 0.6f, 0.1f}});
         return false;
     }
     
@@ -427,12 +437,17 @@ bool SimplePlanner::plan(
     if (!worldToMap(start.pose.position.x, start.pose.position.y, sx, sy) ||
         !worldToMap(goal.pose.position.x, goal.pose.position.y, gx, gy)) {
         RCLCPP_ERROR(node_->get_logger(), "起点或终点超出地图范围");
+        publishPlanningFailureMarkers(goal.header.frame_id,
+            {{start.pose.position.x, start.pose.position.y, "start(out_of_map)", 1.0f, 0.1f, 0.1f},
+             {goal.pose.position.x, goal.pose.position.y, "goal(out_of_map)", 1.0f, 0.6f, 0.1f}});
         return false;
     }
     
     // 起点终点有效性检查
     if (!isValid(sx, sy)) {
         RCLCPP_ERROR(node_->get_logger(), "起点(%d,%d)在障碍物中", sx, sy);
+        publishPlanningFailureMarkers(goal.header.frame_id,
+            {{start.pose.position.x, start.pose.position.y, "start(in_obstacle)", 1.0f, 0.1f, 0.1f}});
         return false;
     }
     
@@ -450,6 +465,8 @@ bool SimplePlanner::plan(
             gy = free_y;
         } else {
             RCLCPP_ERROR(node_->get_logger(), "终点在障碍物中且无法找到附近可通行格子");
+            publishPlanningFailureMarkers(goal.header.frame_id,
+                {{goal.pose.position.x, goal.pose.position.y, "goal(in_obstacle)", 1.0f, 0.1f, 0.1f}});
             return false;
         }
     }
@@ -466,11 +483,19 @@ bool SimplePlanner::plan(
         obstacle_threshold_ = current_threshold;
         
         nav_msgs::msg::Path raw_path;
-        bool astar_success = runAstar(sx, sy, gx, gy, goal.header, raw_path);
+        int fail_best_x = sx;
+        int fail_best_y = sy;
+        bool astar_success = runAstar(sx, sy, gx, gy, goal.header, raw_path, &fail_best_x, &fail_best_y);
         
         obstacle_threshold_ = original_threshold;
         
         if (!astar_success) {
+            double fw = 0.0;
+            double fy = 0.0;
+            mapToWorld(fail_best_x, fail_best_y, fw, fy);
+            publishPlanningFailureMarkers(goal.header.frame_id,
+                {{goal.pose.position.x, goal.pose.position.y, "goal", 1.0f, 0.2f, 0.2f},
+                 {fw, fy, "astar_frontier", 1.0f, 1.0f, 0.1f}});
             RCLCPP_WARN(node_->get_logger(), 
                 "A*规划失败 (阈值=%d)", current_threshold);
             continue;
@@ -530,6 +555,7 @@ bool SimplePlanner::plan(
             RCLCPP_DEBUG(node_->get_logger(), 
                 "规划成功 (阈值=%d): A*=%zu点 -> 平滑=%zu点", 
                 current_threshold, raw_path.poses.size(), smoothed_path.poses.size());
+            clearPlanningFailureMarkers(goal.header.frame_id);
             path = smoothed_path;
             
             if (enable_path_cache_) {
@@ -538,6 +564,15 @@ bool SimplePlanner::plan(
             }
             return true;
         } else {
+            if (has_last_validate_fail_point_) {
+                publishPlanningFailureMarkers(goal.header.frame_id,
+                    {{last_validate_fail_x_, last_validate_fail_y_,
+                      "invalid_path_pt", 1.0f, 0.3f, 0.1f}});
+            } else if (!smoothed_path.poses.empty()) {
+                const auto& p = smoothed_path.poses.front().pose.position;
+                publishPlanningFailureMarkers(goal.header.frame_id,
+                    {{p.x, p.y, "invalid_path_pt(fallback)", 1.0f, 0.3f, 0.1f}});
+            }
             RCLCPP_DEBUG(node_->get_logger(), 
                 "路径验证失败 (阈值=%d)，尝试降低阈值", current_threshold);
         }
@@ -555,7 +590,9 @@ bool SimplePlanner::plan(
 
 bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
                               const std_msgs::msg::Header& header,
-                              nav_msgs::msg::Path& path) {
+                              nav_msgs::msg::Path& path,
+                              int* fail_best_x,
+                              int* fail_best_y) {
     // 每次A*搜索开始前重置簇锁定状态
     astar_stair_cluster_locked_ = false;
     astar_stair_locked_center_.setZero();
@@ -582,6 +619,8 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     const double move_cost[] = {1, 1.414, 1, 1.414, 1, 1.414, 1, 1.414};
     
     Node* goal_node = nullptr;
+    Node* closest_node = nullptr;
+    double closest_h = std::numeric_limits<double>::infinity();
     int iterations = 0;
     const int auto_max_iter = std::min(width_ * height_ * 2, 1000000);
     const int max_iter = (astar_max_iterations_ > 0) ? astar_max_iterations_ : auto_max_iter;
@@ -589,6 +628,11 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     while (!open.empty() && iterations++ < max_iter) {
         Node* curr = open.top();
         open.pop();
+
+        if (curr->h < closest_h) {
+            closest_h = curr->h;
+            closest_node = curr;
+        }
         
         if (curr->x == gx && curr->y == gy) {
             goal_node = curr;
@@ -649,6 +693,14 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     }
     
     if (!goal_node) {
+        if (closest_node) {
+            if (fail_best_x) {
+                *fail_best_x = closest_node->x;
+            }
+            if (fail_best_y) {
+                *fail_best_y = closest_node->y;
+            }
+        }
         return false;
     }
     
@@ -666,6 +718,81 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     path.header = header;
     path.poses = waypoints;
     return true;
+}
+
+void SimplePlanner::clearPlanningFailureMarkers(const std::string& frame_id) {
+    if (!publish_failure_debug_markers_ || !plan_failure_pub_ || frame_id.empty()) {
+        return;
+    }
+    visualization_msgs::msg::MarkerArray markers;
+    visualization_msgs::msg::Marker del;
+    del.header.frame_id = frame_id;
+    del.header.stamp = node_->now();
+    del.ns = "planner_failures";
+    del.action = visualization_msgs::msg::Marker::DELETEALL;
+    markers.markers.push_back(del);
+    plan_failure_pub_->publish(markers);
+}
+
+void SimplePlanner::publishPlanningFailureMarkers(const std::string& frame_id,
+                                                  const std::vector<FailurePoint>& points) {
+    if (!publish_failure_debug_markers_ || !plan_failure_pub_ || frame_id.empty()) {
+        return;
+    }
+
+    visualization_msgs::msg::MarkerArray markers;
+    auto stamp = node_->now();
+
+    visualization_msgs::msg::Marker del;
+    del.header.frame_id = frame_id;
+    del.header.stamp = stamp;
+    del.ns = "planner_failures";
+    del.action = visualization_msgs::msg::Marker::DELETEALL;
+    markers.markers.push_back(del);
+
+    int id = 0;
+    for (const auto& fp : points) {
+        visualization_msgs::msg::Marker sphere;
+        sphere.header.frame_id = frame_id;
+        sphere.header.stamp = stamp;
+        sphere.ns = "planner_failures";
+        sphere.id = id++;
+        sphere.type = visualization_msgs::msg::Marker::SPHERE;
+        sphere.action = visualization_msgs::msg::Marker::ADD;
+        sphere.pose.position.x = fp.x;
+        sphere.pose.position.y = fp.y;
+        sphere.pose.position.z = 0.10;
+        sphere.pose.orientation.w = 1.0;
+        sphere.scale.x = failure_marker_scale_;
+        sphere.scale.y = failure_marker_scale_;
+        sphere.scale.z = failure_marker_scale_;
+        sphere.color.r = fp.r;
+        sphere.color.g = fp.g;
+        sphere.color.b = fp.b;
+        sphere.color.a = 0.95f;
+        markers.markers.push_back(sphere);
+
+        visualization_msgs::msg::Marker text;
+        text.header.frame_id = frame_id;
+        text.header.stamp = stamp;
+        text.ns = "planner_failures";
+        text.id = id++;
+        text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        text.action = visualization_msgs::msg::Marker::ADD;
+        text.pose.position.x = fp.x;
+        text.pose.position.y = fp.y;
+        text.pose.position.z = 0.26;
+        text.pose.orientation.w = 1.0;
+        text.scale.z = std::max(0.08, failure_marker_scale_ * 0.75);
+        text.color.r = 1.0f;
+        text.color.g = 1.0f;
+        text.color.b = 1.0f;
+        text.color.a = 0.95f;
+        text.text = fp.label;
+        markers.markers.push_back(text);
+    }
+
+    plan_failure_pub_->publish(markers);
 }
 
 void SimplePlanner::publishControlPoints(const std::vector<Eigen::Vector2d>& ctrl_pts,
@@ -747,6 +874,8 @@ void SimplePlanner::publishControlPoints(const std::vector<Eigen::Vector2d>& ctr
 }
 
 bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
+    has_last_validate_fail_point_ = false;
+
     if (path.poses.empty() || !map_manager_) {
         return false;
     }
@@ -785,6 +914,9 @@ bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
         }
         
         if (val >= obstacle_check_threshold_ || val < 0) {
+            has_last_validate_fail_point_ = true;
+            last_validate_fail_x_ = pose.pose.position.x;
+            last_validate_fail_y_ = pose.pose.position.y;
             RCLCPP_WARN(node_->get_logger(), 
                 "路径点 (%.2f, %.2f) 与障碍物重合: costmap=%d >= %d", 
                 pose.pose.position.x, pose.pose.position.y, 
