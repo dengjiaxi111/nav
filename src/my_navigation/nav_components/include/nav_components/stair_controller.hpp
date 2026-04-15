@@ -121,6 +121,7 @@ private:
     double stair_cooldown_duration_sec_{30.0};
 
     uint8_t stair_mode_current_{0};
+    int virtual_leg_length_{1}; // 预留的虚拟腿长信号(1表示长腿，满足条件不触发失败，0表示短腿会触发失败)
     int stair_mode_release_counter_{0};
     std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
     std::chrono::steady_clock::time_point stair_mode_enter_time_{};

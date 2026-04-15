@@ -278,12 +278,12 @@ nav_core::TerrainControlDecision StairController::update(
 
             active_stair_ = candidate;
 
-            // 判据A：接触前若腿长信号(stair_mode)连续为0(短腿长)则判定失败
+            // 判据A：接触前若虚拟腿长连续为0(短腿)则判定失败
             if (candidate.dist_to_stair_m > stair_contact_distance_m_ &&
-                stair_mode_current_ == 0) {
+                virtual_leg_length_ == 0) {
                 ++precontact_miss_counter_;
                 if (precontact_miss_counter_ >= std::max(1, stair_fail_a_precontact_miss_cycles_)) {
-                    enter_fail_backoff("criterion A: stair_mode short-leg before contact");
+                    enter_fail_backoff("criterion A: virtual short-leg before contact");
                 }
             } else {
                 precontact_miss_counter_ = 0;
@@ -319,13 +319,13 @@ nav_core::TerrainControlDecision StairController::update(
                 active_stair_ = candidate;
             }
 
-            // 判据A：接触前若腿长信号(stair_mode)连续为0(短腿长)则判定失败
+            // 判据A：接触前若虚拟腿长连续为0(短腿)则判定失败
             if (has_candidate &&
                 candidate.dist_to_stair_m > stair_contact_distance_m_ &&
-                stair_mode_current_ == 0) {
+                virtual_leg_length_ == 0) {
                 ++precontact_miss_counter_;
                 if (precontact_miss_counter_ >= std::max(1, stair_fail_a_precontact_miss_cycles_)) {
-                    enter_fail_backoff("criterion A: stair_mode short-leg in commit");
+                    enter_fail_backoff("criterion A: virtual short-leg in commit");
                 }
             } else {
                 precontact_miss_counter_ = 0;
