@@ -10,6 +10,7 @@
 #include <vector>
 #include <mutex>
 #include <array>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 // 前向声明 acados solver (使用正确的类型名称)
 extern "C" {
@@ -138,6 +139,9 @@ private:
     
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+
+    rcl_interfaces::msg::SetParametersResult onParametersChanged(
+        const std::vector<rclcpp::Parameter>& parameters);
     
     // ========== acados Solver ==========
     wheelleg_nmpc_solver_capsule* acados_ocp_capsule_ = nullptr;
@@ -242,6 +246,10 @@ private:
     // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, v_cmd, omega_cmd]
     std::array<double, 7> predicted_stage1_state_{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
     bool predicted_stage1_valid_ = false;
+
+    // 运行时参数热更新句柄
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
+        on_set_params_handle_;
     
     // 性能统计
     struct {

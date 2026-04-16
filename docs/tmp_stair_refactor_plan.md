@@ -96,7 +96,7 @@ stateDiagram-v2
     VERIFY_SUCCESS --> NORMAL: 成功通过台阶
     VERIFY_SUCCESS --> FAIL_RETRY_BACKOFF: 未通过/滑落/再次触发失败判据
 
-    FAIL_RETRY_BACKOFF --> PRE_ALIGN: 退让完成 && attempt_count < max_attempts
+    FAIL_RETRY_BACKOFF --> PRE_ALIGN: 退让完成(下达重规划请求) && attempt_count < max_attempts
     FAIL_RETRY_BACKOFF --> COOLDOWN_BLOCKED: 退让完成 && attempt_count >= max_attempts
     FAIL_RETRY_BACKOFF --> NORMAL: 候选丢失或任务取消
 
@@ -195,6 +195,7 @@ ros2 topic echo /stair_fsm_state
 - 使用沿路径弧长增量，不使用欧式位移。
 4. 退让策略：
 - 沿台阶法向退让，目标落在台阶中垂线延长线。
+- 退让结束后若准备重试（切回 PRE_ALIGN），必须显式触发 REQUEST_REPLAN 以刷新起点与物理空间的一致性。
 5. 尝试与冷却：
 - 最大尝试次数、冷却时长均参数化（YAML 可调）。
 6. 冷却对规划影响：

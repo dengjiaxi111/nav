@@ -9,6 +9,7 @@
 #include <fstream>
 #include <chrono>
 #include <limits>
+#include <algorithm>
 
 // acados solver C 接口
 extern "C" {
@@ -291,6 +292,10 @@ void NMPC::initialize(rclcpp::Node* node) {
             "NMPC 观测发布: nmpc/speed_observation "
             "(lx=cmd_v, ly=chassis_v, lz=v_pred_1step, ax=a_cmd, ay=tau_v, az=v_cmd_pred_1step)");
     }
+
+    // 参数热更新：支持运行中通过 `ros2 param set` 实时调参
+    on_set_params_handle_ = node_->add_on_set_parameters_callback(
+        std::bind(&NMPC::onParametersChanged, this, std::placeholders::_1));
     
     initialized_ = true;
 }
@@ -585,9 +590,9 @@ nav_core::ControlResult NMPC::computeVelocity(
     
     // 发布调试信息
     if (stats_.solve_count % 20 == 0) {
-        RCLCPP_INFO(node_->get_logger(),
-            "NMPC: v=%.2f m/s, ω=%.2f rad/s, solve_time=%.2f ms (avg=%.2f, max=%.2f)",
-            v_cmd, omega_cmd, solve_time_ms, stats_.avg_solve_time_ms, stats_.max_solve_time_ms);
+        // RCLCPP_INFO(node_->get_logger(),
+        //     "NMPC: v=%.2f m/s, ω=%.2f rad/s, solve_time=%.2f ms (avg=%.2f, max=%.2f)",
+        //     v_cmd, omega_cmd, solve_time_ms, stats_.avg_solve_time_ms, stats_.max_solve_time_ms);
     }
     
     return nav_core::ControlResult::RUNNING;
@@ -625,6 +630,227 @@ void NMPC::chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(odom_mutex_);
     latest_chassis_odom_ = *msg;
     chassis_odom_received_ = true;
+}
+
+rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
+    const std::vector<rclcpp::Parameter>& parameters) {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    result.reason = "ok";
+
+    bool need_update_constraints = false;
+    bool changed = false;
+
+    for (const auto& p : parameters) {
+        const auto& name = p.get_name();
+        try {
+            if (name == "nmpc.max_linear_vel") {
+                params_.max_linear_vel = p.as_double();
+                need_update_constraints = true;
+                changed = true;
+            } else if (name == "nmpc.max_angular_vel") {
+                params_.max_angular_vel = p.as_double();
+                need_update_constraints = true;
+                changed = true;
+            } else if (name == "nmpc.max_linear_accel") {
+                params_.max_linear_accel = p.as_double();
+                need_update_constraints = true;
+                changed = true;
+            } else if (name == "nmpc.max_angular_accel") {
+                params_.max_angular_accel = p.as_double();
+                need_update_constraints = true;
+                changed = true;
+            } else if (name == "nmpc.allow_reverse") {
+                params_.allow_reverse = p.as_bool();
+                need_update_constraints = true;
+                changed = true;
+            } else if (name == "nmpc.horizon_length") {
+                params_.horizon_length = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.desired_velocity") {
+                params_.desired_velocity = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.use_omega_ref_from_path") {
+                params_.use_omega_ref_from_path = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.goal_decel_start_dist") {
+                params_.goal_decel_start_dist = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.goal_crawl_speed") {
+                params_.goal_crawl_speed = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.enable_goal_speed_guard") {
+                params_.enable_goal_speed_guard = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.goal_speed_guard_dist_scale") {
+                params_.goal_speed_guard_dist_scale = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.goal_speed_guard_decel_scale") {
+                params_.goal_speed_guard_decel_scale = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.goal_speed_guard_abs_floor") {
+                params_.goal_speed_guard_abs_floor = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.pivot_turn_heading_thresh") {
+                params_.pivot_turn_heading_thresh = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.heading_slowdown_start") {
+                params_.heading_slowdown_start = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.heading_slowdown_min_factor") {
+                params_.heading_slowdown_min_factor = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.enable_curvature_speed_decay") {
+                params_.enable_curvature_speed_decay = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.curvature_decay_kappa_ref") {
+                params_.curvature_decay_kappa_ref = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.curvature_decay_min_factor") {
+                params_.curvature_decay_min_factor = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.speed_profile.enable") {
+                params_.speed_profile_enable = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.speed_profile.v_cruise") {
+                params_.speed_profile_v_cruise = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.speed_profile.v_min") {
+                params_.speed_profile_v_min = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.speed_profile.max_lateral_accel") {
+                params_.speed_profile_max_lateral_accel = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.speed_profile.kappa_epsilon") {
+                params_.speed_profile_kappa_epsilon = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.speed_profile.curvature_window_m") {
+                params_.speed_profile_curvature_window_m = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.enable_curvature_horizon_adapt") {
+                params_.enable_curvature_horizon_adapt = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.horizon_kappa_scale") {
+                params_.horizon_kappa_scale = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.horizon_min_length") {
+                params_.horizon_min_length = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.odom_feedback_alpha") {
+                params_.odom_feedback_alpha = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.vel_lag_tau") {
+                params_.vel_lag_tau = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.omega_lag_tau") {
+                params_.omega_lag_tau = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.vel_ff_time") {
+                params_.vel_ff_time = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.omega_ff_time") {
+                params_.omega_ff_time = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.lateral_error_threshold") {
+                params_.lateral_error_threshold = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.Q_position") {
+                params_.Q_position = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.Q_orientation") {
+                params_.Q_orientation = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.Q_velocity") {
+                params_.Q_velocity = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.Q_omega") {
+                params_.Q_omega = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.R_linear") {
+                params_.R_linear = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.R_angular") {
+                params_.R_angular = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.esdf_weight") {
+                params_.esdf_weight = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.esdf_safe_dist") {
+                params_.esdf_safe_dist = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.contouring_weight") {
+                params_.contouring_weight = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.terminal_multiplier") {
+                params_.terminal_multiplier = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.enable_esdf_cost") {
+                params_.enable_esdf_cost = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.near_weight_multiplier") {
+                params_.near_weight_multiplier = p.as_double();
+                changed = true;
+            }
+        } catch (const std::exception& e) {
+            result.successful = false;
+            result.reason = std::string("参数类型错误: ") + name + ", " + e.what();
+            return result;
+        }
+    }
+
+    if (!changed) {
+        return result;
+    }
+
+    // 与 initialize() 中保持一致的参数防护
+    params_.max_linear_vel = std::max(0.0, params_.max_linear_vel);
+    params_.max_angular_vel = std::max(0.0, params_.max_angular_vel);
+    params_.max_linear_accel = std::max(0.0, params_.max_linear_accel);
+    params_.max_angular_accel = std::max(0.0, params_.max_angular_accel);
+    params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
+    params_.goal_decel_start_dist = std::max(0.1, params_.goal_decel_start_dist);
+    params_.goal_crawl_speed = std::max(0.0, params_.goal_crawl_speed);
+    params_.goal_speed_guard_dist_scale = std::max(1.0, params_.goal_speed_guard_dist_scale);
+    params_.goal_speed_guard_decel_scale = std::max(0.1, params_.goal_speed_guard_decel_scale);
+    params_.goal_speed_guard_abs_floor = std::max(0.05, params_.goal_speed_guard_abs_floor);
+    params_.pivot_turn_heading_thresh = std::clamp(params_.pivot_turn_heading_thresh, 0.0, M_PI);
+    params_.heading_slowdown_start = std::clamp(params_.heading_slowdown_start, 0.0, M_PI);
+    params_.heading_slowdown_min_factor =
+        std::clamp(params_.heading_slowdown_min_factor, 0.0, 1.0);
+    params_.curvature_decay_kappa_ref = std::max(1e-3, params_.curvature_decay_kappa_ref);
+    params_.curvature_decay_min_factor =
+        std::clamp(params_.curvature_decay_min_factor, 0.05, 1.0);
+    params_.speed_profile_v_cruise = std::max(0.0, params_.speed_profile_v_cruise);
+    params_.speed_profile_v_min = std::max(0.0, params_.speed_profile_v_min);
+    params_.speed_profile_v_min =
+        std::min(params_.speed_profile_v_min, params_.speed_profile_v_cruise);
+    params_.speed_profile_max_lateral_accel =
+        std::max(0.05, params_.speed_profile_max_lateral_accel);
+    params_.speed_profile_kappa_epsilon = std::max(1e-4, params_.speed_profile_kappa_epsilon);
+    params_.speed_profile_curvature_window_m =
+        std::max(0.05, params_.speed_profile_curvature_window_m);
+    params_.horizon_kappa_scale = std::max(0.0, params_.horizon_kappa_scale);
+    params_.horizon_min_length = std::max(0.1, params_.horizon_min_length);
+    params_.vel_lag_tau = std::max(0.05, params_.vel_lag_tau);
+    params_.omega_lag_tau = std::max(0.05, params_.omega_lag_tau);
+    params_.vel_ff_time = std::max(0.0, params_.vel_ff_time);
+    params_.omega_ff_time = std::max(0.0, params_.omega_ff_time);
+    if (params_.heading_slowdown_start > params_.pivot_turn_heading_thresh) {
+        params_.heading_slowdown_start = params_.pivot_turn_heading_thresh;
+    }
+
+    if (need_update_constraints && acados_ocp_capsule_) {
+        updateNMPCParameters();
+    }
+
+    RCLCPP_INFO_THROTTLE(
+        node_->get_logger(), *node_->get_clock(), 1000,
+        "NMPC 参数热更新生效: v_max=%.2f a_max=%.2f v_cruise=%.2f ay_max=%.2f window=%.2f",
+        params_.max_linear_vel, params_.max_linear_accel,
+        params_.speed_profile_v_cruise, params_.speed_profile_max_lateral_accel,
+        params_.speed_profile_curvature_window_m);
+
+    return result;
 }
 
 // ========== 私有方法实现 ==========
@@ -1123,14 +1349,14 @@ void NMPC::updateNMPCParameters() {
         ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, i, "ubu", ubu);
     }
     
-    RCLCPP_INFO(node_->get_logger(), 
-        "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, tau_v=%.2f, tau_w=%.2f, ff_v=%.3f, ff_w=%.3f, reverse=%d, Qp=%.2f, Rl=%.3f",
-        params_.max_linear_vel, params_.max_angular_vel,
-        params_.max_linear_accel, params_.max_angular_accel,
-        params_.vel_lag_tau, params_.omega_lag_tau,
-        params_.vel_ff_time, params_.omega_ff_time,
-        params_.allow_reverse,
-        params_.Q_position, params_.R_linear);
+    // RCLCPP_INFO(node_->get_logger(), 
+    //     "NMPC 参数已更新: v_max=%.2f, ω_max=%.2f, a_max=%.2f, α_max=%.2f, tau_v=%.2f, tau_w=%.2f, ff_v=%.3f, ff_w=%.3f, reverse=%d, Qp=%.2f, Rl=%.3f",
+    //     params_.max_linear_vel, params_.max_angular_vel,
+    //     params_.max_linear_accel, params_.max_angular_accel,
+    //     params_.vel_lag_tau, params_.omega_lag_tau,
+    //     params_.vel_ff_time, params_.omega_ff_time,
+    //     params_.allow_reverse,
+    //     params_.Q_position, params_.R_linear);
 }
 
 void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
