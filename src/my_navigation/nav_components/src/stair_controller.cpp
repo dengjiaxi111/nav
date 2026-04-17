@@ -521,6 +521,7 @@ nav_core::TerrainControlDecision StairController::update(
     }
 
     applyStairModeOmegaLimit(out_cmd, context.control_rate_hz);
+    syncRuntimeBlockedUphillStairs(now_tp);
     publishFsmDebug(now_tp);
     publishCooldownMarkers(now_tp);
     return decision;
@@ -1041,6 +1042,36 @@ void StairController::publishCooldownMarkers(const std::chrono::steady_clock::ti
     }
 
     stair_cooldown_marker_pub_->publish(marker_array);
+}
+
+void StairController::syncRuntimeBlockedUphillStairs(
+    const std::chrono::steady_clock::time_point& now) {
+    if (!map_manager_) {
+        return;
+    }
+
+    std::unordered_set<int> active_blocked_ids;
+    active_blocked_ids.reserve(stair_cooldown_until_by_id_.size());
+
+    std::vector<int> expired_ids;
+    expired_ids.reserve(stair_cooldown_until_by_id_.size());
+    for (const auto& kv : stair_cooldown_until_by_id_) {
+        if (now >= kv.second) {
+            expired_ids.push_back(kv.first);
+            continue;
+        }
+        active_blocked_ids.insert(kv.first);
+    }
+
+    for (int sid : expired_ids) {
+        stair_cooldown_until_by_id_.erase(sid);
+    }
+
+    if (active_blocked_ids.empty()) {
+        map_manager_->clearRuntimeBlockedStairUphillIds();
+        return;
+    }
+    map_manager_->setRuntimeBlockedStairUphillIds(active_blocked_ids);
 }
 
 void StairController::applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd,

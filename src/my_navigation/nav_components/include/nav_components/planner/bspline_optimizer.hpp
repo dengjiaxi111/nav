@@ -52,6 +52,12 @@ struct BSplineOptParams {
     // 使用 A* 命中的台阶点作为锚点中心（减少 A*/B-spline 横向偏移）
     bool use_astar_stair_anchors = true;
     double astar_stair_anchor_match_max_dist = 0.6;
+    // 命中点近障碍时沿台阶切向向低代价侧偏移
+    double astar_anchor_near_obstacle_dist = 0.18;
+    double astar_anchor_tangent_probe_dist = 0.12;
+    double astar_anchor_tangent_shift_step = 0.08;
+    double astar_anchor_tangent_shift_max = 0.24;
+    double astar_anchor_tangent_improve_min = 0.01;
     
     // 优化器参数
     int max_iterations = 100;       // 最大迭代次数
@@ -1004,6 +1010,7 @@ private:
         struct ClusterAnchorInfo {
             Eigen::Vector2d anchor_pre, anchor_mid, anchor_post;
             Eigen::Vector2d t_stair;
+            Eigen::Vector2d center_pos;
             double anchor_pre_arc, anchor_mid_arc, anchor_post_arc;
         };
         std::vector<ClusterAnchorInfo> cluster_anchors(clusters.size());
@@ -1022,6 +1029,7 @@ private:
             bool has_match = false;
             Eigen::Vector2d matched_pt = center_pos;
             double matched_dist = -1.0;
+
             if (params_.use_astar_stair_anchors && !astar_stair_hits_.empty()) {
                 double best_d = std::numeric_limits<double>::max();
                 Eigen::Vector2d best_pt = center_pos;
@@ -1033,15 +1041,71 @@ private:
                     }
                 }
                 if (best_d <= std::max(0.05, params_.astar_stair_anchor_match_max_dist)) {
-                    center_pos = best_pt;
+                    Eigen::Vector2d shifted = best_pt;
+
+                    if (esdf_callback_) {
+                        double gx0 = 0.0, gy0 = 0.0;
+                        const double d0 = esdf_callback_(best_pt.x(), best_pt.y(), &gx0, &gy0);
+                        const double near_thresh =
+                            std::max(0.0, params_.astar_anchor_near_obstacle_dist);
+                        const double probe_dist =
+                            std::max(0.01, params_.astar_anchor_tangent_probe_dist);
+                        const double shift_step =
+                            std::max(0.01, params_.astar_anchor_tangent_shift_step);
+                        const double shift_max =
+                            std::max(shift_step, params_.astar_anchor_tangent_shift_max);
+                        const double improve_min =
+                            std::max(0.0, params_.astar_anchor_tangent_improve_min);
+
+                        if (d0 < near_thresh) {
+                            Eigen::Vector2d t_stair(-cl.normal.y(), cl.normal.x());
+                            const double tn = t_stair.norm();
+                            if (tn > 1e-6) {
+                                t_stair /= tn;
+                                double gxp = 0.0, gyp = 0.0;
+                                double gxm = 0.0, gym = 0.0;
+                                const double d_plus = esdf_callback_(
+                                    (best_pt + t_stair * probe_dist).x(),
+                                    (best_pt + t_stair * probe_dist).y(),
+                                    &gxp, &gyp);
+                                const double d_minus = esdf_callback_(
+                                    (best_pt - t_stair * probe_dist).x(),
+                                    (best_pt - t_stair * probe_dist).y(),
+                                    &gxm, &gym);
+
+                                const double sign = (d_plus >= d_minus) ? 1.0 : -1.0;
+                                const int steps = std::max(
+                                    1, static_cast<int>(std::floor(shift_max / shift_step + 1e-6)));
+                                double best_local_dist = d0;
+
+                                for (int si = 0; si < steps; ++si) {
+                                    const Eigen::Vector2d cand = shifted + sign * t_stair * shift_step;
+                                    double gxc = 0.0, gyc = 0.0;
+                                    const double d_cand = esdf_callback_(cand.x(), cand.y(), &gxc, &gyc);
+                                    if (d_cand > best_local_dist + improve_min) {
+                                        shifted = cand;
+                                        best_local_dist = d_cand;
+                                        if (best_local_dist >= near_thresh) {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    center_pos = shifted;
                     has_match = true;
-                    matched_pt = best_pt;
+                    matched_pt = shifted;
                 }
             }
 
             double dir = cl.is_uphill ? 1.0 : -1.0;
             auto& anc = cluster_anchors[ci];
             anc.t_stair = Eigen::Vector2d(-cl.normal.y(), cl.normal.x());
+            anc.center_pos = center_pos;
             anc.anchor_pre  = center_pos - dir * cl.normal * pre;
             anc.anchor_mid  = center_pos;
             anc.anchor_post = center_pos + dir * cl.normal * post;
@@ -1061,7 +1125,7 @@ private:
             ci_diag.has_astar_match = has_match;
             ci_diag.astar_match_point = matched_pt;
             if (has_match) {
-                matched_dist = (anc.anchor_pre - matched_pt).norm();
+                matched_dist = (anc.anchor_mid - matched_pt).norm();
             }
             ci_diag.astar_match_dist = has_match ? matched_dist : -1.0;
             last_stair_diag_.clusters.push_back(ci_diag);
@@ -1129,7 +1193,7 @@ private:
 
             // J_lateral: lambda_lateral * huber(d_t / corridor_half_width)
             if (params_.lambda_stair_lateral > 0.0) {
-                double d_t = (s.pos - clusters[ci].center_pos).dot(anc.t_stair);
+                double d_t = (s.pos - anc.center_pos).dot(anc.t_stair);
                 double abs_d_t = std::abs(d_t);
                 sum_lat += abs_d_t;
                 max_lat = std::max(max_lat, abs_d_t);

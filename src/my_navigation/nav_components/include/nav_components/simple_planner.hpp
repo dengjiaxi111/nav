@@ -62,6 +62,15 @@ private:
                   int* fail_best_x = nullptr,
                   int* fail_best_y = nullptr);
 
+    // A* 台阶硬约束（经预估台阶中心点强制经过 pre/post 垂直点）
+    bool runAstarWithHardStairConstraint(
+        int sx, int sy, int gx, int gy,
+        const std_msgs::msg::Header& header,
+        nav_msgs::msg::Path& constrained_path,
+        nav_msgs::msg::Path& soft_seed_path,
+        int* fail_best_x = nullptr,
+        int* fail_best_y = nullptr);
+
     // A* 台阶感知形态代价：入口附近抑制切向掠过、约束中垂线
     double computeStairShapeCost(int from_x, int from_y,
                                  int to_x, int to_y);
@@ -100,6 +109,9 @@ private:
     bool enable_auto_prune_ = true;  // 启用自动剪枝
     double prune_distance_ = 0.5;  // 剪枝距离阈值(米)
     bool publish_astar_raw_path_ = true;  // 发布原始A*路径（平滑前）
+    bool allow_raw_fallback_on_smooth_fail_ = false;  // 平滑失败时是否回退原始A*
+    std::string stair_constraint_mode_ = "soft";  // soft/hard
+    double stair_hard_dist_delta_m_ = 0.0;  // 硬约束 pre/post 距离相对 B-spline 参数的偏移量
 
     // A* 台阶感知形态参数（不含外切奖励）
     bool astar_stair_shape_enable_ = false;
