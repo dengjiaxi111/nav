@@ -51,6 +51,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.goal_speed_guard_decel_scale", params_.goal_speed_guard_decel_scale);
     node_->declare_parameter("nmpc.goal_speed_guard_abs_floor", params_.goal_speed_guard_abs_floor);
     node_->declare_parameter("nmpc.pivot_turn_heading_thresh", params_.pivot_turn_heading_thresh);
+    node_->declare_parameter("nmpc.enable_heading_slowdown", params_.enable_heading_slowdown);
     node_->declare_parameter("nmpc.heading_slowdown_start", params_.heading_slowdown_start);
     node_->declare_parameter("nmpc.heading_slowdown_min_factor", params_.heading_slowdown_min_factor);
     node_->declare_parameter("nmpc.enable_curvature_speed_decay", params_.enable_curvature_speed_decay);
@@ -123,6 +124,8 @@ void NMPC::initialize(rclcpp::Node* node) {
         node_->get_parameter("nmpc.goal_speed_guard_abs_floor").as_double();
     params_.pivot_turn_heading_thresh =
         node_->get_parameter("nmpc.pivot_turn_heading_thresh").as_double();
+    params_.enable_heading_slowdown =
+        node_->get_parameter("nmpc.enable_heading_slowdown").as_bool();
     params_.heading_slowdown_start =
         node_->get_parameter("nmpc.heading_slowdown_start").as_double();
     params_.heading_slowdown_min_factor =
@@ -708,6 +711,9 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
             } else if (name == "nmpc.pivot_turn_heading_thresh") {
                 params_.pivot_turn_heading_thresh = p.as_double();
                 changed = true;
+            } else if (name == "nmpc.enable_heading_slowdown") {
+                params_.enable_heading_slowdown = p.as_bool();
+                changed = true;
             } else if (name == "nmpc.heading_slowdown_start") {
                 params_.heading_slowdown_start = p.as_double();
                 changed = true;
@@ -1089,12 +1095,13 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     if (startup_pivot_phase_active_) {
                         desired_v = 0.0;
                         pivot_turn_stop = true;
-                    } else {
+                    } else if (params_.enable_heading_slowdown) {
                         // 非起步阶段不再原地停车，仅做最小倍率软降速
                         heading_speed_factor = params_.heading_slowdown_min_factor;
                         desired_v *= heading_speed_factor;
                     }
-                } else if (heading_err > params_.heading_slowdown_start) {
+                } else if (params_.enable_heading_slowdown &&
+                           heading_err > params_.heading_slowdown_start) {
                     double denom = std::max(1e-3,
                         params_.pivot_turn_heading_thresh - params_.heading_slowdown_start);
                     heading_speed_factor =

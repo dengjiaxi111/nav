@@ -196,6 +196,7 @@ private:
         double goal_speed_guard_decel_scale = 1.2; // 安全刹车减速度倍率(相对 max_linear_accel)
         double goal_speed_guard_abs_floor = 0.5; // 安全刹车最小减速度(m/s^2)
         double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
+        bool enable_heading_slowdown = true;     // 是否启用航向误差触发的速度缩减
         double heading_slowdown_start = 0.2;     // 航向误差大于该阈值开始降速 (rad)
         double heading_slowdown_min_factor = 0.1; // 航向降速最小倍率
 
