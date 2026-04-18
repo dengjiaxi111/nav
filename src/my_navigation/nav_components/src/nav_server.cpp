@@ -1742,6 +1742,7 @@ private:
                             break;
                         case nav_core::TerrainControlDecision::REQUEST_REPLAN:
                             stopRobot();
+                            planner_.clearCache();
                             fsm_.transitionTo(nav_core::NavState::PLANNING);
                             break;
                         case nav_core::TerrainControlDecision::REQUEST_RECOVERY:

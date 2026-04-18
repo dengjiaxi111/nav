@@ -307,6 +307,7 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
         goal_brake_speed_cap_ = 1e9;
         pivot_turn_active_ = false;
         pivot_turn_heading_error_ = 0.0;
+        startup_pivot_phase_active_ = false;
         return;
     }
     
@@ -317,6 +318,7 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
     goal_brake_speed_cap_ = 1e9;
     pivot_turn_active_ = false;
     pivot_turn_heading_error_ = 0.0;
+    startup_pivot_phase_active_ = true;
     
     RCLCPP_INFO(node_->get_logger(), 
         "NMPC: 接收新路径, %zu 个点", path.poses.size());
@@ -543,6 +545,17 @@ nav_core::ControlResult NMPC::computeVelocity(
     cmd_vel.linear.x = v_cmd;
     cmd_vel.angular.z = omega_cmd;
 
+    if (startup_pivot_phase_active_) {
+        const bool started_tracking =
+            (std::abs(cmd_vel.linear.x) > 0.12) || (nearest_idx_ > 3);
+        if (started_tracking) {
+            startup_pivot_phase_active_ = false;
+            RCLCPP_INFO(node_->get_logger(),
+                "NMPC: 退出起步原地对齐阶段 (v=%.2f, nearest_idx=%d)",
+                cmd_vel.linear.x, nearest_idx_);
+        }
+    }
+
     if (speed_observation_pub_) {
         geometry_msgs::msg::TwistStamped obs;
         obs.header = current_pose.header;
@@ -613,6 +626,7 @@ void NMPC::reset() {
     goal_brake_latched_ = false;
     goal_brake_speed_cap_ = 1e9;
     predicted_stage1_valid_ = false;
+    startup_pivot_phase_active_ = false;
     
     // 重置 solver
     if (acados_ocp_capsule_) {
@@ -1072,8 +1086,14 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 while (d_theta < -M_PI) d_theta += 2.0 * M_PI;
                 double heading_err = std::abs(d_theta);
                 if (heading_err > params_.pivot_turn_heading_thresh) {
-                    desired_v = 0.0;
-                    pivot_turn_stop = true;
+                    if (startup_pivot_phase_active_) {
+                        desired_v = 0.0;
+                        pivot_turn_stop = true;
+                    } else {
+                        // 非起步阶段不再原地停车，仅做最小倍率软降速
+                        heading_speed_factor = params_.heading_slowdown_min_factor;
+                        desired_v *= heading_speed_factor;
+                    }
                 } else if (heading_err > params_.heading_slowdown_start) {
                     double denom = std::max(1e-3,
                         params_.pivot_turn_heading_thresh - params_.heading_slowdown_start);

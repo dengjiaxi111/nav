@@ -165,6 +165,8 @@ public:
     };
 
     void setStairLayerConfig(const StairLayerConfig& cfg);
+    void setRuntimeBlockedStairUphillIds(const std::unordered_set<int>& stair_ids);
+    void clearRuntimeBlockedStairUphillIds();
 
     bool isTransitionAllowed(int from_x, int from_y, int to_x, int to_y) const;
     void getForbiddenTransitionSegments(std::vector<std::array<double, 4>>& segments) const;
@@ -296,6 +298,7 @@ private:
     std::vector<uint8_t> stair_normal_valid_{};
     std::vector<StairPrimitive> stair_primitives_{};
     std::vector<int> stair_primitive_id_map_{};  // global idx -> stair_id, -1 表示无
+    std::unordered_set<int> runtime_blocked_stair_uphill_ids_{};
 };
 
 }  // namespace nav_components

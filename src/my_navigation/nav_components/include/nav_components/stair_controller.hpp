@@ -68,6 +68,7 @@ private:
                                      double& dist_to_stair_m) const;
     void publishFsmDebug(const std::chrono::steady_clock::time_point& now);
     void publishCooldownMarkers(const std::chrono::steady_clock::time_point& now);
+    void syncRuntimeBlockedUphillStairs(const std::chrono::steady_clock::time_point& now);
 
     void publishStairMode(uint8_t mode, bool force_publish, bool bypass_hold = false);
     void updateStairModeDetection(const nav_core::TerrainControlContext& context);

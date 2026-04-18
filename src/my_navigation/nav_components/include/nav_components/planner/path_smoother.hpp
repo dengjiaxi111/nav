@@ -53,6 +53,12 @@ struct SmoothParams {
     double stair_corridor_half_width_m = 0.30;
     bool use_astar_stair_anchors = true;
     double astar_stair_anchor_match_max_dist_m = 0.6;
+    // A* 台阶命中点近障碍时，沿台阶切向向低代价侧偏移
+    double astar_anchor_near_obstacle_dist_m = 0.18;
+    double astar_anchor_tangent_probe_dist_m = 0.12;
+    double astar_anchor_tangent_shift_step_m = 0.08;
+    double astar_anchor_tangent_shift_max_m = 0.24;
+    double astar_anchor_tangent_improve_min_m = 0.01;
 };
 
 class PathSmoother {
@@ -259,6 +265,16 @@ private:
         opt_params.use_astar_stair_anchors = params_.use_astar_stair_anchors;
         opt_params.astar_stair_anchor_match_max_dist =
             params_.astar_stair_anchor_match_max_dist_m;
+        opt_params.astar_anchor_near_obstacle_dist =
+            params_.astar_anchor_near_obstacle_dist_m;
+        opt_params.astar_anchor_tangent_probe_dist =
+            params_.astar_anchor_tangent_probe_dist_m;
+        opt_params.astar_anchor_tangent_shift_step =
+            params_.astar_anchor_tangent_shift_step_m;
+        opt_params.astar_anchor_tangent_shift_max =
+            params_.astar_anchor_tangent_shift_max_m;
+        opt_params.astar_anchor_tangent_improve_min =
+            params_.astar_anchor_tangent_improve_min_m;
         optimizer_.setParams(opt_params);
     }
     

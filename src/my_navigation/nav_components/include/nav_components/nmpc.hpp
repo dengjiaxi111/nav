@@ -264,6 +264,7 @@ private:
     double goal_brake_speed_cap_ = 1e9;
     bool pivot_turn_active_ = false;
     double pivot_turn_heading_error_ = 0.0;
+    bool startup_pivot_phase_active_ = false;
 };
 
 }  // namespace nav_components

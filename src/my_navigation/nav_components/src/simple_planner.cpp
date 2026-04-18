@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <limits>
 #include <cstdio>
+#include <cctype>
 
 namespace nav_components {
 
@@ -28,6 +29,12 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_threshold_step_ = node_->declare_parameter("planner.astar_threshold_step", 10);
     prune_distance_ = node_->declare_parameter("planner.prune_distance", 0.5);
     publish_astar_raw_path_ = node_->declare_parameter("planner.publish_astar_raw_path", true);
+    allow_raw_fallback_on_smooth_fail_ =
+        node_->declare_parameter("planner.allow_raw_fallback_on_smooth_fail", false);
+    stair_constraint_mode_ =
+        node_->declare_parameter("planner.stair_constraint_mode", std::string("soft"));
+    stair_hard_dist_delta_m_ =
+        node_->declare_parameter("planner.stair_hard_dist_delta_m", 0.0);
     publish_failure_debug_markers_ =
         node_->declare_parameter("planner.publish_failure_debug_markers", true);
     failure_marker_scale_ =
@@ -73,6 +80,15 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     }
     if (astar_stair_anchor_match_max_dist_m_ < 0.0) {
         astar_stair_anchor_match_max_dist_m_ = 0.0;
+    }
+    std::transform(stair_constraint_mode_.begin(), stair_constraint_mode_.end(),
+                   stair_constraint_mode_.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (stair_constraint_mode_ != "soft" && stair_constraint_mode_ != "hard") {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.stair_constraint_mode='%s' 非法，回退为 soft",
+            stair_constraint_mode_.c_str());
+        stair_constraint_mode_ = "soft";
     }
     
     SmoothParams smooth_params;
@@ -129,6 +145,16 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.stair_corridor_half_width_m", 0.30);
     smooth_params.use_astar_stair_anchors = use_astar_stair_anchors_;
     smooth_params.astar_stair_anchor_match_max_dist_m = astar_stair_anchor_match_max_dist_m_;
+    smooth_params.astar_anchor_near_obstacle_dist_m =
+        node_->declare_parameter("planner.astar_anchor_near_obstacle_dist_m", 0.18);
+    smooth_params.astar_anchor_tangent_probe_dist_m =
+        node_->declare_parameter("planner.astar_anchor_tangent_probe_dist_m", 0.12);
+    smooth_params.astar_anchor_tangent_shift_step_m =
+        node_->declare_parameter("planner.astar_anchor_tangent_shift_step_m", 0.08);
+    smooth_params.astar_anchor_tangent_shift_max_m =
+        node_->declare_parameter("planner.astar_anchor_tangent_shift_max_m", 0.24);
+    smooth_params.astar_anchor_tangent_improve_min_m =
+        node_->declare_parameter("planner.astar_anchor_tangent_improve_min_m", 0.01);
 
     smoother_.setParams(smooth_params);
     
@@ -483,9 +509,25 @@ bool SimplePlanner::plan(
         obstacle_threshold_ = current_threshold;
         
         nav_msgs::msg::Path raw_path;
+        nav_msgs::msg::Path soft_seed_path;
         int fail_best_x = sx;
         int fail_best_y = sy;
-        bool astar_success = runAstar(sx, sy, gx, gy, goal.header, raw_path, &fail_best_x, &fail_best_y);
+        bool astar_success = false;
+        if (stair_constraint_mode_ == "hard") {
+            astar_success = runAstarWithHardStairConstraint(
+                sx, sy, gx, gy, goal.header, raw_path, soft_seed_path,
+                &fail_best_x, &fail_best_y);
+            if (!astar_success && !soft_seed_path.poses.empty()) {
+                raw_path = soft_seed_path;
+                astar_success = true;
+                RCLCPP_WARN(node_->get_logger(),
+                    "硬约束路径失败，自动回退软约束路径: 点数=%zu",
+                    raw_path.poses.size());
+            }
+        } else {
+            astar_success = runAstar(
+                sx, sy, gx, gy, goal.header, raw_path, &fail_best_x, &fail_best_y);
+        }
         
         obstacle_threshold_ = original_threshold;
         
@@ -558,6 +600,18 @@ bool SimplePlanner::plan(
             clearPlanningFailureMarkers(goal.header.frame_id);
             path = smoothed_path;
             
+            if (enable_path_cache_) {
+                cached_path_ = path;
+                cached_goal_ = goal;
+            }
+            return true;
+        } else if (enable_smooth_ && allow_raw_fallback_on_smooth_fail_ && validatePath(raw_path)) {
+            RCLCPP_WARN(node_->get_logger(),
+                "平滑路径验证失败，回退到原始A*路径: A*=%zu点, 平滑=%zu点",
+                raw_path.poses.size(), smoothed_path.poses.size());
+            clearPlanningFailureMarkers(goal.header.frame_id);
+            path = raw_path;
+
             if (enable_path_cache_) {
                 cached_path_ = path;
                 cached_goal_ = goal;
@@ -717,6 +771,172 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     
     path.header = header;
     path.poses = waypoints;
+    return true;
+}
+
+bool SimplePlanner::runAstarWithHardStairConstraint(
+    int sx, int sy, int gx, int gy,
+    const std_msgs::msg::Header& header,
+    nav_msgs::msg::Path& constrained_path,
+    nav_msgs::msg::Path& soft_seed_path,
+    int* fail_best_x,
+    int* fail_best_y) {
+    constrained_path = nav_msgs::msg::Path();
+    soft_seed_path = nav_msgs::msg::Path();
+
+    // 先求软约束路径：用于提取台阶中心点，同时作为硬约束失败的回退种子路径
+    if (!runAstar(sx, sy, gx, gy, header, soft_seed_path, fail_best_x, fail_best_y)) {
+        return false;
+    }
+
+    // 无地图管理器或路径过短时，不施加硬约束
+    if (!map_manager_ || soft_seed_path.poses.size() < 3) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+
+    int stair_start = -1;
+    int stair_end = -1;
+    Eigen::Vector2d normal_sum = Eigen::Vector2d::Zero();
+    Eigen::Vector2d pos_sum = Eigen::Vector2d::Zero();
+    int stair_cnt = 0;
+    bool in_cluster = false;
+
+    for (int i = 0; i < static_cast<int>(soft_seed_path.poses.size()); ++i) {
+        const auto& pose = soft_seed_path.poses[i].pose.position;
+        double nx = 0.0, ny = 0.0;
+        const bool is_stair = map_manager_->getStairTraverseNormal(pose.x, pose.y, nx, ny);
+        if (is_stair) {
+            if (!in_cluster) {
+                in_cluster = true;
+                stair_start = i;
+            }
+            stair_end = i;
+            Eigen::Vector2d n(nx, ny);
+            const double nn = n.norm();
+            if (nn > 1e-6) {
+                normal_sum += n / nn;
+            }
+            pos_sum += Eigen::Vector2d(pose.x, pose.y);
+            stair_cnt++;
+        } else if (in_cluster) {
+            break;
+        }
+    }
+
+    // 没有台阶命中，退化为软约束路径
+    if (stair_cnt <= 0) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+
+    Eigen::Vector2d normal = normal_sum;
+    const double nn = normal.norm();
+    if (nn < 1e-6) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+    normal /= nn;
+    const Eigen::Vector2d center = pos_sum / static_cast<double>(stair_cnt);
+
+    const int mid_idx = std::clamp((stair_start + stair_end) / 2,
+                                   1,
+                                   static_cast<int>(soft_seed_path.poses.size()) - 2);
+    const auto& p_prev = soft_seed_path.poses[mid_idx - 1].pose.position;
+    const auto& p_next = soft_seed_path.poses[mid_idx + 1].pose.position;
+    Eigen::Vector2d tangent(p_next.x - p_prev.x, p_next.y - p_prev.y);
+    if (tangent.norm() < 1e-6 && stair_end > stair_start) {
+        const auto& p_s = soft_seed_path.poses[stair_start].pose.position;
+        const auto& p_e = soft_seed_path.poses[stair_end].pose.position;
+        tangent = Eigen::Vector2d(p_e.x - p_s.x, p_e.y - p_s.y);
+    }
+    if (tangent.norm() < 1e-6) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+    tangent.normalize();
+
+    const bool is_uphill = (tangent.dot(normal) >= 0.0);
+    const double base_pre = is_uphill ? astar_stair_up_pre_dist_m_ : astar_stair_down_pre_dist_m_;
+    const double base_post = is_uphill ? astar_stair_up_post_dist_m_ : astar_stair_down_post_dist_m_;
+    const double pre_dist = std::max(0.0, base_pre + stair_hard_dist_delta_m_);
+    const double post_dist = std::max(0.0, base_post + stair_hard_dist_delta_m_);
+
+    if (pre_dist <= 1e-6 && post_dist <= 1e-6) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+
+    const double dir = is_uphill ? 1.0 : -1.0;
+    const Eigen::Vector2d pre_pt = center - dir * normal * pre_dist;
+    const Eigen::Vector2d post_pt = center + dir * normal * post_dist;
+
+    int pre_x = 0, pre_y = 0, post_x = 0, post_y = 0;
+    if (!worldToMap(pre_pt.x(), pre_pt.y(), pre_x, pre_y) ||
+        !worldToMap(post_pt.x(), post_pt.y(), post_x, post_y)) {
+        if (fail_best_x) *fail_best_x = gx;
+        if (fail_best_y) *fail_best_y = gy;
+        return false;
+    }
+
+    if (!isValid(pre_x, pre_y) && !findNearestFreeCell(pre_x, pre_y, pre_x, pre_y, 10)) {
+        if (fail_best_x) *fail_best_x = pre_x;
+        if (fail_best_y) *fail_best_y = pre_y;
+        return false;
+    }
+    if (!isValid(post_x, post_y) && !findNearestFreeCell(post_x, post_y, post_x, post_y, 10)) {
+        if (fail_best_x) *fail_best_x = post_x;
+        if (fail_best_y) *fail_best_y = post_y;
+        return false;
+    }
+
+    const std::vector<std::pair<int, int>> segment_pts = {
+        {sx, sy}, {pre_x, pre_y}, {post_x, post_y}, {gx, gy}};
+
+    nav_msgs::msg::Path stitched;
+    stitched.header = header;
+
+    for (size_t i = 0; i + 1 < segment_pts.size(); ++i) {
+        const int from_x = segment_pts[i].first;
+        const int from_y = segment_pts[i].second;
+        const int to_x = segment_pts[i + 1].first;
+        const int to_y = segment_pts[i + 1].second;
+
+        if (from_x == to_x && from_y == to_y) {
+            continue;
+        }
+
+        nav_msgs::msg::Path seg;
+        int seg_fail_x = from_x;
+        int seg_fail_y = from_y;
+        if (!runAstar(from_x, from_y, to_x, to_y, header, seg, &seg_fail_x, &seg_fail_y)) {
+            if (fail_best_x) *fail_best_x = seg_fail_x;
+            if (fail_best_y) *fail_best_y = seg_fail_y;
+            return false;
+        }
+
+        if (seg.poses.empty()) {
+            continue;
+        }
+
+        if (stitched.poses.empty()) {
+            stitched.poses = seg.poses;
+        } else {
+            stitched.poses.insert(stitched.poses.end(), seg.poses.begin() + 1, seg.poses.end());
+        }
+    }
+
+    if (stitched.poses.empty()) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+
+    constrained_path = stitched;
+    RCLCPP_INFO(node_->get_logger(),
+        "硬约束路径生成: stair=%s, pre=%.2fm, post=%.2fm, delta=%.2fm, soft=%zu, hard=%zu",
+        is_uphill ? "UP" : "DOWN",
+        pre_dist, post_dist, stair_hard_dist_delta_m_,
+        soft_seed_path.poses.size(), constrained_path.poses.size());
     return true;
 }
 
@@ -894,6 +1114,12 @@ bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
     double cm_origin_y = latest_costmap->info.origin.position.y;
     
     int8_t max_cost_on_path = 0;
+
+    auto worldToCostmapCell = [&](double wx, double wy, int& mx, int& my) -> bool {
+        mx = static_cast<int>((wx - cm_origin_x) / cm_resolution);
+        my = static_cast<int>((wy - cm_origin_y) / cm_resolution);
+        return mx >= 0 && mx < cm_width && my >= 0 && my < cm_height;
+    };
     
     for (const auto& pose : path.poses) {
         int mx = static_cast<int>((pose.pose.position.x - cm_origin_x) / cm_resolution);
@@ -922,6 +1148,40 @@ bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
                 pose.pose.position.x, pose.pose.position.y, 
                 static_cast<int>(val), static_cast<int>(obstacle_check_threshold_));
             return false;
+        }
+    }
+
+    if (map_manager_ && path.poses.size() >= 2) {
+        for (size_t i = 1; i < path.poses.size(); ++i) {
+            int from_x = 0;
+            int from_y = 0;
+            int to_x = 0;
+            int to_y = 0;
+            const bool from_ok = worldToCostmapCell(path.poses[i - 1].pose.position.x,
+                                                    path.poses[i - 1].pose.position.y,
+                                                    from_x,
+                                                    from_y);
+            const bool to_ok = worldToCostmapCell(path.poses[i].pose.position.x,
+                                                  path.poses[i].pose.position.y,
+                                                  to_x,
+                                                  to_y);
+            if (!from_ok || !to_ok) {
+                continue;
+            }
+
+            if (!map_manager_->isTransitionAllowed(from_x, from_y, to_x, to_y)) {
+                has_last_validate_fail_point_ = true;
+                last_validate_fail_x_ = path.poses[i].pose.position.x;
+                last_validate_fail_y_ = path.poses[i].pose.position.y;
+                RCLCPP_WARN(node_->get_logger(),
+                            "路径方向约束冲突: idx=%zu, from=(%d,%d) -> to=(%d,%d) 被禁行",
+                            i - 1,
+                            from_x,
+                            from_y,
+                            to_x,
+                            to_y);
+                return false;
+            }
         }
     }
     

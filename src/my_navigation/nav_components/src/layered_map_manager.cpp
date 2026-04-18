@@ -66,6 +66,17 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
     rebuildStairLayerCache();
 }
 
+void LayeredMapManager::setRuntimeBlockedStairUphillIds(
+    const std::unordered_set<int>& stair_ids) {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    runtime_blocked_stair_uphill_ids_ = stair_ids;
+}
+
+void LayeredMapManager::clearRuntimeBlockedStairUphillIds() {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    runtime_blocked_stair_uphill_ids_.clear();
+}
+
 bool LayeredMapManager::loadStairMaskFromYaml(const std::string& yaml_path) {
     MapImageData mask_data;
     if (!MapImageIO::loadYamlAndPGM(yaml_path, mask_data, logger_)) {
@@ -144,11 +155,6 @@ void LayeredMapManager::addForbiddenDirectedTransitions(
 bool LayeredMapManager::isTransitionAllowed(int from_x, int from_y, int to_x, int to_y) const {
     std::lock_guard<std::mutex> lock(map_mutex_);
 
-    if (!stair_layer_cfg_.enable || !stair_layer_cfg_.enable_oneway_stair_down ||
-        stair_forbidden_transitions_.empty()) {
-        return true;
-    }
-
     if (from_x < 0 || from_x >= width_ || from_y < 0 || from_y >= height_ ||
         to_x < 0 || to_x >= width_ || to_y < 0 || to_y >= height_) {
         return true;
@@ -156,8 +162,59 @@ bool LayeredMapManager::isTransitionAllowed(int from_x, int from_y, int to_x, in
 
     int from_idx = from_y * width_ + from_x;
     int to_idx = to_y * width_ + to_x;
-    return stair_forbidden_transitions_.find(
-               encodeDirectedTransition(from_idx, to_idx)) == stair_forbidden_transitions_.end();
+
+    if (stair_layer_cfg_.enable && stair_layer_cfg_.enable_oneway_stair_down &&
+        !stair_forbidden_transitions_.empty()) {
+        if (stair_forbidden_transitions_.find(
+                encodeDirectedTransition(from_idx, to_idx)) != stair_forbidden_transitions_.end()) {
+            return false;
+        }
+    }
+
+    if (runtime_blocked_stair_uphill_ids_.empty() || stair_primitive_id_map_.empty() ||
+        stair_primitives_.empty()) {
+        return true;
+    }
+
+    if (from_idx < 0 || from_idx >= static_cast<int>(stair_primitive_id_map_.size()) ||
+        to_idx < 0 || to_idx >= static_cast<int>(stair_primitive_id_map_.size())) {
+        return true;
+    }
+
+    const int from_stair_id = stair_primitive_id_map_[from_idx];
+    const int to_stair_id = stair_primitive_id_map_[to_idx];
+    if (from_stair_id < 0 || to_stair_id < 0 || from_stair_id != to_stair_id) {
+        return true;
+    }
+
+    if (runtime_blocked_stair_uphill_ids_.find(from_stair_id) ==
+        runtime_blocked_stair_uphill_ids_.end()) {
+        return true;
+    }
+
+    if (from_stair_id >= static_cast<int>(stair_primitives_.size())) {
+        return true;
+    }
+
+    const auto& primitive = stair_primitives_[from_stair_id];
+    const Eigen::Vector2d normal = primitive.normal;
+    if (normal.squaredNorm() < 1e-9) {
+        return true;
+    }
+
+    const double from_wx = origin_x_ + (from_x + 0.5) * resolution_;
+    const double from_wy = origin_y_ + (from_y + 0.5) * resolution_;
+    const double to_wx = origin_x_ + (to_x + 0.5) * resolution_;
+    const double to_wy = origin_y_ + (to_y + 0.5) * resolution_;
+    const Eigen::Vector2d delta(to_wx - from_wx, to_wy - from_wy);
+    const double uphill_projection = delta.dot(normal);
+
+    const double uphill_eps = std::max(1e-6, resolution_ * 0.05);
+    if (uphill_projection > uphill_eps) {
+        return false;
+    }
+
+    return true;
 }
 
 void LayeredMapManager::getForbiddenTransitionSegments(
