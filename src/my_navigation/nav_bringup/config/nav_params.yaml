@@ -48,9 +48,21 @@ nav_server:
     # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
     
     # 动态层: 来自rog_map的局部障碍物
-    enable_dynamic_layer: false  # 启用动态层融合
+    enable_dynamic_layer: true  # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
+
+    # 动态障碍物跟踪层（导航侧，可选）
+    dynamic_tracking:
+      enable: false                    # 总开关：true 时先跟踪聚类，再送入动态层融合
+      occupied_threshold: 80           # 占据判定阈值（>=该值视为障碍）
+      min_cluster_size: 3              # 聚类最小像素数
+      association_distance_m: 0.7      # 帧间关联最大距离（米）
+      confirm_hits: 3                  # 轨迹确认所需连续命中次数
+      max_missed_frames: 5             # 最大丢失帧数，超过后删除轨迹
+      velocity_smooth_alpha: 0.6       # 速度平滑系数 [0,1]
+      obstacle_radius_m: 0.30          # 输出到动态层的障碍膨胀半径（米）
+      publish_tentative_tracks: true   # 是否发布未确认轨迹（更敏捷但噪声稍高）
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
@@ -276,9 +288,9 @@ nav_server:
       goal_speed_guard_decel_scale: 1.5  # 安全刹车减速度倍率
       goal_speed_guard_abs_floor: 0.6    # 安全刹车最小减速度 (m/s^2)
       pivot_turn_heading_thresh: 1.0  # 航向误差>该值时原地转向 (rad)
-      heading_slowdown_start: 0.5       # 航向误差>该值开始降速 (rad)
+      heading_slowdown_start: 0.7       # 航向误差>该值开始降速 (rad)
       heading_slowdown_min_factor: 0.6  # 航向降速最小倍率
-      enable_curvature_speed_decay: true  # 高曲率路段启用参考速度衰减
+      enable_curvature_speed_decay: false  # 高曲率路段启用参考速度衰减
       curvature_decay_kappa_ref: 1.0      # 曲率参考值(1/m)，越小衰减越明显
       curvature_decay_min_factor: 0.3    # 曲率衰减最小倍率
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计

@@ -49,6 +49,7 @@ endif()
 # 导航服务器节点
 set(NAV_SERVER_SOURCES
   src/nav_server.cpp
+    src/dynamic_obstacle_tracker.cpp
   src/simple_planner.cpp
   src/pure_pursuit.cpp
   src/backup_recovery.cpp
