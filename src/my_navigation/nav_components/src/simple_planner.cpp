@@ -35,6 +35,10 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.stair_constraint_mode", std::string("soft"));
     stair_hard_dist_delta_m_ =
         node_->declare_parameter("planner.stair_hard_dist_delta_m", 0.0);
+    fly_slope_constraint_mode_ =
+        node_->declare_parameter("planner.fly_slope_constraint_mode", std::string("soft"));
+    fly_slope_hard_dist_delta_m_ =
+        node_->declare_parameter("planner.fly_slope_hard_dist_delta_m", 0.0);
     publish_failure_debug_markers_ =
         node_->declare_parameter("planner.publish_failure_debug_markers", true);
     failure_marker_scale_ =
@@ -55,6 +59,18 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.use_astar_stair_anchors", true);
     astar_stair_anchor_match_max_dist_m_ =
         node_->declare_parameter("planner.astar_stair_anchor_match_max_dist_m", 0.6);
+    astar_fly_slope_shape_enable_ =
+        node_->declare_parameter("planner.astar_fly_slope_shape_enable", false);
+    astar_fly_slope_search_radius_cells_ =
+        node_->declare_parameter("planner.astar_fly_slope_search_radius_cells", 4);
+    astar_fly_slope_trigger_dist_m_ =
+        node_->declare_parameter("planner.astar_fly_slope_trigger_dist_m", 1.2);
+    astar_fly_slope_tangent_penalty_weight_ =
+        node_->declare_parameter("planner.astar_fly_slope_tangent_penalty_weight", 2.0);
+    astar_fly_slope_centerline_penalty_weight_ =
+        node_->declare_parameter("planner.astar_fly_slope_centerline_penalty_weight", 1.0);
+    astar_fly_slope_lock_cluster_center_ =
+        node_->declare_parameter("planner.astar_fly_slope_lock_cluster_center", true);
 
     if (astar_max_attempts_ < 1) {
         RCLCPP_WARN(node_->get_logger(),
@@ -78,6 +94,18 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
             astar_stair_trigger_dist_m_);
         astar_stair_trigger_dist_m_ = 0.0;
     }
+    if (astar_fly_slope_search_radius_cells_ < 1) {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.astar_fly_slope_search_radius_cells=%d 非法，自动修正为1",
+            astar_fly_slope_search_radius_cells_);
+        astar_fly_slope_search_radius_cells_ = 1;
+    }
+    if (astar_fly_slope_trigger_dist_m_ < 0.0) {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.astar_fly_slope_trigger_dist_m=%.3f 非法，自动修正为0",
+            astar_fly_slope_trigger_dist_m_);
+        astar_fly_slope_trigger_dist_m_ = 0.0;
+    }
     if (astar_stair_anchor_match_max_dist_m_ < 0.0) {
         astar_stair_anchor_match_max_dist_m_ = 0.0;
     }
@@ -89,6 +117,15 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
             "planner.stair_constraint_mode='%s' 非法，回退为 soft",
             stair_constraint_mode_.c_str());
         stair_constraint_mode_ = "soft";
+    }
+    std::transform(fly_slope_constraint_mode_.begin(), fly_slope_constraint_mode_.end(),
+                   fly_slope_constraint_mode_.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (fly_slope_constraint_mode_ != "soft" && fly_slope_constraint_mode_ != "hard") {
+        RCLCPP_WARN(node_->get_logger(),
+            "planner.fly_slope_constraint_mode='%s' 非法，回退为 soft",
+            fly_slope_constraint_mode_.c_str());
+        fly_slope_constraint_mode_ = "soft";
     }
     
     SmoothParams smooth_params;
@@ -133,6 +170,18 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_stair_up_post_dist_m_ = smooth_params.stair_align_up_post_dist_m;
     astar_stair_down_pre_dist_m_ = smooth_params.stair_align_down_pre_dist_m;
     astar_stair_down_post_dist_m_ = smooth_params.stair_align_down_post_dist_m;
+    astar_fly_slope_up_pre_dist_m_ =
+        node_->declare_parameter("planner.astar_fly_slope_up_pre_dist_m", astar_stair_up_pre_dist_m_);
+    astar_fly_slope_up_post_dist_m_ =
+        node_->declare_parameter("planner.astar_fly_slope_up_post_dist_m", astar_stair_up_post_dist_m_);
+    astar_fly_slope_down_pre_dist_m_ =
+        node_->declare_parameter("planner.astar_fly_slope_down_pre_dist_m", astar_stair_down_pre_dist_m_);
+    astar_fly_slope_down_post_dist_m_ =
+        node_->declare_parameter("planner.astar_fly_slope_down_post_dist_m", astar_stair_down_post_dist_m_);
+    smooth_params.fly_slope_align_up_pre_dist_m = astar_fly_slope_up_pre_dist_m_;
+    smooth_params.fly_slope_align_up_post_dist_m = astar_fly_slope_up_post_dist_m_;
+    smooth_params.fly_slope_align_down_pre_dist_m = astar_fly_slope_down_pre_dist_m_;
+    smooth_params.fly_slope_align_down_post_dist_m = astar_fly_slope_down_post_dist_m_;
     smooth_params.stair_align_mode =
         node_->declare_parameter("planner.stair_segment_align_mode", std::string("curve_sample"));
     smooth_params.stair_sample_ds_m =
@@ -204,7 +253,9 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
                 double local_nx = 0.0;
                 double local_ny = 0.0;
                 if (!map_manager_->getStairTraverseNormal(x, y, local_nx, local_ny)) {
-                    return false;
+                    if (!map_manager_->getFlySlopeTraverseNormal(x, y, local_nx, local_ny)) {
+                        return false;
+                    }
                 }
                 if (nx) {
                     *nx = local_nx;
@@ -214,7 +265,21 @@ void SimplePlanner::setMap(nav_core::MapInterface::Ptr map) {
                 }
                 return true;
             });
-        RCLCPP_INFO(node_->get_logger(), "B样条优化: 台阶法向回调已设置");
+        smoother_.setTerrainTypeCallback(
+            [this](double x, double y) -> int {
+                if (!map_manager_) {
+                    return 0;
+                }
+                double nx = 0.0, ny = 0.0;
+                if (map_manager_->getStairTraverseNormal(x, y, nx, ny)) {
+                    return 1;
+                }
+                if (map_manager_->getFlySlopeTraverseNormal(x, y, nx, ny)) {
+                    return 2;
+                }
+                return 0;
+            });
+        RCLCPP_INFO(node_->get_logger(), "B样条优化: 台阶/飞坡法向回调已设置");
     } else {
         RCLCPP_ERROR(node_->get_logger(), 
             "SimplePlanner: 需要 LayeredMapManager 且 costmap 可用");
@@ -264,8 +329,8 @@ double SimplePlanner::heuristic(int x1, int y1, int x2, int y2) {
 
 double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
                                             int to_x, int to_y) {
-    if (!astar_stair_shape_enable_ || !map_manager_ ||
-        astar_stair_trigger_dist_m_ <= 1e-6 || resolution_ <= 1e-9) {
+    if ((!astar_stair_shape_enable_ && !astar_fly_slope_shape_enable_) ||
+        !map_manager_ || resolution_ <= 1e-9) {
         return 0.0;
     }
 
@@ -283,62 +348,150 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
     }
     Eigen::Vector2d move_dir = move / mv_norm;
 
-    const int r = std::max(1, astar_stair_search_radius_cells_);
-    bool found = false;
-    double min_dist = std::numeric_limits<double>::max();
-    double w_sum = 0.0;
-    Eigen::Vector2d n_sum = Eigen::Vector2d::Zero();
-    Eigen::Vector2d c_sum = Eigen::Vector2d::Zero();
+    struct ShapeParams {
+        int terrain_type;
+        int search_radius_cells;
+        double trigger_dist_m;
+        double tangent_penalty_weight;
+        double centerline_penalty_weight;
+        bool lock_cluster_center;
+        double up_pre_dist_m;
+        double up_post_dist_m;
+        double down_pre_dist_m;
+        double down_post_dist_m;
+    };
 
-    for (int dy = -r; dy <= r; ++dy) {
-        for (int dx = -r; dx <= r; ++dx) {
-            int mx = to_x + dx;
-            int my = to_y + dy;
-            if (mx < 0 || mx >= width_ || my < 0 || my >= height_) {
-                continue;
+    struct ShapeStat {
+        bool found{false};
+        double min_dist{std::numeric_limits<double>::max()};
+        double w_sum{0.0};
+        Eigen::Vector2d n_sum{Eigen::Vector2d::Zero()};
+        Eigen::Vector2d c_sum{Eigen::Vector2d::Zero()};
+    };
+
+    auto sampleTerrain = [&](const ShapeParams& params, auto normal_getter, ShapeStat& stat) {
+        const int r = std::max(1, params.search_radius_cells);
+        for (int dy = -r; dy <= r; ++dy) {
+            for (int dx = -r; dx <= r; ++dx) {
+                int mx = to_x + dx;
+                int my = to_y + dy;
+                if (mx < 0 || mx >= width_ || my < 0 || my >= height_) {
+                    continue;
+                }
+                const Eigen::Vector2d p = cellToWorld(mx, my);
+                double nx = 0.0, ny = 0.0;
+                if (!normal_getter(p.x(), p.y(), nx, ny)) {
+                    continue;
+                }
+                Eigen::Vector2d n_local(nx, ny);
+                double nn_local = n_local.norm();
+                if (nn_local < 1e-6) {
+                    continue;
+                }
+                n_local /= nn_local;
+                double d = (p - p_to).norm();
+                stat.min_dist = std::min(stat.min_dist, d);
+                double w = 1.0 / (d * d + 1e-4);
+                stat.w_sum += w;
+                stat.n_sum += w * n_local;
+                stat.c_sum += w * p;
+                stat.found = true;
             }
-            const Eigen::Vector2d p = cellToWorld(mx, my);
-            double nx = 0.0, ny = 0.0;
-            if (!map_manager_->getStairTraverseNormal(p.x(), p.y(), nx, ny)) {
-                continue;
-            }
-            Eigen::Vector2d n(nx, ny);
-            double nn = n.norm();
-            if (nn < 1e-6) {
-                continue;
-            }
-            n /= nn;
-            double d = (p - p_to).norm();
-            min_dist = std::min(min_dist, d);
-            double w = 1.0 / (d * d + 1e-4);
-            w_sum += w;
-            n_sum += w * n;
-            c_sum += w * p;
-            found = true;
         }
+    };
+
+    const ShapeParams stair_params{
+        1,
+        astar_stair_search_radius_cells_,
+        astar_stair_trigger_dist_m_,
+        astar_stair_tangent_penalty_weight_,
+        astar_stair_centerline_penalty_weight_,
+        astar_stair_lock_cluster_center_,
+        astar_stair_up_pre_dist_m_,
+        astar_stair_up_post_dist_m_,
+        astar_stair_down_pre_dist_m_,
+        astar_stair_down_post_dist_m_,
+    };
+    const ShapeParams fly_params{
+        2,
+        astar_fly_slope_search_radius_cells_,
+        astar_fly_slope_trigger_dist_m_,
+        astar_fly_slope_tangent_penalty_weight_,
+        astar_fly_slope_centerline_penalty_weight_,
+        astar_fly_slope_lock_cluster_center_,
+        astar_fly_slope_up_pre_dist_m_,
+        astar_fly_slope_up_post_dist_m_,
+        astar_fly_slope_down_pre_dist_m_,
+        astar_fly_slope_down_post_dist_m_,
+    };
+
+    ShapeStat stair_stat;
+    ShapeStat fly_stat;
+    if (astar_stair_shape_enable_) {
+        sampleTerrain(stair_params,
+            [this](double x, double y, double& nx, double& ny) {
+                return map_manager_->getStairTraverseNormal(x, y, nx, ny);
+            },
+            stair_stat);
+    }
+    if (astar_fly_slope_shape_enable_) {
+        sampleTerrain(fly_params,
+            [this](double x, double y, double& nx, double& ny) {
+                return map_manager_->getFlySlopeTraverseNormal(x, y, nx, ny);
+            },
+            fly_stat);
     }
 
-    if (!found || w_sum < 1e-9) {
+    const ShapeParams* selected = nullptr;
+    ShapeStat selected_stat;
+    if (astar_shape_locked_terrain_type_ == 1 && stair_stat.found) {
+        selected = &stair_params;
+        selected_stat = stair_stat;
+    } else if (astar_shape_locked_terrain_type_ == 2 && fly_stat.found) {
+        selected = &fly_params;
+        selected_stat = fly_stat;
+    } else if (stair_stat.found && fly_stat.found) {
+        if (stair_stat.min_dist <= fly_stat.min_dist) {
+            selected = &stair_params;
+            selected_stat = stair_stat;
+        } else {
+            selected = &fly_params;
+            selected_stat = fly_stat;
+        }
+    } else if (stair_stat.found) {
+        selected = &stair_params;
+        selected_stat = stair_stat;
+    } else if (fly_stat.found) {
+        selected = &fly_params;
+        selected_stat = fly_stat;
+    } else {
         return 0.0;
     }
 
-    Eigen::Vector2d n = n_sum;
+    if (!selected || selected_stat.w_sum < 1e-9) {
+        return 0.0;
+    }
+
+    Eigen::Vector2d n = selected_stat.n_sum;
     double nn = n.norm();
     if (nn < 1e-6) {
         return 0.0;
     }
     n /= nn;
-    Eigen::Vector2d center = c_sum / w_sum;
+    Eigen::Vector2d center = selected_stat.c_sum / selected_stat.w_sum;
 
-    // 首次命中后在单次A*搜索中锁定同一个簇中心和法向
-    if (astar_stair_lock_cluster_center_) {
+    // 单次A*搜索内锁定同一地形簇，避免台阶/飞坡频繁跳变
+    if (selected->lock_cluster_center) {
         if (!astar_stair_cluster_locked_) {
             astar_stair_cluster_locked_ = true;
+            astar_shape_locked_terrain_type_ = selected->terrain_type;
             astar_stair_locked_center_ = center;
             astar_stair_locked_normal_ = n;
         }
-        center = astar_stair_locked_center_;
-        n = astar_stair_locked_normal_;
+        if (astar_shape_locked_terrain_type_ == selected->terrain_type) {
+            center = astar_stair_locked_center_;
+            n = astar_stair_locked_normal_;
+        }
     }
 
     Eigen::Vector2d t(-n.y(), n.x());
@@ -346,16 +499,16 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
     // 与 B-spline 一致：按上下台阶方向选择 pre/post 弧长窗口
     const bool is_uphill = (move_dir.dot(n) >= 0.0);
     const double pre = std::max(0.0,
-        is_uphill ? astar_stair_up_pre_dist_m_ : astar_stair_down_pre_dist_m_);
+        is_uphill ? selected->up_pre_dist_m : selected->down_pre_dist_m);
     const double post = std::max(0.0,
-        is_uphill ? astar_stair_up_post_dist_m_ : astar_stair_down_post_dist_m_);
+        is_uphill ? selected->up_post_dist_m : selected->down_post_dist_m);
     const double dir = is_uphill ? 1.0 : -1.0;
     const double s_n = dir * (p_to - center).dot(n);
 
     // 外层兜底触发门限（避免远离台阶时误触发）；若设置偏小，自动放宽到窗口尺度
     const double min_required_trigger = std::max(pre, post);
-    const double effective_trigger = std::max(astar_stair_trigger_dist_m_, min_required_trigger);
-    if (min_dist > effective_trigger) {
+    const double effective_trigger = std::max(selected->trigger_dist_m, min_required_trigger);
+    if (selected_stat.min_dist > effective_trigger) {
         return 0.0;
     }
 
@@ -365,12 +518,12 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
     }
 
     double tan_comp = move_dir.dot(t);
-    double c_tan = astar_stair_tangent_penalty_weight_ * tan_comp * tan_comp;
+    double c_tan = selected->tangent_penalty_weight * tan_comp * tan_comp;
 
     double d_t = (p_to - center).dot(t);
     double denom = std::max(0.05, (pre + post) * 0.5);
     double u = d_t / denom;
-    double c_center = astar_stair_centerline_penalty_weight_ * u * u;
+    double c_center = selected->centerline_penalty_weight * u * u;
 
     return c_tan + c_center;
 }
@@ -513,8 +666,10 @@ bool SimplePlanner::plan(
         int fail_best_x = sx;
         int fail_best_y = sy;
         bool astar_success = false;
-        if (stair_constraint_mode_ == "hard") {
-            astar_success = runAstarWithHardStairConstraint(
+        const bool enable_stair_hard = (stair_constraint_mode_ == "hard");
+        const bool enable_fly_hard = (fly_slope_constraint_mode_ == "hard");
+        if (enable_stair_hard || enable_fly_hard) {
+            astar_success = runAstarWithHardTerrainConstraint(
                 sx, sy, gx, gy, goal.header, raw_path, soft_seed_path,
                 &fail_best_x, &fail_best_y);
             if (!astar_success && !soft_seed_path.poses.empty()) {
@@ -649,6 +804,7 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
                               int* fail_best_y) {
     // 每次A*搜索开始前重置簇锁定状态
     astar_stair_cluster_locked_ = false;
+    astar_shape_locked_terrain_type_ = 0;
     astar_stair_locked_center_.setZero();
     astar_stair_locked_normal_.setZero();
 
@@ -774,7 +930,7 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     return true;
 }
 
-bool SimplePlanner::runAstarWithHardStairConstraint(
+bool SimplePlanner::runAstarWithHardTerrainConstraint(
     int sx, int sy, int gx, int gy,
     const std_msgs::msg::Header& header,
     nav_msgs::msg::Path& constrained_path,
@@ -795,37 +951,60 @@ bool SimplePlanner::runAstarWithHardStairConstraint(
         return true;
     }
 
-    int stair_start = -1;
-    int stair_end = -1;
+    const bool enable_stair_hard = (stair_constraint_mode_ == "hard");
+    const bool enable_fly_hard = (fly_slope_constraint_mode_ == "hard");
+    if (!enable_stair_hard && !enable_fly_hard) {
+        constrained_path = soft_seed_path;
+        return true;
+    }
+
+    int terrain_type = 0;  // 1: stair, 2: fly_slope
+    int terrain_start = -1;
+    int terrain_end = -1;
     Eigen::Vector2d normal_sum = Eigen::Vector2d::Zero();
     Eigen::Vector2d pos_sum = Eigen::Vector2d::Zero();
-    int stair_cnt = 0;
+    int terrain_cnt = 0;
     bool in_cluster = false;
 
     for (int i = 0; i < static_cast<int>(soft_seed_path.poses.size()); ++i) {
         const auto& pose = soft_seed_path.poses[i].pose.position;
-        double nx = 0.0, ny = 0.0;
-        const bool is_stair = map_manager_->getStairTraverseNormal(pose.x, pose.y, nx, ny);
-        if (is_stair) {
+        int curr_type = 0;
+        double nx = 0.0;
+        double ny = 0.0;
+
+        // 保持兼容：重叠区域优先沿用台阶 hard 约束。
+        if (enable_stair_hard &&
+            map_manager_->getStairTraverseNormal(pose.x, pose.y, nx, ny)) {
+            curr_type = 1;
+        } else if (enable_fly_hard &&
+                   map_manager_->getFlySlopeTraverseNormal(pose.x, pose.y, nx, ny)) {
+            curr_type = 2;
+        }
+
+        if (curr_type > 0) {
             if (!in_cluster) {
                 in_cluster = true;
-                stair_start = i;
+                terrain_type = curr_type;
+                terrain_start = i;
             }
-            stair_end = i;
+            if (curr_type != terrain_type) {
+                break;
+            }
+            terrain_end = i;
             Eigen::Vector2d n(nx, ny);
             const double nn = n.norm();
             if (nn > 1e-6) {
                 normal_sum += n / nn;
             }
             pos_sum += Eigen::Vector2d(pose.x, pose.y);
-            stair_cnt++;
+            terrain_cnt++;
         } else if (in_cluster) {
             break;
         }
     }
 
-    // 没有台阶命中，退化为软约束路径
-    if (stair_cnt <= 0) {
+    // 没有命中需硬约束地形，退化为软约束路径
+    if (terrain_cnt <= 0 || terrain_type == 0) {
         constrained_path = soft_seed_path;
         return true;
     }
@@ -837,17 +1016,17 @@ bool SimplePlanner::runAstarWithHardStairConstraint(
         return true;
     }
     normal /= nn;
-    const Eigen::Vector2d center = pos_sum / static_cast<double>(stair_cnt);
+    const Eigen::Vector2d center = pos_sum / static_cast<double>(terrain_cnt);
 
-    const int mid_idx = std::clamp((stair_start + stair_end) / 2,
+    const int mid_idx = std::clamp((terrain_start + terrain_end) / 2,
                                    1,
                                    static_cast<int>(soft_seed_path.poses.size()) - 2);
     const auto& p_prev = soft_seed_path.poses[mid_idx - 1].pose.position;
     const auto& p_next = soft_seed_path.poses[mid_idx + 1].pose.position;
     Eigen::Vector2d tangent(p_next.x - p_prev.x, p_next.y - p_prev.y);
-    if (tangent.norm() < 1e-6 && stair_end > stair_start) {
-        const auto& p_s = soft_seed_path.poses[stair_start].pose.position;
-        const auto& p_e = soft_seed_path.poses[stair_end].pose.position;
+    if (tangent.norm() < 1e-6 && terrain_end > terrain_start) {
+        const auto& p_s = soft_seed_path.poses[terrain_start].pose.position;
+        const auto& p_e = soft_seed_path.poses[terrain_end].pose.position;
         tangent = Eigen::Vector2d(p_e.x - p_s.x, p_e.y - p_s.y);
     }
     if (tangent.norm() < 1e-6) {
@@ -857,10 +1036,16 @@ bool SimplePlanner::runAstarWithHardStairConstraint(
     tangent.normalize();
 
     const bool is_uphill = (tangent.dot(normal) >= 0.0);
-    const double base_pre = is_uphill ? astar_stair_up_pre_dist_m_ : astar_stair_down_pre_dist_m_;
-    const double base_post = is_uphill ? astar_stair_up_post_dist_m_ : astar_stair_down_post_dist_m_;
-    const double pre_dist = std::max(0.0, base_pre + stair_hard_dist_delta_m_);
-    const double post_dist = std::max(0.0, base_post + stair_hard_dist_delta_m_);
+    const double base_pre = (terrain_type == 1)
+        ? (is_uphill ? astar_stair_up_pre_dist_m_ : astar_stair_down_pre_dist_m_)
+        : (is_uphill ? astar_fly_slope_up_pre_dist_m_ : astar_fly_slope_down_pre_dist_m_);
+    const double base_post = (terrain_type == 1)
+        ? (is_uphill ? astar_stair_up_post_dist_m_ : astar_stair_down_post_dist_m_)
+        : (is_uphill ? astar_fly_slope_up_post_dist_m_ : astar_fly_slope_down_post_dist_m_);
+    const double hard_delta =
+        (terrain_type == 1) ? stair_hard_dist_delta_m_ : fly_slope_hard_dist_delta_m_;
+    const double pre_dist = std::max(0.0, base_pre + hard_delta);
+    const double post_dist = std::max(0.0, base_post + hard_delta);
 
     if (pre_dist <= 1e-6 && post_dist <= 1e-6) {
         constrained_path = soft_seed_path;
@@ -932,10 +1117,12 @@ bool SimplePlanner::runAstarWithHardStairConstraint(
     }
 
     constrained_path = stitched;
+    const char* terrain_name = (terrain_type == 1) ? "stair" : "fly_slope";
     RCLCPP_INFO(node_->get_logger(),
-        "硬约束路径生成: stair=%s, pre=%.2fm, post=%.2fm, delta=%.2fm, soft=%zu, hard=%zu",
+        "硬约束路径生成: terrain=%s, dir=%s, pre=%.2fm, post=%.2fm, delta=%.2fm, soft=%zu, hard=%zu",
+        terrain_name,
         is_uphill ? "UP" : "DOWN",
-        pre_dist, post_dist, stair_hard_dist_delta_m_,
+        pre_dist, post_dist, hard_delta,
         soft_seed_path.poses.size(), constrained_path.poses.size());
     return true;
 }
@@ -1169,6 +1356,12 @@ bool SimplePlanner::validatePath(const nav_msgs::msg::Path& path) {
                 continue;
             }
 
+            // 平滑路径量化到 costmap 时，邻接点可能落在同一栅格；
+            // 同栅格段不存在方向转移，不应参与有向禁行判定。
+            if (from_x == to_x && from_y == to_y) {
+                continue;
+            }
+
             if (!map_manager_->isTransitionAllowed(from_x, from_y, to_x, to_y)) {
                 has_last_validate_fail_point_ = true;
                 last_validate_fail_x_ = path.poses[i].pose.position.x;
@@ -1256,9 +1449,26 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
     auto stamp = node_->now();
     int id = 0;
     std::vector<LayeredMapManager::StairPrimitive> primitives;
+    std::vector<LayeredMapManager::FlySlopePrimitive> fly_primitives;
     if (map_manager_) {
         primitives = map_manager_->getStairPrimitives();
+        fly_primitives = map_manager_->getFlySlopePrimitives();
     }
+
+    auto terrainAt = [this](double x, double y) -> int {
+        if (!map_manager_) {
+            return 0;
+        }
+        double nx = 0.0;
+        double ny = 0.0;
+        if (map_manager_->getStairTraverseNormal(x, y, nx, ny)) {
+            return 1;
+        }
+        if (map_manager_->getFlySlopeTraverseNormal(x, y, nx, ny)) {
+            return 2;
+        }
+        return 0;
+    };
 
     // 清除旧标记
     {
@@ -1292,9 +1502,36 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
         markers.markers.push_back(del);
         del.ns = "stair_primitive_id";
         markers.markers.push_back(del);
+        del.ns = "fly_slope_normals";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_samples";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_window";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_anchors";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_corridor";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_astar_hits";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_anchor_match";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_primitive_center";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_primitive_normal";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_primitive_tangent";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_primitive_half_length";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_primitive_band";
+        markers.markers.push_back(del);
+        del.ns = "fly_slope_primitive_id";
+        markers.markers.push_back(del);
     }
 
-    if (diag.clusters.empty() && diag.samples.empty() && primitives.empty()) {
+    if (diag.clusters.empty() && diag.samples.empty() &&
+        primitives.empty() && fly_primitives.empty()) {
         stair_debug_pub_->publish(markers);
         return;
     }
@@ -1442,48 +1679,224 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
         markers.markers.push_back(centers);
     }
 
-    // A* 台阶命中点（青绿色）
+    // FlySlopePrimitive 对象化可视化（center/normal/tangent/half_length/crossing_band）
+    if (!fly_primitives.empty()) {
+        visualization_msgs::msg::Marker centers;
+        centers.header.frame_id = frame_id;
+        centers.header.stamp = stamp;
+        centers.ns = "fly_slope_primitive_center";
+        centers.id = id++;
+        centers.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        centers.action = visualization_msgs::msg::Marker::ADD;
+        centers.scale.x = 0.10;
+        centers.scale.y = 0.10;
+        centers.scale.z = 0.10;
+        centers.color.r = 0.10f;
+        centers.color.g = 1.0f;
+        centers.color.b = 0.35f;
+        centers.color.a = 0.95f;
+
+        for (const auto& p : fly_primitives) {
+            geometry_msgs::msg::Point c;
+            c.x = p.center.x();
+            c.y = p.center.y();
+            c.z = 0.20;
+            centers.points.push_back(c);
+
+            visualization_msgs::msg::Marker n_arrow;
+            n_arrow.header.frame_id = frame_id;
+            n_arrow.header.stamp = stamp;
+            n_arrow.ns = "fly_slope_primitive_normal";
+            n_arrow.id = id++;
+            n_arrow.type = visualization_msgs::msg::Marker::ARROW;
+            n_arrow.action = visualization_msgs::msg::Marker::ADD;
+            n_arrow.scale.x = 0.03;
+            n_arrow.scale.y = 0.06;
+            n_arrow.scale.z = 0.0;
+            n_arrow.color.r = 0.1f;
+            n_arrow.color.g = 1.0f;
+            n_arrow.color.b = 0.35f;
+            n_arrow.color.a = 0.9f;
+
+            geometry_msgs::msg::Point ns, ne;
+            ns.x = p.center.x();
+            ns.y = p.center.y();
+            ns.z = 0.18;
+            ne.x = p.center.x() + p.normal.x() * 0.45;
+            ne.y = p.center.y() + p.normal.y() * 0.45;
+            ne.z = 0.18;
+            n_arrow.points.push_back(ns);
+            n_arrow.points.push_back(ne);
+            markers.markers.push_back(n_arrow);
+
+            visualization_msgs::msg::Marker t_arrow = n_arrow;
+            t_arrow.ns = "fly_slope_primitive_tangent";
+            t_arrow.id = id++;
+            t_arrow.color.r = 0.95f;
+            t_arrow.color.g = 0.35f;
+            t_arrow.color.b = 0.95f;
+            t_arrow.points[1].x = p.center.x() + p.tangent.x() * 0.45;
+            t_arrow.points[1].y = p.center.y() + p.tangent.y() * 0.45;
+            markers.markers.push_back(t_arrow);
+
+            visualization_msgs::msg::Marker hl;
+            hl.header.frame_id = frame_id;
+            hl.header.stamp = stamp;
+            hl.ns = "fly_slope_primitive_half_length";
+            hl.id = id++;
+            hl.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            hl.action = visualization_msgs::msg::Marker::ADD;
+            hl.scale.x = 0.03;
+            hl.color.r = 0.2f;
+            hl.color.g = 0.95f;
+            hl.color.b = 0.20f;
+            hl.color.a = 0.85f;
+            hl.pose.orientation.w = 1.0;
+
+            geometry_msgs::msg::Point l1, l2;
+            l1.x = p.center.x() - p.tangent.x() * p.half_length;
+            l1.y = p.center.y() - p.tangent.y() * p.half_length;
+            l1.z = 0.16;
+            l2.x = p.center.x() + p.tangent.x() * p.half_length;
+            l2.y = p.center.y() + p.tangent.y() * p.half_length;
+            l2.z = 0.16;
+            hl.points.push_back(l1);
+            hl.points.push_back(l2);
+            markers.markers.push_back(hl);
+
+            const double low = std::max(0.0, p.crossing_band.low_side_dist_m);
+            const double high = std::max(0.0, p.crossing_band.high_side_dist_m);
+            const double tw = std::max(0.05, p.crossing_band.tangent_half_width_m);
+            Eigen::Vector2d c0 = p.center;
+            Eigen::Vector2d a = c0 - p.normal * low - p.tangent * tw;
+            Eigen::Vector2d b = c0 - p.normal * low + p.tangent * tw;
+            Eigen::Vector2d cpt = c0 + p.normal * high + p.tangent * tw;
+            Eigen::Vector2d d = c0 + p.normal * high - p.tangent * tw;
+
+            visualization_msgs::msg::Marker band;
+            band.header.frame_id = frame_id;
+            band.header.stamp = stamp;
+            band.ns = "fly_slope_primitive_band";
+            band.id = id++;
+            band.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            band.action = visualization_msgs::msg::Marker::ADD;
+            band.scale.x = 0.02;
+            band.color.r = 0.2f;
+            band.color.g = 1.0f;
+            band.color.b = 0.1f;
+            band.color.a = 0.75f;
+            band.pose.orientation.w = 1.0;
+
+            auto push_pt = [&](const Eigen::Vector2d& v) {
+                geometry_msgs::msg::Point q;
+                q.x = v.x();
+                q.y = v.y();
+                q.z = 0.08;
+                band.points.push_back(q);
+            };
+            push_pt(a);
+            push_pt(b);
+            push_pt(cpt);
+            push_pt(d);
+            push_pt(a);
+            markers.markers.push_back(band);
+
+            visualization_msgs::msg::Marker txt;
+            txt.header.frame_id = frame_id;
+            txt.header.stamp = stamp;
+            txt.ns = "fly_slope_primitive_id";
+            txt.id = id++;
+            txt.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+            txt.action = visualization_msgs::msg::Marker::ADD;
+            txt.pose.position.x = p.center.x();
+            txt.pose.position.y = p.center.y();
+            txt.pose.position.z = 0.32;
+            txt.scale.z = 0.11;
+            txt.color.r = 1.0f;
+            txt.color.g = 1.0f;
+            txt.color.b = 1.0f;
+            txt.color.a = 0.95f;
+            txt.text = std::string("id=") + std::to_string(p.fly_slope_id);
+            markers.markers.push_back(txt);
+        }
+        markers.markers.push_back(centers);
+    }
+
+    // A* 命中点（台阶/飞坡分开显示）
     if (!diag.astar_hit_points.empty()) {
-        visualization_msgs::msg::Marker hit_pts;
-        hit_pts.header.frame_id = frame_id;
-        hit_pts.header.stamp = stamp;
-        hit_pts.ns = "stair_astar_hits";
-        hit_pts.id = id++;
-        hit_pts.type = visualization_msgs::msg::Marker::SPHERE_LIST;
-        hit_pts.action = visualization_msgs::msg::Marker::ADD;
-        hit_pts.scale.x = 0.05;
-        hit_pts.scale.y = 0.05;
-        hit_pts.scale.z = 0.05;
-        hit_pts.color.r = 0.1f;
-        hit_pts.color.g = 1.0f;
-        hit_pts.color.b = 0.6f;
-        hit_pts.color.a = 0.95f;
+        visualization_msgs::msg::Marker stair_hit_pts;
+        visualization_msgs::msg::Marker fly_hit_pts;
+
+        stair_hit_pts.header.frame_id = frame_id;
+        stair_hit_pts.header.stamp = stamp;
+        stair_hit_pts.ns = "stair_astar_hits";
+        stair_hit_pts.id = id++;
+        stair_hit_pts.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        stair_hit_pts.action = visualization_msgs::msg::Marker::ADD;
+        stair_hit_pts.scale.x = 0.05;
+        stair_hit_pts.scale.y = 0.05;
+        stair_hit_pts.scale.z = 0.05;
+        stair_hit_pts.color.r = 0.1f;
+        stair_hit_pts.color.g = 1.0f;
+        stair_hit_pts.color.b = 0.6f;
+        stair_hit_pts.color.a = 0.95f;
+
+        fly_hit_pts = stair_hit_pts;
+        fly_hit_pts.ns = "fly_slope_astar_hits";
+        fly_hit_pts.id = id++;
+        fly_hit_pts.color.r = 0.2f;
+        fly_hit_pts.color.g = 1.0f;
+        fly_hit_pts.color.b = 0.2f;
+
         for (const auto& hp : diag.astar_hit_points) {
             geometry_msgs::msg::Point p;
             p.x = hp.x();
             p.y = hp.y();
             p.z = 0.11;
-            hit_pts.points.push_back(p);
+            const int terrain_type = terrainAt(hp.x(), hp.y());
+            if (terrain_type == 2) {
+                fly_hit_pts.points.push_back(p);
+            } else {
+                stair_hit_pts.points.push_back(p);
+            }
         }
-        markers.markers.push_back(hit_pts);
+        if (!stair_hit_pts.points.empty()) {
+            markers.markers.push_back(stair_hit_pts);
+        }
+        if (!fly_hit_pts.points.empty()) {
+            markers.markers.push_back(fly_hit_pts);
+        }
     }
 
-    // 台阶法向箭头（每个 cluster 一个）
+    // 法向箭头（每个 cluster 一个；台阶/飞坡按命中地形分开命名空间）
     for (size_t i = 0; i < diag.clusters.size(); ++i) {
         const auto& cl = diag.clusters[i];
+        const int terrain_type = terrainAt(cl.center_pos.x(), cl.center_pos.y());
+        const bool is_fly = (terrain_type == 2);
+        const std::string normal_ns = is_fly ? "fly_slope_normals" : "stair_normals";
+        const std::string sample_ns = is_fly ? "fly_slope_samples" : "stair_samples";
+        const std::string anchor_ns = is_fly ? "fly_slope_anchors" : "stair_anchors";
+        const std::string match_ns = is_fly ? "fly_slope_anchor_match" : "stair_anchor_match";
+        const std::string corridor_ns = is_fly ? "fly_slope_corridor" : "stair_corridor";
         visualization_msgs::msg::Marker arrow;
         arrow.header.frame_id = frame_id;
         arrow.header.stamp = stamp;
-        arrow.ns = "stair_normals";
+        arrow.ns = normal_ns;
         arrow.id = id++;
         arrow.type = visualization_msgs::msg::Marker::ARROW;
         arrow.action = visualization_msgs::msg::Marker::ADD;
         arrow.scale.x = 0.04;
         arrow.scale.y = 0.08;
         arrow.scale.z = 0.0;
-        arrow.color.r = 0.0f;
-        arrow.color.g = 1.0f;
-        arrow.color.b = 1.0f;
+        if (is_fly) {
+            arrow.color.r = 0.1f;
+            arrow.color.g = 1.0f;
+            arrow.color.b = 0.25f;
+        } else {
+            arrow.color.r = 0.0f;
+            arrow.color.g = 1.0f;
+            arrow.color.b = 1.0f;
+        }
         arrow.color.a = 1.0f;
 
         geometry_msgs::msg::Point p_start, p_end;
@@ -1500,6 +1913,7 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
         // 台阶切向箭头（紫色）
         visualization_msgs::msg::Marker t_arrow = arrow;
         t_arrow.id = id++;
+    t_arrow.ns = normal_ns;
         t_arrow.color.r = 0.8f;
         t_arrow.color.g = 0.0f;
         t_arrow.color.b = 0.8f;
@@ -1512,7 +1926,7 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
         visualization_msgs::msg::Marker text;
         text.header.frame_id = frame_id;
         text.header.stamp = stamp;
-        text.ns = "stair_normals";
+    text.ns = normal_ns;
         text.id = id++;
         text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
         text.action = visualization_msgs::msg::Marker::ADD;
@@ -1524,8 +1938,13 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
         text.color.g = 1.0f;
         text.color.b = 1.0f;
         text.color.a = 1.0f;
-        text.text = cl.is_uphill ? "UP" : "DOWN";
+        text.text = (cl.is_uphill ? "UP" : "DOWN") + std::string(is_fly ? "(F)" : "(S)");
         markers.markers.push_back(text);
+
+        (void)sample_ns;
+        (void)anchor_ns;
+        (void)match_ns;
+        (void)corridor_ns;
     }
 
     // 采样点球体（按航向误差着色：绿→黄→红）
@@ -1608,7 +2027,9 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
             visualization_msgs::msg::Marker sp;
             sp.header.frame_id = frame_id;
             sp.header.stamp = stamp;
-            sp.ns = "stair_anchors";
+            const int terrain_type = terrainAt(cl.center_pos.x(), cl.center_pos.y());
+            const bool is_fly = (terrain_type == 2);
+            sp.ns = is_fly ? "fly_slope_anchors" : "stair_anchors";
             sp.id = id++;
             sp.type = visualization_msgs::msg::Marker::SPHERE;
             sp.action = visualization_msgs::msg::Marker::ADD;
@@ -1631,7 +2052,9 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
             visualization_msgs::msg::Marker match_line;
             match_line.header.frame_id = frame_id;
             match_line.header.stamp = stamp;
-            match_line.ns = "stair_anchor_match";
+            const int terrain_type = terrainAt(cl.center_pos.x(), cl.center_pos.y());
+            const bool is_fly = (terrain_type == 2);
+            match_line.ns = is_fly ? "fly_slope_anchor_match" : "stair_anchor_match";
             match_line.id = id++;
             match_line.type = visualization_msgs::msg::Marker::LINE_STRIP;
             match_line.action = visualization_msgs::msg::Marker::ADD;
@@ -1656,7 +2079,7 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
             visualization_msgs::msg::Marker txt;
             txt.header.frame_id = frame_id;
             txt.header.stamp = stamp;
-            txt.ns = "stair_anchor_match";
+            txt.ns = is_fly ? "fly_slope_anchor_match" : "stair_anchor_match";
             txt.id = id++;
             txt.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
             txt.action = visualization_msgs::msg::Marker::ADD;
@@ -1682,7 +2105,9 @@ void SimplePlanner::publishStairDebugMarkers(const StairAlignDiagnostics& diag,
             visualization_msgs::msg::Marker line;
             line.header.frame_id = frame_id;
             line.header.stamp = stamp;
-            line.ns = "stair_corridor";
+            const int terrain_type = terrainAt(cl.center_pos.x(), cl.center_pos.y());
+            const bool is_fly = (terrain_type == 2);
+            line.ns = is_fly ? "fly_slope_corridor" : "stair_corridor";
             line.id = id++;
             line.type = visualization_msgs::msg::Marker::LINE_STRIP;
             line.action = visualization_msgs::msg::Marker::ADD;

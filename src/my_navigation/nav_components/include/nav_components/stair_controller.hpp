@@ -28,6 +28,12 @@ public:
     void onNavStateChanged(nav_core::NavState state) override;
 
 private:
+    enum class TerrainType : uint8_t {
+        NONE = 0,
+        STAIR = 1,
+        FLY_SLOPE = 2,
+    };
+
     enum class StairFsmState : uint8_t {
         NORMAL = 0,
         PRE_ALIGN = 1,
@@ -37,10 +43,11 @@ private:
         COOLDOWN_BLOCKED = 5,
     };
 
-    struct StairCandidateInfo {
+    struct TerrainCandidateInfo {
         bool valid{false};
-        double dist_to_stair_m{0.0};
-        int stair_id{-1};
+        TerrainType terrain_type{TerrainType::NONE};
+        double dist_to_feature_m{0.0};
+        int feature_id{-1};
         Eigen::Vector2d center{Eigen::Vector2d::Zero()};
         Eigen::Vector2d normal{Eigen::Vector2d::Zero()};
         Eigen::Vector2d tangent{Eigen::Vector2d::Zero()};
@@ -49,9 +56,15 @@ private:
 
     static double normalizeAngle(double angle);
     static const char* fsmStateName(StairFsmState state);
+    static const char* terrainTypeName(TerrainType terrain_type);
     void transitionFsmState(StairFsmState new_state, const char* reason);
+    bool queryUpcomingTerrainCandidate(const nav_core::TerrainControlContext& context,
+                                       TerrainType preferred_type,
+                                       TerrainCandidateInfo& candidate) const;
     bool queryUpcomingStairCandidate(const nav_core::TerrainControlContext& context,
-                                     StairCandidateInfo& candidate) const;
+                                     TerrainCandidateInfo& candidate) const;
+    bool queryUpcomingFlySlopeCandidate(const nav_core::TerrainControlContext& context,
+                                        TerrainCandidateInfo& candidate) const;
     bool queryPathHeadingNearRobot(const nav_core::TerrainControlContext& context,
                                    double& heading_rad) const;
     bool queryHeadingErrorToPathNearRobot(const nav_core::TerrainControlContext& context,
@@ -61,9 +74,15 @@ private:
     bool isStairInCooldown(int stair_id,
                            const std::chrono::steady_clock::time_point& now,
                            double* remain_sec = nullptr);
+    bool isFlySlopeInCooldown(int fly_slope_id,
+                              const std::chrono::steady_clock::time_point& now,
+                              double* remain_sec = nullptr);
     void onStairAttemptFailed(int stair_id,
                               const std::chrono::steady_clock::time_point& now);
+    void onFlySlopeAttemptFailed(int fly_slope_id,
+                                 const std::chrono::steady_clock::time_point& now);
     void onStairAttemptSucceeded(int stair_id);
+    void onFlySlopeAttemptSucceeded(int fly_slope_id);
     bool detectUpcomingStairDistance(const nav_core::TerrainControlContext& context,
                                      double& dist_to_stair_m) const;
     void publishFsmDebug(const std::chrono::steady_clock::time_point& now);
@@ -82,6 +101,7 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_cooldown_marker_pub_;
 
     bool enable_stair_mode_detection_{true};
+    bool enable_fly_slope_mode_detection_{true};
     bool enable_stair_fsm_{true};
     double stair_mode_trigger_distance_m_{1.0};
     double stair_mode_lookahead_dist_m_{3.0};
@@ -99,6 +119,42 @@ private:
     double stair_fixed_heading_kp_{1.8};
     double stair_fixed_max_angular_vel_{0.8};
     double stair_fixed_heading_deadband_{0.05};
+
+    // 飞坡参数（与台阶参数一一对应，默认初值一致）
+    double fly_slope_mode_trigger_distance_m_{1.0};
+    double fly_slope_mode_lookahead_dist_m_{3.0};
+    double fly_slope_mode_sample_step_m_{0.10};
+    double fly_slope_mode_entry_heading_error_max_rad_{0.35};
+    int fly_slope_mode_release_grace_cycles_{5};
+    double fly_slope_mode_min_hold_sec_{0.35};
+    double fly_slope_mode_force_release_distance_m_{2.5};
+    double fly_slope_mode_max_assert_sec_{6.0};
+    double fly_slope_mode_omega_limit_rad_s_{0.20};
+    double fly_slope_mode_omega_slew_rate_rad_s2_{1.2};
+    bool enable_fly_slope_fixed_velocity_strategy_{false};
+    double fly_slope_fixed_velocity_trigger_distance_m_{0.35};
+    double fly_slope_fixed_linear_vel_{0.35};
+    double fly_slope_fixed_heading_kp_{1.8};
+    double fly_slope_fixed_max_angular_vel_{0.8};
+    double fly_slope_fixed_heading_deadband_{0.05};
+    double fly_slope_raise_leg_distance_m_{0.40};
+    double fly_slope_contact_distance_m_{0.25};
+    double fly_slope_commit_success_dist_m_{0.18};
+    double fly_slope_verify_timeout_sec_{1.2};
+    double fly_slope_progress_timeout_sec_{1.2};
+    double fly_slope_progress_min_arc_m_{0.18};
+    int fly_slope_fail_a_precontact_miss_cycles_{3};
+    double fly_slope_backoff_distance_m_{0.60};
+    double fly_slope_backoff_tangent_search_half_width_m_{0.30};
+    double fly_slope_backoff_linear_vel_{0.30};
+    double fly_slope_backoff_heading_kp_{2.0};
+    double fly_slope_backoff_max_angular_vel_{1.0};
+    double fly_slope_backoff_pos_tolerance_m_{0.08};
+    int fly_slope_retry_max_attempts_{3};
+    bool fly_slope_request_recovery_on_max_attempts_{true};
+    bool enable_fly_slope_cooldown_{true};
+    int fly_slope_cooldown_fail_threshold_{3};
+    double fly_slope_cooldown_duration_sec_{30.0};
 
     // 独立动作阈值（在 COMMIT_ASCENT 及以内生效）
     double stair_raise_leg_distance_m_{0.40};
@@ -134,7 +190,8 @@ private:
 
     StairFsmState fsm_state_{StairFsmState::NORMAL};
     std::chrono::steady_clock::time_point fsm_state_enter_time_{};
-    StairCandidateInfo active_stair_{};
+    TerrainType active_terrain_type_{TerrainType::NONE};
+    TerrainCandidateInfo active_feature_{};
     int active_attempt_count_{0};
     int precontact_miss_counter_{0};
     double commit_arc_start_m_{0.0};
@@ -144,6 +201,8 @@ private:
     std::string last_transition_reason_{"init"};
     std::unordered_map<int, int> stair_fail_count_by_id_;
     std::unordered_map<int, std::chrono::steady_clock::time_point> stair_cooldown_until_by_id_;
+    std::unordered_map<int, int> fly_slope_fail_count_by_id_;
+    std::unordered_map<int, std::chrono::steady_clock::time_point> fly_slope_cooldown_until_by_id_;
 };
 
 }  // namespace nav_components

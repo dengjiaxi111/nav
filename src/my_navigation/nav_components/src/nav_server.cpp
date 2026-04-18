@@ -191,6 +191,17 @@ public:
         declare_parameter("special_terrain.oneway_black_max", 80);
         declare_parameter("special_terrain.oneway_gray_min", 171);
         declare_parameter("special_terrain.oneway_gray_max", 230);
+    declare_parameter("special_terrain.enable_fly_slope_layer", false);
+    declare_parameter("special_terrain.fly_slope_mask_yaml", "");
+    declare_parameter("special_terrain.fly_slope_clear_perp_dist_m", 0.4);
+    declare_parameter("special_terrain.fly_slope_clear_perp_high_dist_m", -1.0);
+    declare_parameter("special_terrain.fly_slope_clear_perp_low_dist_m", -1.0);
+    declare_parameter("special_terrain.fly_slope_low_min", 231);
+    declare_parameter("special_terrain.fly_slope_low_max", 240);
+    declare_parameter("special_terrain.fly_slope_high_min", 241);
+    declare_parameter("special_terrain.fly_slope_high_max", 250);
+    declare_parameter("special_terrain.fly_slope_pair_search_radius_cells", 4);
+    declare_parameter("special_terrain.fly_slope_enable_oneway_low_to_high", true);
         declare_parameter("special_terrain.publish_stair_debug_markers", true);
         declare_parameter("special_terrain.debug_marker_max_segments", 1500);
         declare_parameter("special_terrain.enable_stair_mode_detection", true);
@@ -260,6 +271,30 @@ public:
             get_parameter("special_terrain.oneway_gray_min").as_int();
         stair_layer_cfg.oneway_gray_max =
             get_parameter("special_terrain.oneway_gray_max").as_int();
+
+        nav_components::LayeredMapManager::FlySlopeLayerConfig fly_slope_layer_cfg;
+        fly_slope_layer_cfg.enable =
+            get_parameter("special_terrain.enable_fly_slope_layer").as_bool();
+        fly_slope_layer_cfg.mask_yaml_path =
+            get_parameter("special_terrain.fly_slope_mask_yaml").as_string();
+        fly_slope_layer_cfg.clear_perp_dist_m =
+            get_parameter("special_terrain.fly_slope_clear_perp_dist_m").as_double();
+        fly_slope_layer_cfg.clear_perp_high_dist_m =
+            get_parameter("special_terrain.fly_slope_clear_perp_high_dist_m").as_double();
+        fly_slope_layer_cfg.clear_perp_low_dist_m =
+            get_parameter("special_terrain.fly_slope_clear_perp_low_dist_m").as_double();
+        fly_slope_layer_cfg.low_min =
+            get_parameter("special_terrain.fly_slope_low_min").as_int();
+        fly_slope_layer_cfg.low_max =
+            get_parameter("special_terrain.fly_slope_low_max").as_int();
+        fly_slope_layer_cfg.high_min =
+            get_parameter("special_terrain.fly_slope_high_min").as_int();
+        fly_slope_layer_cfg.high_max =
+            get_parameter("special_terrain.fly_slope_high_max").as_int();
+        fly_slope_layer_cfg.pair_search_radius_cells =
+            get_parameter("special_terrain.fly_slope_pair_search_radius_cells").as_int();
+        fly_slope_layer_cfg.enable_oneway_low_to_high =
+            get_parameter("special_terrain.fly_slope_enable_oneway_low_to_high").as_bool();
         publish_stair_debug_markers_ =
             get_parameter("special_terrain.publish_stair_debug_markers").as_bool();
         stair_debug_marker_max_segments_ =
@@ -440,6 +475,7 @@ public:
         map_manager_->setEnablePerformanceLogging(enable_performance_logging);
         map_manager_->setStaticLayerEnabled(enable_static_layer_);  // 设置静态层开关
         map_manager_->setStairLayerConfig(stair_layer_cfg);
+    map_manager_->setFlySlopeLayerConfig(fly_slope_layer_cfg);
 
     terrain_controller_ = std::make_shared<nav_components::StairController>();
     terrain_controller_->initialize(this);
@@ -450,6 +486,13 @@ public:
                         "stair_layer 启用: mask=%s, clear_perp=%.2fm",
                         stair_layer_cfg.mask_yaml_path.c_str(),
                         stair_layer_cfg.clear_perp_dist_m);
+        }
+        if (fly_slope_layer_cfg.enable) {
+            RCLCPP_INFO(get_logger(),
+                        "fly_slope_layer 启用: mask=%s, clear_perp=%.2fm, one_way_low_to_high=%d",
+                        fly_slope_layer_cfg.mask_yaml_path.c_str(),
+                        fly_slope_layer_cfg.clear_perp_dist_m,
+                        fly_slope_layer_cfg.enable_oneway_low_to_high);
         }
         if (enable_stair_mode_detection_) {
             RCLCPP_INFO(get_logger(),

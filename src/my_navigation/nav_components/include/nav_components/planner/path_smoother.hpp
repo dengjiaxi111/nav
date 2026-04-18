@@ -46,6 +46,10 @@ struct SmoothParams {
     double stair_align_up_post_dist_m = 0.6;
     double stair_align_down_pre_dist_m = 0.6;
     double stair_align_down_post_dist_m = 0.6;
+    double fly_slope_align_up_pre_dist_m = 0.6;
+    double fly_slope_align_up_post_dist_m = 0.6;
+    double fly_slope_align_down_pre_dist_m = 0.6;
+    double fly_slope_align_down_post_dist_m = 0.6;
     std::string stair_align_mode = "curve_sample";
     double stair_sample_ds_m = 0.08;
     double lambda_stair_anchor = 0.0;
@@ -81,6 +85,10 @@ public:
     void setStairNormalCallback(StairNormalCallback cb) {
         stair_normal_callback_ = cb;
         optimizer_.setStairNormalCallback(cb);
+    }
+
+    void setTerrainTypeCallback(TerrainTypeCallback cb) {
+        optimizer_.setTerrainTypeCallback(cb);
     }
     
     // 平滑路径
@@ -257,6 +265,10 @@ private:
         opt_params.stair_align_up_post_dist = params_.stair_align_up_post_dist_m;
         opt_params.stair_align_down_pre_dist = params_.stair_align_down_pre_dist_m;
         opt_params.stair_align_down_post_dist = params_.stair_align_down_post_dist_m;
+    opt_params.fly_slope_align_up_pre_dist = params_.fly_slope_align_up_pre_dist_m;
+    opt_params.fly_slope_align_up_post_dist = params_.fly_slope_align_up_post_dist_m;
+    opt_params.fly_slope_align_down_pre_dist = params_.fly_slope_align_down_pre_dist_m;
+    opt_params.fly_slope_align_down_post_dist = params_.fly_slope_align_down_post_dist_m;
         opt_params.stair_align_mode = params_.stair_align_mode;
         opt_params.stair_sample_ds = params_.stair_sample_ds_m;
         opt_params.lambda_stair_anchor = params_.lambda_stair_anchor;

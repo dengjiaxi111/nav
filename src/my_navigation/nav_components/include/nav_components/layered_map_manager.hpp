@@ -164,7 +164,35 @@ public:
         bool is_oneway_down{false};
     };
 
+    struct FlySlopeLayerConfig {
+        bool enable{false};
+        std::string mask_yaml_path{};
+        double clear_perp_dist_m{0.4};
+        // 兼容旧参数：<0 时分别回退到 clear_perp_dist_m
+        double clear_perp_high_dist_m{-1.0};
+        double clear_perp_low_dist_m{-1.0};
+        // 低侧/高侧双线像素范围
+        int low_min{231};
+        int low_max{240};
+        int high_min{241};
+        int high_max{250};
+        int pair_search_radius_cells{4};
+        // 单向约束：仅允许 low -> high，禁止 high -> low
+        bool enable_oneway_low_to_high{true};
+    };
+
+    struct FlySlopePrimitive {
+        int fly_slope_id{-1};
+        Eigen::Vector2d center = Eigen::Vector2d::Zero();
+        Eigen::Vector2d normal = Eigen::Vector2d::Zero(); // low -> high
+        Eigen::Vector2d tangent = Eigen::Vector2d::Zero();
+        double half_length{0.0};
+        StairCrossingBand crossing_band{};
+        bool is_oneway_low_to_high{true};
+    };
+
     void setStairLayerConfig(const StairLayerConfig& cfg);
+    void setFlySlopeLayerConfig(const FlySlopeLayerConfig& cfg);
     void setRuntimeBlockedStairUphillIds(const std::unordered_set<int>& stair_ids);
     void clearRuntimeBlockedStairUphillIds();
 
@@ -174,6 +202,10 @@ public:
     bool getStairPrimitiveAt(double wx, double wy, StairPrimitive& primitive) const;
     bool getStairPrimitiveById(int stair_id, StairPrimitive& primitive) const;
     std::vector<StairPrimitive> getStairPrimitives() const;
+    bool getFlySlopeTraverseNormal(double wx, double wy, double& nx, double& ny) const;
+    bool getFlySlopePrimitiveAt(double wx, double wy, FlySlopePrimitive& primitive) const;
+    bool getFlySlopePrimitiveById(int fly_slope_id, FlySlopePrimitive& primitive) const;
+    std::vector<FlySlopePrimitive> getFlySlopePrimitives() const;
 
     // ============ MapInterface实现 ============
 
@@ -226,7 +258,9 @@ private:
     bool transformOdomToMap(double ox, double oy, double& mx, double& my) const;
 
     bool loadStairMaskFromYaml(const std::string& yaml_path);
+    bool loadFlySlopeMaskFromYaml(const std::string& yaml_path);
     void rebuildStairLayerCache();
+    void rebuildFlySlopeLayerCache();
     void applyStairLayerPolicy();
     bool worldToGlobalIndex(double wx, double wy, int& idx) const;
     static uint64_t encodeDirectedTransition(int from_idx, int to_idx);
@@ -299,6 +333,27 @@ private:
     std::vector<StairPrimitive> stair_primitives_{};
     std::vector<int> stair_primitive_id_map_{};  // global idx -> stair_id, -1 表示无
     std::unordered_set<int> runtime_blocked_stair_uphill_ids_{};
+
+    // 飞坡语义层（fly slope layer）配置
+    FlySlopeLayerConfig fly_slope_layer_cfg_{};
+    bool fly_slope_mask_loaded_{false};
+    std::string loaded_fly_slope_mask_yaml_{};
+
+    int fly_slope_mask_width_{0};
+    int fly_slope_mask_height_{0};
+    int fly_slope_mask_max_val_{255};
+    double fly_slope_mask_resolution_{0.05};
+    double fly_slope_mask_origin_x_{0.0};
+    double fly_slope_mask_origin_y_{0.0};
+    std::vector<uint8_t> fly_slope_mask_pixels_{};
+
+    std::vector<int> fly_slope_clear_indices_{};
+    std::unordered_set<uint64_t> fly_slope_forbidden_transitions_{};
+    std::vector<float> fly_slope_normal_x_{};
+    std::vector<float> fly_slope_normal_y_{};
+    std::vector<uint8_t> fly_slope_normal_valid_{};
+    std::vector<FlySlopePrimitive> fly_slope_primitives_{};
+    std::vector<int> fly_slope_primitive_id_map_{};  // global idx -> fly_slope_id, -1 表示无
 };
 
 }  // namespace nav_components

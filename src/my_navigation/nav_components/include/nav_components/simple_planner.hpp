@@ -62,8 +62,8 @@ private:
                   int* fail_best_x = nullptr,
                   int* fail_best_y = nullptr);
 
-    // A* 台阶硬约束（经预估台阶中心点强制经过 pre/post 垂直点）
-    bool runAstarWithHardStairConstraint(
+    // A* 地形硬约束（台阶/飞坡）：经预估中心点强制经过 pre/post 垂直点
+    bool runAstarWithHardTerrainConstraint(
         int sx, int sy, int gx, int gy,
         const std_msgs::msg::Header& header,
         nav_msgs::msg::Path& constrained_path,
@@ -112,6 +112,8 @@ private:
     bool allow_raw_fallback_on_smooth_fail_ = false;  // 平滑失败时是否回退原始A*
     std::string stair_constraint_mode_ = "soft";  // soft/hard
     double stair_hard_dist_delta_m_ = 0.0;  // 硬约束 pre/post 距离相对 B-spline 参数的偏移量
+    std::string fly_slope_constraint_mode_ = "soft";  // soft/hard
+    double fly_slope_hard_dist_delta_m_ = 0.0;  // 飞坡硬约束 pre/post 距离偏移量
 
     // A* 台阶感知形态参数（不含外切奖励）
     bool astar_stair_shape_enable_ = false;
@@ -126,8 +128,21 @@ private:
     double astar_stair_down_pre_dist_m_ = 0.6;
     double astar_stair_down_post_dist_m_ = 0.6;
 
+    // A* 飞坡感知形态参数（与台阶独立，初值保持一致）
+    bool astar_fly_slope_shape_enable_ = false;
+    int astar_fly_slope_search_radius_cells_ = 4;
+    double astar_fly_slope_trigger_dist_m_ = 1.2;
+    double astar_fly_slope_tangent_penalty_weight_ = 2.0;
+    double astar_fly_slope_centerline_penalty_weight_ = 1.0;
+    bool astar_fly_slope_lock_cluster_center_ = true;
+    double astar_fly_slope_up_pre_dist_m_ = 0.6;
+    double astar_fly_slope_up_post_dist_m_ = 0.6;
+    double astar_fly_slope_down_pre_dist_m_ = 0.6;
+    double astar_fly_slope_down_post_dist_m_ = 0.6;
+
     // A* 单次规划内锁定的台阶簇中心与法向
     bool astar_stair_cluster_locked_ = false;
+    int astar_shape_locked_terrain_type_ = 0;  // 0:none, 1:stair, 2:fly_slope
     Eigen::Vector2d astar_stair_locked_center_ = Eigen::Vector2d::Zero();
     Eigen::Vector2d astar_stair_locked_normal_ = Eigen::Vector2d::Zero();
 

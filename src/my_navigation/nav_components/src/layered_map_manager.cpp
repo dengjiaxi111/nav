@@ -66,6 +66,38 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
     rebuildStairLayerCache();
 }
 
+void LayeredMapManager::setFlySlopeLayerConfig(const FlySlopeLayerConfig& cfg) {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    fly_slope_layer_cfg_ = cfg;
+
+    if (!fly_slope_layer_cfg_.enable) {
+        fly_slope_clear_indices_.clear();
+        fly_slope_forbidden_transitions_.clear();
+        fly_slope_normal_x_.clear();
+        fly_slope_normal_y_.clear();
+        fly_slope_normal_valid_.clear();
+        fly_slope_primitives_.clear();
+        fly_slope_primitive_id_map_.clear();
+        fly_slope_mask_loaded_ = false;
+        return;
+    }
+
+    if (fly_slope_layer_cfg_.clear_perp_dist_m < 0.0) {
+        RCLCPP_WARN(logger_, "fly_slope_layer clear_perp_dist_m<0, 自动修正为0.0m");
+        fly_slope_layer_cfg_.clear_perp_dist_m = 0.0;
+    }
+    if (fly_slope_layer_cfg_.clear_perp_high_dist_m < -1e-9) {
+        RCLCPP_WARN(logger_, "fly_slope_layer clear_perp_high_dist_m<0, 采用 clear_perp_dist_m");
+        fly_slope_layer_cfg_.clear_perp_high_dist_m = -1.0;
+    }
+    if (fly_slope_layer_cfg_.clear_perp_low_dist_m < -1e-9) {
+        RCLCPP_WARN(logger_, "fly_slope_layer clear_perp_low_dist_m<0, 采用 clear_perp_dist_m");
+        fly_slope_layer_cfg_.clear_perp_low_dist_m = -1.0;
+    }
+
+    rebuildFlySlopeLayerCache();
+}
+
 void LayeredMapManager::setRuntimeBlockedStairUphillIds(
     const std::unordered_set<int>& stair_ids) {
     std::lock_guard<std::mutex> lock(map_mutex_);
@@ -95,6 +127,28 @@ bool LayeredMapManager::loadStairMaskFromYaml(const std::string& yaml_path) {
 
     RCLCPP_INFO(logger_, "stair mask 加载成功: %dx%d @ %.3f (%s)",
                 stair_mask_width_, stair_mask_height_, stair_mask_resolution_,
+                mask_data.image_path.c_str());
+    return true;
+}
+
+bool LayeredMapManager::loadFlySlopeMaskFromYaml(const std::string& yaml_path) {
+    MapImageData mask_data;
+    if (!MapImageIO::loadYamlAndPGM(yaml_path, mask_data, logger_)) {
+        return false;
+    }
+
+    fly_slope_mask_width_ = mask_data.width;
+    fly_slope_mask_height_ = mask_data.height;
+    fly_slope_mask_max_val_ = mask_data.max_val;
+    fly_slope_mask_resolution_ = mask_data.resolution;
+    fly_slope_mask_origin_x_ = mask_data.origin_x;
+    fly_slope_mask_origin_y_ = mask_data.origin_y;
+    fly_slope_mask_pixels_ = std::move(mask_data.pixels);
+    fly_slope_mask_loaded_ = true;
+    loaded_fly_slope_mask_yaml_ = yaml_path;
+
+    RCLCPP_INFO(logger_, "fly_slope mask 加载成功: %dx%d @ %.3f (%s)",
+                fly_slope_mask_width_, fly_slope_mask_height_, fly_slope_mask_resolution_,
                 mask_data.image_path.c_str());
     return true;
 }
@@ -163,10 +217,23 @@ bool LayeredMapManager::isTransitionAllowed(int from_x, int from_y, int to_x, in
     int from_idx = from_y * width_ + from_x;
     int to_idx = to_y * width_ + to_x;
 
+    // 同栅格不应被视为方向转移，直接放行。
+    if (from_idx == to_idx) {
+        return true;
+    }
+
     if (stair_layer_cfg_.enable && stair_layer_cfg_.enable_oneway_stair_down &&
         !stair_forbidden_transitions_.empty()) {
         if (stair_forbidden_transitions_.find(
                 encodeDirectedTransition(from_idx, to_idx)) != stair_forbidden_transitions_.end()) {
+            return false;
+        }
+    }
+
+    if (fly_slope_layer_cfg_.enable && fly_slope_layer_cfg_.enable_oneway_low_to_high &&
+        !fly_slope_forbidden_transitions_.empty()) {
+        if (fly_slope_forbidden_transitions_.find(
+                encodeDirectedTransition(from_idx, to_idx)) != fly_slope_forbidden_transitions_.end()) {
             return false;
         }
     }
@@ -223,30 +290,35 @@ void LayeredMapManager::getForbiddenTransitionSegments(
 
     segments.clear();
     if (width_ <= 0 || height_ <= 0 || resolution_ <= 0.0 ||
-        stair_forbidden_transitions_.empty()) {
+        (stair_forbidden_transitions_.empty() && fly_slope_forbidden_transitions_.empty())) {
         return;
     }
 
-    segments.reserve(stair_forbidden_transitions_.size());
-    for (const auto key : stair_forbidden_transitions_) {
-        int from_idx = static_cast<int>(static_cast<uint32_t>(key >> 32));
-        int to_idx = static_cast<int>(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
-        if (from_idx < 0 || to_idx < 0 || from_idx >= width_ * height_ || to_idx >= width_ * height_) {
-            continue;
+    segments.reserve(stair_forbidden_transitions_.size() + fly_slope_forbidden_transitions_.size());
+    auto append_segments = [&](const std::unordered_set<uint64_t>& transitions) {
+        for (const auto key : transitions) {
+            int from_idx = static_cast<int>(static_cast<uint32_t>(key >> 32));
+            int to_idx = static_cast<int>(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
+            if (from_idx < 0 || to_idx < 0 || from_idx >= width_ * height_ || to_idx >= width_ * height_) {
+                continue;
+            }
+
+            int from_x = from_idx % width_;
+            int from_y = from_idx / width_;
+            int to_x = to_idx % width_;
+            int to_y = to_idx / width_;
+
+            double from_wx = origin_x_ + (from_x + 0.5) * resolution_;
+            double from_wy = origin_y_ + (from_y + 0.5) * resolution_;
+            double to_wx = origin_x_ + (to_x + 0.5) * resolution_;
+            double to_wy = origin_y_ + (to_y + 0.5) * resolution_;
+
+            segments.push_back({from_wx, from_wy, to_wx, to_wy});
         }
+    };
 
-        int from_x = from_idx % width_;
-        int from_y = from_idx / width_;
-        int to_x = to_idx % width_;
-        int to_y = to_idx / width_;
-
-        double from_wx = origin_x_ + (from_x + 0.5) * resolution_;
-        double from_wy = origin_y_ + (from_y + 0.5) * resolution_;
-        double to_wx = origin_x_ + (to_x + 0.5) * resolution_;
-        double to_wy = origin_y_ + (to_y + 0.5) * resolution_;
-
-        segments.push_back({from_wx, from_wy, to_wx, to_wy});
-    }
+    append_segments(stair_forbidden_transitions_);
+    append_segments(fly_slope_forbidden_transitions_);
 }
 
 bool LayeredMapManager::getStairTraverseNormal(double wx, double wy, double& nx, double& ny) const {
@@ -310,6 +382,72 @@ bool LayeredMapManager::getStairPrimitiveById(
 std::vector<LayeredMapManager::StairPrimitive> LayeredMapManager::getStairPrimitives() const {
     std::lock_guard<std::mutex> lock(map_mutex_);
     return stair_primitives_;
+}
+
+bool LayeredMapManager::getFlySlopeTraverseNormal(
+    double wx, double wy, double& nx, double& ny) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (!fly_slope_layer_cfg_.enable || fly_slope_normal_valid_.empty()) {
+        return false;
+    }
+
+    int idx = -1;
+    if (!worldToGlobalIndex(wx, wy, idx)) {
+        return false;
+    }
+
+    if (idx < 0 || idx >= static_cast<int>(fly_slope_normal_valid_.size()) ||
+        fly_slope_normal_valid_[idx] == 0) {
+        return false;
+    }
+
+    nx = fly_slope_normal_x_[idx];
+    ny = fly_slope_normal_y_[idx];
+    return true;
+}
+
+bool LayeredMapManager::getFlySlopePrimitiveAt(
+    double wx, double wy, FlySlopePrimitive& primitive) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (!fly_slope_layer_cfg_.enable || fly_slope_primitives_.empty() ||
+        fly_slope_primitive_id_map_.empty()) {
+        return false;
+    }
+
+    int idx = -1;
+    if (!worldToGlobalIndex(wx, wy, idx)) {
+        return false;
+    }
+    if (idx < 0 || idx >= static_cast<int>(fly_slope_primitive_id_map_.size())) {
+        return false;
+    }
+
+    const int fly_slope_id = fly_slope_primitive_id_map_[idx];
+    if (fly_slope_id < 0 || fly_slope_id >= static_cast<int>(fly_slope_primitives_.size())) {
+        return false;
+    }
+
+    primitive = fly_slope_primitives_[fly_slope_id];
+    return true;
+}
+
+bool LayeredMapManager::getFlySlopePrimitiveById(
+    int fly_slope_id, FlySlopePrimitive& primitive) const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+
+    if (fly_slope_id < 0 || fly_slope_id >= static_cast<int>(fly_slope_primitives_.size())) {
+        return false;
+    }
+
+    primitive = fly_slope_primitives_[fly_slope_id];
+    return true;
+}
+
+std::vector<LayeredMapManager::FlySlopePrimitive> LayeredMapManager::getFlySlopePrimitives() const {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    return fly_slope_primitives_;
 }
 
 void LayeredMapManager::rebuildStairLayerCache() {
@@ -706,15 +844,384 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 stair_forbidden_transitions_.size());
 }
 
-void LayeredMapManager::applyStairLayerPolicy() {
-    if (!stair_layer_cfg_.enable || stair_clear_indices_.empty()) {
+void LayeredMapManager::rebuildFlySlopeLayerCache() {
+    fly_slope_clear_indices_.clear();
+    fly_slope_forbidden_transitions_.clear();
+    fly_slope_primitives_.clear();
+
+    if (width_ > 0 && height_ > 0) {
+        const size_t n = static_cast<size_t>(width_ * height_);
+        fly_slope_normal_x_.assign(n, 0.0f);
+        fly_slope_normal_y_.assign(n, 0.0f);
+        fly_slope_normal_valid_.assign(n, 0);
+        fly_slope_primitive_id_map_.assign(n, -1);
+    } else {
+        fly_slope_normal_x_.clear();
+        fly_slope_normal_y_.clear();
+        fly_slope_normal_valid_.clear();
+        fly_slope_primitive_id_map_.clear();
+    }
+
+    if (!fly_slope_layer_cfg_.enable || fly_slope_layer_cfg_.mask_yaml_path.empty()) {
         return;
     }
 
+    if (!static_map_) {
+        return;
+    }
+
+    if (!fly_slope_mask_loaded_ ||
+        loaded_fly_slope_mask_yaml_ != fly_slope_layer_cfg_.mask_yaml_path) {
+        if (!loadFlySlopeMaskFromYaml(fly_slope_layer_cfg_.mask_yaml_path)) {
+            RCLCPP_WARN(logger_, "fly_slope_layer 已启用但 mask 加载失败，跳过覆盖");
+            return;
+        }
+    }
+
+    if (fly_slope_mask_width_ <= 0 || fly_slope_mask_height_ <= 0 ||
+        fly_slope_mask_pixels_.empty()) {
+        return;
+    }
+
+    std::vector<uint8_t> class_map(
+        static_cast<size_t>(fly_slope_mask_width_ * fly_slope_mask_height_), 0);
+    std::vector<std::pair<int, int>> low_cells;
+    low_cells.reserve(1024);
+
+    for (int my = 0; my < fly_slope_mask_height_; ++my) {
+        for (int mx = 0; mx < fly_slope_mask_width_; ++mx) {
+            int pgm_idx = (fly_slope_mask_height_ - 1 - my) * fly_slope_mask_width_ + mx;
+            int mask_idx = my * fly_slope_mask_width_ + mx;
+            int v = fly_slope_mask_pixels_[pgm_idx];
+
+            if (v >= fly_slope_layer_cfg_.low_min && v <= fly_slope_layer_cfg_.low_max) {
+                class_map[mask_idx] = 1;
+                low_cells.emplace_back(mx, my);
+            } else if (v >= fly_slope_layer_cfg_.high_min &&
+                       v <= fly_slope_layer_cfg_.high_max) {
+                class_map[mask_idx] = 2;
+            }
+        }
+    }
+
+    if (low_cells.empty()) {
+        RCLCPP_WARN(logger_, "fly_slope_layer: mask 中未找到任何飞坡低侧线像素");
+        return;
+    }
+
+    struct PrimitiveAccumulator {
+        std::vector<std::pair<int, int>> low_side_cells;
+        Eigen::Vector2d normal_sum = Eigen::Vector2d::Zero();
+        int normal_count{0};
+    };
+
+    std::vector<PrimitiveAccumulator> primitive_acc;
+    std::vector<int> mask_primitive_id(
+        static_cast<size_t>(fly_slope_mask_width_ * fly_slope_mask_height_), -1);
+
+    for (int my = 0; my < fly_slope_mask_height_; ++my) {
+        for (int mx = 0; mx < fly_slope_mask_width_; ++mx) {
+            const int idx = my * fly_slope_mask_width_ + mx;
+            if (class_map[idx] != 1 || mask_primitive_id[idx] >= 0) {
+                continue;
+            }
+
+            PrimitiveAccumulator acc;
+            std::vector<int> stack;
+            stack.push_back(idx);
+            mask_primitive_id[idx] = static_cast<int>(primitive_acc.size());
+
+            while (!stack.empty()) {
+                const int cur = stack.back();
+                stack.pop_back();
+                const int cx = cur % fly_slope_mask_width_;
+                const int cy = cur / fly_slope_mask_width_;
+                acc.low_side_cells.emplace_back(cx, cy);
+
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) {
+                            continue;
+                        }
+                        const int nx = cx + dx;
+                        const int ny = cy + dy;
+                        if (nx < 0 || nx >= fly_slope_mask_width_ || ny < 0 ||
+                            ny >= fly_slope_mask_height_) {
+                            continue;
+                        }
+                        const int nidx = ny * fly_slope_mask_width_ + nx;
+                        if (class_map[nidx] != 1 || mask_primitive_id[nidx] >= 0) {
+                            continue;
+                        }
+                        mask_primitive_id[nidx] = static_cast<int>(primitive_acc.size());
+                        stack.push_back(nidx);
+                    }
+                }
+            }
+
+            if (!acc.low_side_cells.empty()) {
+                primitive_acc.push_back(std::move(acc));
+            }
+        }
+    }
+
+    std::unordered_set<int> clear_idx_set;
+    clear_idx_set.reserve(low_cells.size() * 8);
+
+    const int search_r = std::max(1, fly_slope_layer_cfg_.pair_search_radius_cells);
+    const double clear_high_m = std::max(
+        0.0,
+        (fly_slope_layer_cfg_.clear_perp_high_dist_m >= 0.0)
+            ? fly_slope_layer_cfg_.clear_perp_high_dist_m
+            : fly_slope_layer_cfg_.clear_perp_dist_m);
+    const double clear_low_m = std::max(
+        0.0,
+        (fly_slope_layer_cfg_.clear_perp_low_dist_m >= 0.0)
+            ? fly_slope_layer_cfg_.clear_perp_low_dist_m
+            : fly_slope_layer_cfg_.clear_perp_dist_m);
+    const int clear_high_steps =
+        std::max(0, static_cast<int>(std::ceil(clear_high_m / resolution_)));
+    const int clear_low_steps =
+        std::max(0, static_cast<int>(std::ceil(clear_low_m / resolution_)));
+
+    auto add_clear_sample = [&](double wx, double wy, double nx, double ny, int slope_id) {
+        int global_idx = -1;
+        if (worldToGlobalIndex(wx, wy, global_idx)) {
+            clear_idx_set.insert(global_idx);
+            if (global_idx >= 0 && global_idx < static_cast<int>(fly_slope_normal_valid_.size())) {
+                fly_slope_normal_x_[global_idx] += static_cast<float>(nx);
+                fly_slope_normal_y_[global_idx] += static_cast<float>(ny);
+                fly_slope_normal_valid_[global_idx] = 1;
+                if (slope_id >= 0 && slope_id < static_cast<int>(primitive_acc.size()) &&
+                    global_idx < static_cast<int>(fly_slope_primitive_id_map_.size()) &&
+                    fly_slope_primitive_id_map_[global_idx] < 0) {
+                    fly_slope_primitive_id_map_[global_idx] = slope_id;
+                }
+            }
+        }
+    };
+
+    for (const auto& low_cell : low_cells) {
+        int lx = low_cell.first;
+        int ly = low_cell.second;
+        int slope_id = -1;
+        const int mask_idx = ly * fly_slope_mask_width_ + lx;
+        if (mask_idx >= 0 && mask_idx < static_cast<int>(mask_primitive_id.size())) {
+            slope_id = mask_primitive_id[mask_idx];
+        }
+
+        double best_dist2 = std::numeric_limits<double>::max();
+        int hx_best = -1;
+        int hy_best = -1;
+
+        for (int dy = -search_r; dy <= search_r; ++dy) {
+            for (int dx = -search_r; dx <= search_r; ++dx) {
+                int hx = lx + dx;
+                int hy = ly + dy;
+                if (hx < 0 || hx >= fly_slope_mask_width_ || hy < 0 ||
+                    hy >= fly_slope_mask_height_) {
+                    continue;
+                }
+                int idx = hy * fly_slope_mask_width_ + hx;
+                if (class_map[idx] != 2) {
+                    continue;
+                }
+                double d2 = static_cast<double>(dx * dx + dy * dy);
+                if (d2 < best_dist2) {
+                    best_dist2 = d2;
+                    hx_best = hx;
+                    hy_best = hy;
+                }
+            }
+        }
+
+        if (hx_best < 0 || hy_best < 0) {
+            continue;
+        }
+
+        const double low_wx = fly_slope_mask_origin_x_ + (lx + 0.5) * fly_slope_mask_resolution_;
+        const double low_wy = fly_slope_mask_origin_y_ + (ly + 0.5) * fly_slope_mask_resolution_;
+        const double high_wx = fly_slope_mask_origin_x_ + (hx_best + 0.5) * fly_slope_mask_resolution_;
+        const double high_wy = fly_slope_mask_origin_y_ + (hy_best + 0.5) * fly_slope_mask_resolution_;
+
+        double nx = high_wx - low_wx;  // low -> high
+        double ny = high_wy - low_wy;
+        double norm = std::hypot(nx, ny);
+        if (norm < 1e-5) {
+            continue;
+        }
+        nx /= norm;
+        ny /= norm;
+        if (slope_id >= 0 && slope_id < static_cast<int>(primitive_acc.size())) {
+            primitive_acc[slope_id].normal_sum += Eigen::Vector2d(nx, ny);
+            primitive_acc[slope_id].normal_count++;
+        }
+
+        const double pair_dist = std::hypot(high_wx - low_wx, high_wy - low_wy);
+        const int pair_steps = std::max(1, static_cast<int>(std::ceil(pair_dist / resolution_)));
+        for (int s = 0; s <= pair_steps; ++s) {
+            const double t = static_cast<double>(s) / static_cast<double>(pair_steps);
+            const double wx = low_wx + (high_wx - low_wx) * t;
+            const double wy = low_wy + (high_wy - low_wy) * t;
+            add_clear_sample(wx, wy, nx, ny, slope_id);
+        }
+
+        for (int s = 1; s <= clear_high_steps; ++s) {
+            const double wx = high_wx + nx * (s * resolution_);
+            const double wy = high_wy + ny * (s * resolution_);
+            add_clear_sample(wx, wy, nx, ny, slope_id);
+        }
+        for (int s = 1; s <= clear_low_steps; ++s) {
+            const double wx = low_wx - nx * (s * resolution_);
+            const double wy = low_wy - ny * (s * resolution_);
+            add_clear_sample(wx, wy, nx, ny, slope_id);
+        }
+
+        if (fly_slope_layer_cfg_.enable_oneway_low_to_high) {
+            int low_idx = -1;
+            int high_idx = -1;
+            if (worldToGlobalIndex(low_wx, low_wy, low_idx) &&
+                worldToGlobalIndex(high_wx, high_wy, high_idx)) {
+                // 仅允许 low->high，因此禁止 high->low
+                addForbiddenDirectedTransitions(high_idx, low_idx, fly_slope_forbidden_transitions_);
+
+                // 对角补洞：阻止 high 邻域一步跳到 low
+                const int hx = high_idx % width_;
+                const int hy = high_idx / width_;
+                const int lxg = low_idx % width_;
+                const int lyg = low_idx / width_;
+                for (int ddy = -1; ddy <= 1; ++ddy) {
+                    for (int ddx = -1; ddx <= 1; ++ddx) {
+                        if (ddx == 0 && ddy == 0) {
+                            continue;
+                        }
+                        int nx2 = hx + ddx;
+                        int ny2 = hy + ddy;
+                        if (nx2 < 0 || nx2 >= width_ || ny2 < 0 || ny2 >= height_) {
+                            continue;
+                        }
+                        if (std::abs(nx2 - lxg) <= 1 && std::abs(ny2 - lyg) <= 1) {
+                            fly_slope_forbidden_transitions_.insert(
+                                encodeDirectedTransition(ny2 * width_ + nx2, low_idx));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (int idx : clear_idx_set) {
+        if (idx < 0 || idx >= static_cast<int>(fly_slope_normal_valid_.size()) ||
+            fly_slope_normal_valid_[idx] == 0) {
+            continue;
+        }
+
+        double nx = fly_slope_normal_x_[idx];
+        double ny = fly_slope_normal_y_[idx];
+        double norm = std::hypot(nx, ny);
+        if (norm < 1e-6) {
+            fly_slope_normal_valid_[idx] = 0;
+            fly_slope_normal_x_[idx] = 0.0f;
+            fly_slope_normal_y_[idx] = 0.0f;
+            continue;
+        }
+
+        fly_slope_normal_x_[idx] = static_cast<float>(nx / norm);
+        fly_slope_normal_y_[idx] = static_cast<float>(ny / norm);
+    }
+
+    fly_slope_clear_indices_.assign(clear_idx_set.begin(), clear_idx_set.end());
+
+    fly_slope_primitives_.reserve(primitive_acc.size());
+    for (size_t pid = 0; pid < primitive_acc.size(); ++pid) {
+        const auto& acc = primitive_acc[pid];
+        if (acc.low_side_cells.empty()) {
+            continue;
+        }
+
+        Eigen::Vector2d center = Eigen::Vector2d::Zero();
+        std::vector<Eigen::Vector2d> pts;
+        pts.reserve(acc.low_side_cells.size());
+        for (const auto& c : acc.low_side_cells) {
+            const double wx = fly_slope_mask_origin_x_ + (c.first + 0.5) * fly_slope_mask_resolution_;
+            const double wy = fly_slope_mask_origin_y_ + (c.second + 0.5) * fly_slope_mask_resolution_;
+            Eigen::Vector2d p(wx, wy);
+            pts.push_back(p);
+            center += p;
+        }
+        center /= static_cast<double>(pts.size());
+
+        Eigen::Vector2d normal = Eigen::Vector2d::UnitX();
+        if (acc.normal_count > 0 && acc.normal_sum.norm() > 1e-6) {
+            normal = acc.normal_sum.normalized();
+        }
+
+        Eigen::Vector2d tangent(-normal.y(), normal.x());
+        if (pts.size() >= 2) {
+            Eigen::Matrix2d cov = Eigen::Matrix2d::Zero();
+            for (const auto& p : pts) {
+                Eigen::Vector2d d = p - center;
+                cov += d * d.transpose();
+            }
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
+            if (solver.info() == Eigen::Success) {
+                tangent = solver.eigenvectors().col(1);
+            }
+        }
+
+        tangent -= tangent.dot(normal) * normal;
+        if (tangent.norm() < 1e-6) {
+            tangent = Eigen::Vector2d(-normal.y(), normal.x());
+        }
+        tangent.normalize();
+
+        if (normal.norm() < 1e-6) {
+            normal = Eigen::Vector2d(-tangent.y(), tangent.x());
+        } else {
+            normal.normalize();
+        }
+
+        double half_length = 0.5 * fly_slope_mask_resolution_;
+        for (const auto& p : pts) {
+            half_length = std::max(half_length, std::abs((p - center).dot(tangent)));
+        }
+
+        FlySlopePrimitive primitive;
+        primitive.fly_slope_id = static_cast<int>(pid);
+        primitive.center = center;
+        primitive.normal = normal;
+        primitive.tangent = tangent;
+        primitive.half_length = half_length;
+        primitive.crossing_band.low_side_dist_m = clear_low_m;
+        primitive.crossing_band.high_side_dist_m = clear_high_m;
+        primitive.crossing_band.tangent_half_width_m = half_length;
+        primitive.is_oneway_low_to_high = fly_slope_layer_cfg_.enable_oneway_low_to_high;
+        fly_slope_primitives_.push_back(primitive);
+    }
+
+    RCLCPP_INFO(logger_,
+                "fly_slope_layer: low线=%zu, 对象=%zu, 清除栅格=%zu, 禁止边=%zu",
+                low_cells.size(),
+                fly_slope_primitives_.size(),
+                fly_slope_clear_indices_.size(),
+                fly_slope_forbidden_transitions_.size());
+}
+
+void LayeredMapManager::applyStairLayerPolicy() {
     if (fused_map_) {
-        for (int idx : stair_clear_indices_) {
-            if (idx >= 0 && idx < static_cast<int>(fused_map_->data.size())) {
-                fused_map_->data[idx] = 0;
+        if (stair_layer_cfg_.enable && !stair_clear_indices_.empty()) {
+            for (int idx : stair_clear_indices_) {
+                if (idx >= 0 && idx < static_cast<int>(fused_map_->data.size())) {
+                    fused_map_->data[idx] = 0;
+                }
+            }
+        }
+
+        if (fly_slope_layer_cfg_.enable && !fly_slope_clear_indices_.empty()) {
+            for (int idx : fly_slope_clear_indices_) {
+                if (idx >= 0 && idx < static_cast<int>(fused_map_->data.size())) {
+                    fused_map_->data[idx] = 0;
+                }
             }
         }
     }
@@ -745,6 +1252,7 @@ bool LayeredMapManager::loadStaticMap(const std::string& yaml_path,
     *fused_map_ = *static_map_;  // 初始时等于静态地图
 
     rebuildStairLayerCache();
+    rebuildFlySlopeLayerCache();
     applyStairLayerPolicy();
     
     // 构建costmap
@@ -778,6 +1286,7 @@ void LayeredMapManager::setStaticMap(nav_msgs::msg::OccupancyGrid::SharedPtr map
     *fused_map_ = *static_map_;
 
     rebuildStairLayerCache();
+    rebuildFlySlopeLayerCache();
     applyStairLayerPolicy();
     
     rebuildCostmap();
@@ -832,6 +1341,7 @@ void LayeredMapManager::createBlankStaticMap(double width_m, double height_m,
     *fused_map_ = *static_map_;
 
     rebuildStairLayerCache();
+    rebuildFlySlopeLayerCache();
     applyStairLayerPolicy();
     
     // 设置膨胀参数并构建Costmap

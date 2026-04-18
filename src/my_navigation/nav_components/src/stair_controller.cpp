@@ -23,6 +23,7 @@ void StairController::initialize(rclcpp::Node* node) {
     };
 
     declare_if_needed("special_terrain.enable_stair_mode_detection", true);
+    declare_if_needed("special_terrain.enable_fly_slope_mode_detection", true);
     declare_if_needed("special_terrain.enable_stair_fsm", true);
     declare_if_needed("special_terrain.stair_mode_trigger_distance_m", 1.0);
     declare_if_needed("special_terrain.stair_mode_lookahead_dist_m", 3.0);
@@ -59,8 +60,45 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_cooldown_fail_threshold", 3);
     declare_if_needed("special_terrain.stair_cooldown_duration_sec", 30.0);
 
+    declare_if_needed("special_terrain.fly_slope_mode_trigger_distance_m", 1.0);
+    declare_if_needed("special_terrain.fly_slope_mode_lookahead_dist_m", 3.0);
+    declare_if_needed("special_terrain.fly_slope_mode_sample_step_m", 0.10);
+    declare_if_needed("special_terrain.fly_slope_mode_entry_heading_error_max_rad", 0.35);
+    declare_if_needed("special_terrain.fly_slope_mode_release_grace_cycles", 5);
+    declare_if_needed("special_terrain.fly_slope_mode_min_hold_sec", 0.35);
+    declare_if_needed("special_terrain.fly_slope_mode_force_release_distance_m", 2.5);
+    declare_if_needed("special_terrain.fly_slope_mode_max_assert_sec", 6.0);
+    declare_if_needed("special_terrain.fly_slope_mode_omega_limit_rad_s", 0.20);
+    declare_if_needed("special_terrain.fly_slope_mode_omega_slew_rate_rad_s2", 1.2);
+    declare_if_needed("special_terrain.enable_fly_slope_fixed_velocity_strategy", false);
+    declare_if_needed("special_terrain.fly_slope_fixed_velocity_trigger_distance_m", 0.35);
+    declare_if_needed("special_terrain.fly_slope_raise_leg_distance_m", 0.40);
+    declare_if_needed("special_terrain.fly_slope_fixed_linear_vel", 0.35);
+    declare_if_needed("special_terrain.fly_slope_fixed_heading_kp", 1.8);
+    declare_if_needed("special_terrain.fly_slope_fixed_max_angular_vel", 0.8);
+    declare_if_needed("special_terrain.fly_slope_fixed_heading_deadband", 0.05);
+    declare_if_needed("special_terrain.fly_slope_contact_distance_m", 0.25);
+    declare_if_needed("special_terrain.fly_slope_commit_success_dist_m", 0.18);
+    declare_if_needed("special_terrain.fly_slope_verify_timeout_sec", 1.2);
+    declare_if_needed("special_terrain.fly_slope_progress_timeout_sec", 1.2);
+    declare_if_needed("special_terrain.fly_slope_progress_min_arc_m", 0.18);
+    declare_if_needed("special_terrain.fly_slope_fail_a_precontact_miss_cycles", 3);
+    declare_if_needed("special_terrain.fly_slope_backoff_distance_m", 0.60);
+    declare_if_needed("special_terrain.fly_slope_backoff_tangent_search_half_width_m", 0.30);
+    declare_if_needed("special_terrain.fly_slope_backoff_linear_vel", 0.30);
+    declare_if_needed("special_terrain.fly_slope_backoff_heading_kp", 2.0);
+    declare_if_needed("special_terrain.fly_slope_backoff_max_angular_vel", 1.0);
+    declare_if_needed("special_terrain.fly_slope_backoff_pos_tolerance_m", 0.08);
+    declare_if_needed("special_terrain.fly_slope_retry_max_attempts", 3);
+    declare_if_needed("special_terrain.fly_slope_request_recovery_on_max_attempts", true);
+    declare_if_needed("special_terrain.enable_fly_slope_cooldown", true);
+    declare_if_needed("special_terrain.fly_slope_cooldown_fail_threshold", 3);
+    declare_if_needed("special_terrain.fly_slope_cooldown_duration_sec", 30.0);
+
     enable_stair_mode_detection_ =
         node_->get_parameter("special_terrain.enable_stair_mode_detection").as_bool();
+    enable_fly_slope_mode_detection_ =
+        node_->get_parameter("special_terrain.enable_fly_slope_mode_detection").as_bool();
     enable_stair_fsm_ =
         node_->get_parameter("special_terrain.enable_stair_fsm").as_bool();
     stair_mode_trigger_distance_m_ =
@@ -132,6 +170,75 @@ void StairController::initialize(rclcpp::Node* node) {
     stair_cooldown_duration_sec_ =
         node_->get_parameter("special_terrain.stair_cooldown_duration_sec").as_double();
 
+    fly_slope_mode_trigger_distance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_trigger_distance_m").as_double();
+    fly_slope_mode_lookahead_dist_m_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_lookahead_dist_m").as_double();
+    fly_slope_mode_sample_step_m_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_sample_step_m").as_double();
+    fly_slope_mode_entry_heading_error_max_rad_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_entry_heading_error_max_rad").as_double();
+    fly_slope_mode_release_grace_cycles_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_release_grace_cycles").as_int();
+    fly_slope_mode_min_hold_sec_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_min_hold_sec").as_double();
+    fly_slope_mode_force_release_distance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_force_release_distance_m").as_double();
+    fly_slope_mode_max_assert_sec_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_max_assert_sec").as_double();
+    fly_slope_mode_omega_limit_rad_s_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_omega_limit_rad_s").as_double();
+    fly_slope_mode_omega_slew_rate_rad_s2_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_omega_slew_rate_rad_s2").as_double();
+    enable_fly_slope_fixed_velocity_strategy_ =
+        node_->get_parameter("special_terrain.enable_fly_slope_fixed_velocity_strategy").as_bool();
+    fly_slope_fixed_velocity_trigger_distance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_fixed_velocity_trigger_distance_m").as_double();
+    fly_slope_raise_leg_distance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_raise_leg_distance_m").as_double();
+    fly_slope_fixed_linear_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_fixed_linear_vel").as_double();
+    fly_slope_fixed_heading_kp_ =
+        node_->get_parameter("special_terrain.fly_slope_fixed_heading_kp").as_double();
+    fly_slope_fixed_max_angular_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_fixed_max_angular_vel").as_double();
+    fly_slope_fixed_heading_deadband_ =
+        node_->get_parameter("special_terrain.fly_slope_fixed_heading_deadband").as_double();
+    fly_slope_contact_distance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_contact_distance_m").as_double();
+    fly_slope_commit_success_dist_m_ =
+        node_->get_parameter("special_terrain.fly_slope_commit_success_dist_m").as_double();
+    fly_slope_verify_timeout_sec_ =
+        node_->get_parameter("special_terrain.fly_slope_verify_timeout_sec").as_double();
+    fly_slope_progress_timeout_sec_ =
+        node_->get_parameter("special_terrain.fly_slope_progress_timeout_sec").as_double();
+    fly_slope_progress_min_arc_m_ =
+        node_->get_parameter("special_terrain.fly_slope_progress_min_arc_m").as_double();
+    fly_slope_fail_a_precontact_miss_cycles_ =
+        node_->get_parameter("special_terrain.fly_slope_fail_a_precontact_miss_cycles").as_int();
+    fly_slope_backoff_distance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_backoff_distance_m").as_double();
+    fly_slope_backoff_tangent_search_half_width_m_ =
+        node_->get_parameter("special_terrain.fly_slope_backoff_tangent_search_half_width_m").as_double();
+    fly_slope_backoff_linear_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_backoff_linear_vel").as_double();
+    fly_slope_backoff_heading_kp_ =
+        node_->get_parameter("special_terrain.fly_slope_backoff_heading_kp").as_double();
+    fly_slope_backoff_max_angular_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_backoff_max_angular_vel").as_double();
+    fly_slope_backoff_pos_tolerance_m_ =
+        node_->get_parameter("special_terrain.fly_slope_backoff_pos_tolerance_m").as_double();
+    fly_slope_retry_max_attempts_ =
+        node_->get_parameter("special_terrain.fly_slope_retry_max_attempts").as_int();
+    fly_slope_request_recovery_on_max_attempts_ =
+        node_->get_parameter("special_terrain.fly_slope_request_recovery_on_max_attempts").as_bool();
+    enable_fly_slope_cooldown_ =
+        node_->get_parameter("special_terrain.enable_fly_slope_cooldown").as_bool();
+    fly_slope_cooldown_fail_threshold_ =
+        node_->get_parameter("special_terrain.fly_slope_cooldown_fail_threshold").as_int();
+    fly_slope_cooldown_duration_sec_ =
+        node_->get_parameter("special_terrain.fly_slope_cooldown_duration_sec").as_double();
+
     stair_mode_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("stair_mode", 10);
     stair_fsm_state_pub_ = node_->create_publisher<std_msgs::msg::String>("stair_fsm_state", 10);
     stair_transition_debug_pub_ = node_->create_publisher<std_msgs::msg::String>("stair_attempt_debug", 10);
@@ -176,6 +283,14 @@ void StairController::initialize(rclcpp::Node* node) {
                     stair_cooldown_fail_threshold_,
                     stair_cooldown_duration_sec_);
     }
+
+    if (enable_fly_slope_mode_detection_) {
+        RCLCPP_INFO(node_->get_logger(),
+                    "fly_slope_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm",
+                    fly_slope_mode_trigger_distance_m_,
+                    fly_slope_mode_lookahead_dist_m_,
+                    fly_slope_mode_sample_step_m_);
+    }
 }
 
 void StairController::setMap(nav_core::MapInterface::Ptr map) {
@@ -189,7 +304,8 @@ void StairController::onNavStateChanged(nav_core::NavState state) {
         stair_mode_release_counter_ = 0;
         fsm_state_ = StairFsmState::NORMAL;
         fsm_state_enter_time_ = std::chrono::steady_clock::time_point{};
-        active_stair_ = StairCandidateInfo{};
+    active_feature_ = TerrainCandidateInfo{};
+    active_terrain_type_ = TerrainType::NONE;
         precontact_miss_counter_ = 0;
         commit_arc_start_m_ = 0.0;
         commit_progress_start_time_ = std::chrono::steady_clock::time_point{};
@@ -205,7 +321,8 @@ nav_core::TerrainControlDecision StairController::update(
     out_cmd = base_cmd;
     const auto now_tp = std::chrono::steady_clock::now();
 
-    if (!enable_stair_mode_detection_ || !enable_stair_fsm_) {
+    if ((!enable_stair_mode_detection_ && !enable_fly_slope_mode_detection_) ||
+        !enable_stair_fsm_) {
         transitionFsmState(StairFsmState::NORMAL, "fsm disabled");
         publishStairMode(0, true, true);
         return nav_core::TerrainControlDecision::PASS_THROUGH;
@@ -217,13 +334,95 @@ nav_core::TerrainControlDecision StairController::update(
         return nav_core::TerrainControlDecision::PASS_THROUGH;
     }
 
-    StairCandidateInfo candidate;
-    const bool has_candidate = queryUpcomingStairCandidate(context, candidate);
+    TerrainCandidateInfo candidate;
+    const bool has_candidate = queryUpcomingTerrainCandidate(context, active_terrain_type_, candidate);
+
+    auto is_fly = [&](TerrainType tt) { return tt == TerrainType::FLY_SLOPE; };
+    auto mode_of = [&](TerrainType tt) -> uint8_t {
+        return (tt == TerrainType::STAIR) ? 1 : ((tt == TerrainType::FLY_SLOPE) ? 2 : 0);
+    };
+    auto trigger_dist = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_mode_trigger_distance_m_ : stair_mode_trigger_distance_m_;
+    };
+    auto contact_dist = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_contact_distance_m_ : stair_contact_distance_m_;
+    };
+    auto raise_dist = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_raise_leg_distance_m_ : stair_raise_leg_distance_m_;
+    };
+    auto fix_vel_dist = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_fixed_velocity_trigger_distance_m_
+                          : stair_fixed_velocity_trigger_distance_m_;
+    };
+    auto progress_min_arc = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_progress_min_arc_m_ : stair_progress_min_arc_m_;
+    };
+    auto progress_timeout = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_progress_timeout_sec_ : stair_progress_timeout_sec_;
+    };
+    auto commit_success_dist = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_commit_success_dist_m_ : stair_commit_success_dist_m_;
+    };
+    auto verify_timeout = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_verify_timeout_sec_ : stair_verify_timeout_sec_;
+    };
+    auto miss_cycles = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_fail_a_precontact_miss_cycles_
+                          : stair_fail_a_precontact_miss_cycles_;
+    };
+    auto fixed_vel_enable = [&](TerrainType tt) {
+        return is_fly(tt) ? enable_fly_slope_fixed_velocity_strategy_
+                          : enable_stair_fixed_velocity_strategy_;
+    };
+    auto fixed_linear_vel = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_fixed_linear_vel_ : stair_fixed_linear_vel_;
+    };
+    auto fixed_heading_kp = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_fixed_heading_kp_ : stair_fixed_heading_kp_;
+    };
+    auto fixed_wz_max = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_fixed_max_angular_vel_ : stair_fixed_max_angular_vel_;
+    };
+    auto fixed_heading_deadband = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_fixed_heading_deadband_ : stair_fixed_heading_deadband_;
+    };
+    auto backoff_distance = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_distance_m_ : stair_backoff_distance_m_;
+    };
+    auto backoff_tangent_half = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_tangent_search_half_width_m_
+                          : stair_backoff_tangent_search_half_width_m_;
+    };
+    auto backoff_pos_tol = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_pos_tolerance_m_ : stair_backoff_pos_tolerance_m_;
+    };
+    auto backoff_heading_kp = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_heading_kp_ : stair_backoff_heading_kp_;
+    };
+    auto backoff_wz_max = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_max_angular_vel_ : stair_backoff_max_angular_vel_;
+    };
+    auto backoff_linear_vel = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_linear_vel_ : stair_backoff_linear_vel_;
+    };
+    auto retry_max = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_retry_max_attempts_ : stair_retry_max_attempts_;
+    };
+    auto recovery_on_max = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_request_recovery_on_max_attempts_
+                          : stair_request_recovery_on_max_attempts_;
+    };
+
     bool candidate_in_cooldown = false;
     double candidate_cooldown_remain_sec = 0.0;
-    if (has_candidate && candidate.stair_id >= 0) {
-        candidate_in_cooldown = isStairInCooldown(
-            candidate.stair_id, now_tp, &candidate_cooldown_remain_sec);
+    if (has_candidate && candidate.feature_id >= 0) {
+        if (candidate.terrain_type == TerrainType::FLY_SLOPE) {
+            candidate_in_cooldown = isFlySlopeInCooldown(
+                candidate.feature_id, now_tp, &candidate_cooldown_remain_sec);
+        } else {
+            candidate_in_cooldown = isStairInCooldown(
+                candidate.feature_id, now_tp, &candidate_cooldown_remain_sec);
+        }
     }
 
     double heading_err = 0.0;
@@ -233,7 +432,11 @@ nav_core::TerrainControlDecision StairController::update(
 
     auto enter_fail_backoff = [&](const char* reason) {
         ++active_attempt_count_;
-        onStairAttemptFailed(active_stair_.stair_id, now_tp);
+        if (active_terrain_type_ == TerrainType::FLY_SLOPE) {
+            onFlySlopeAttemptFailed(active_feature_.feature_id, now_tp);
+        } else {
+            onStairAttemptFailed(active_feature_.feature_id, now_tp);
+        }
         transitionFsmState(StairFsmState::FAIL_RETRY_BACKOFF, reason);
     };
 
@@ -242,16 +445,18 @@ nav_core::TerrainControlDecision StairController::update(
     switch (fsm_state_) {
         case StairFsmState::NORMAL: {
             publishStairMode(0, true);
-            if (has_candidate && candidate.dist_to_stair_m <= stair_mode_trigger_distance_m_) {
+            if (has_candidate && candidate.dist_to_feature_m <= trigger_dist(candidate.terrain_type)) {
                 if (candidate_in_cooldown) {
-                    cooldown_stair_id_ = candidate.stair_id;
+                    cooldown_stair_id_ = candidate.feature_id;
+                    active_terrain_type_ = candidate.terrain_type;
                     cooldown_replan_pending_ = true;
                     transitionFsmState(StairFsmState::COOLDOWN_BLOCKED,
-                                       "candidate stair in cooldown");
+                                       "candidate in cooldown");
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
                     break;
                 }
-                active_stair_ = candidate;
+                active_feature_ = candidate;
+                active_terrain_type_ = candidate.terrain_type;
                 active_attempt_count_ = 0;
                 precontact_miss_counter_ = 0;
                 transitionFsmState(StairFsmState::PRE_ALIGN, "candidate in trigger window");
@@ -270,7 +475,8 @@ nav_core::TerrainControlDecision StairController::update(
             }
 
             if (candidate_in_cooldown) {
-                cooldown_stair_id_ = candidate.stair_id;
+                cooldown_stair_id_ = candidate.feature_id;
+                active_terrain_type_ = candidate.terrain_type;
                 cooldown_replan_pending_ = true;
                 transitionFsmState(StairFsmState::COOLDOWN_BLOCKED,
                                    "candidate entered cooldown in pre-align");
@@ -278,13 +484,14 @@ nav_core::TerrainControlDecision StairController::update(
                 break;
             }
 
-            active_stair_ = candidate;
+            active_feature_ = candidate;
+            active_terrain_type_ = candidate.terrain_type;
 
             // PRE_ALIGN 阶段尚未下令抬腿，因此不应再检查判据A短腿失败
             precontact_miss_counter_ = 0;
 
             if (fsm_state_ == StairFsmState::PRE_ALIGN &&
-                candidate.dist_to_stair_m <= stair_contact_distance_m_ &&
+                candidate.dist_to_feature_m <= contact_dist(active_terrain_type_) &&
                 heading_aligned) {
                 transitionFsmState(StairFsmState::COMMIT_ASCENT, "contact + heading aligned");
                 precontact_miss_counter_ = 0;
@@ -301,32 +508,35 @@ nav_core::TerrainControlDecision StairController::update(
         case StairFsmState::COMMIT_ASCENT: {
             bool do_raise = false;
             bool do_fix_vel = false;
-            if (has_candidate && active_stair_.stair_id == candidate.stair_id) {
-                do_raise = (candidate.dist_to_stair_m <= stair_raise_leg_distance_m_);
-                do_fix_vel = (candidate.dist_to_stair_m <= stair_fixed_velocity_trigger_distance_m_);
+            if (has_candidate &&
+                active_feature_.feature_id == candidate.feature_id &&
+                active_terrain_type_ == candidate.terrain_type) {
+                do_raise = (candidate.dist_to_feature_m <= raise_dist(active_terrain_type_));
+                do_fix_vel = (candidate.dist_to_feature_m <= fix_vel_dist(active_terrain_type_));
             } else {
                 // 如果丢失候选（比如车体已经踩在台阶上导致盲区），默认保持动作生效
                 do_raise = true;
                 do_fix_vel = true;
             }
-            publishStairMode(do_raise ? 1 : 0, true);
+            publishStairMode(do_raise ? mode_of(active_terrain_type_) : 0, true);
 
             if (has_candidate) {
                 if (candidate_in_cooldown) {
-                    cooldown_stair_id_ = candidate.stair_id;
+                    cooldown_stair_id_ = candidate.feature_id;
+                    active_terrain_type_ = candidate.terrain_type;
                     cooldown_replan_pending_ = true;
                     transitionFsmState(StairFsmState::COOLDOWN_BLOCKED,
                                        "candidate entered cooldown in commit");
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
                     break;
                 }
-                active_stair_ = candidate;
+                active_feature_ = candidate;
             }
 
             // 判据A：已触发抬腿且距离未到固定速度区间，若虚拟腿长连续为0(短腿)则判定失败
             if (do_raise && !do_fix_vel && virtual_leg_length_ == 0) {
                 ++precontact_miss_counter_;
-                if (precontact_miss_counter_ >= std::max(1, stair_fail_a_precontact_miss_cycles_)) {
+                if (precontact_miss_counter_ >= std::max(1, miss_cycles(active_terrain_type_))) {
                     enter_fail_backoff("criterion A: virtual short-leg in commit");
                 }
             } else {
@@ -337,13 +547,13 @@ nav_core::TerrainControlDecision StairController::update(
                 double curr_arc = 0.0;
                 if (computePathArcAtRobot(context, curr_arc)) {
                     const double arc_progress = curr_arc - commit_arc_start_m_;
-                    if (arc_progress >= stair_progress_min_arc_m_) {
+                    if (arc_progress >= progress_min_arc(active_terrain_type_)) {
                         commit_arc_start_m_ = curr_arc;
                         commit_progress_start_time_ = std::chrono::steady_clock::now();
                     } else {
                         const double dt = std::chrono::duration<double>(
                             std::chrono::steady_clock::now() - commit_progress_start_time_).count();
-                        if (dt > stair_progress_timeout_sec_) {
+                        if (dt > progress_timeout(active_terrain_type_)) {
                             enter_fail_backoff("criterion B: arc progress timeout");
                         }
                     }
@@ -354,15 +564,17 @@ nav_core::TerrainControlDecision StairController::update(
                 const Eigen::Vector2d robot_pos(
                     context.current_pose.pose.position.x,
                     context.current_pose.pose.position.y);
-                const double signed_dist = (robot_pos - active_stair_.center).dot(active_stair_.normal);
-                if (signed_dist >= stair_commit_success_dist_m_) {
+                const double signed_dist = (robot_pos - active_feature_.center).dot(active_feature_.normal);
+                if (signed_dist >= commit_success_dist(active_terrain_type_)) {
                     transitionFsmState(StairFsmState::VERIFY_SUCCESS, "crossed centerline + success dist");
                 }
             }
 
             if (fsm_state_ == StairFsmState::COMMIT_ASCENT) {
                 if (do_fix_vel) {
-                    out_cmd.linear.x = stair_fixed_linear_vel_;
+                    if (fixed_vel_enable(active_terrain_type_)) {
+                        out_cmd.linear.x = fixed_linear_vel(active_terrain_type_);
+                    }
                     out_cmd.angular.z = 0.0;
                     double heading_ref = 0.0;
                     if (queryPathHeadingNearRobot(context, heading_ref)) {
@@ -372,13 +584,13 @@ nav_core::TerrainControlDecision StairController::update(
                         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
                         double err = normalizeAngle(heading_ref - yaw);
-                        if (std::abs(err) < stair_fixed_heading_deadband_) {
+                        if (std::abs(err) < fixed_heading_deadband(active_terrain_type_)) {
                             err = 0.0;
                         }
                         out_cmd.angular.z = std::clamp(
-                            stair_fixed_heading_kp_ * err,
-                            -stair_fixed_max_angular_vel_,
-                            stair_fixed_max_angular_vel_);
+                            fixed_heading_kp(active_terrain_type_) * err,
+                            -fixed_wz_max(active_terrain_type_),
+                            fixed_wz_max(active_terrain_type_));
                     }
                     decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
                 } else {
@@ -389,19 +601,24 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::VERIFY_SUCCESS: {
-            publishStairMode(1, true);
+            publishStairMode(mode_of(active_terrain_type_), true);
 
             if (has_candidate) {
-                active_stair_ = candidate;
+                active_feature_ = candidate;
             }
 
             const Eigen::Vector2d robot_pos(
                 context.current_pose.pose.position.x,
                 context.current_pose.pose.position.y);
-            const double signed_dist = (robot_pos - active_stair_.center).dot(active_stair_.normal);
-            if (signed_dist >= stair_commit_success_dist_m_) {
-                onStairAttemptSucceeded(active_stair_.stair_id);
+            const double signed_dist = (robot_pos - active_feature_.center).dot(active_feature_.normal);
+            if (signed_dist >= commit_success_dist(active_terrain_type_)) {
+                if (active_terrain_type_ == TerrainType::FLY_SLOPE) {
+                    onFlySlopeAttemptSucceeded(active_feature_.feature_id);
+                } else {
+                    onStairAttemptSucceeded(active_feature_.feature_id);
+                }
                 transitionFsmState(StairFsmState::NORMAL, "verify success");
+                active_terrain_type_ = TerrainType::NONE;
                 publishStairMode(0, true, true);
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
                 break;
@@ -409,12 +626,12 @@ nav_core::TerrainControlDecision StairController::update(
 
             const double verify_dt = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - fsm_state_enter_time_).count();
-            if (verify_dt > stair_verify_timeout_sec_) {
+            if (verify_dt > verify_timeout(active_terrain_type_)) {
                 enter_fail_backoff("verify timeout");
             }
 
             if (fsm_state_ == StairFsmState::VERIFY_SUCCESS) {
-                out_cmd.linear.x = 0.5 * stair_fixed_linear_vel_;
+                out_cmd.linear.x = 0.5 * fixed_linear_vel(active_terrain_type_);
                 out_cmd.angular.z = 0.0;
                 decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
             }
@@ -424,46 +641,51 @@ nav_core::TerrainControlDecision StairController::update(
         case StairFsmState::FAIL_RETRY_BACKOFF: {
             publishStairMode(0, true, true);
 
-            if (active_stair_.normal.norm() < 1e-6 || active_stair_.tangent.norm() < 1e-6) {
+            if (active_feature_.normal.norm() < 1e-6 || active_feature_.tangent.norm() < 1e-6) {
                 decision = nav_core::TerrainControlDecision::REQUEST_RECOVERY;
                 break;
             }
 
-            Eigen::Vector2d t = active_stair_.tangent.normalized();
-            Eigen::Vector2d n = active_stair_.normal.normalized();
+            Eigen::Vector2d t = active_feature_.tangent.normalized();
+            Eigen::Vector2d n = active_feature_.normal.normalized();
             const Eigen::Vector2d robot_pos(
                 context.current_pose.pose.position.x,
                 context.current_pose.pose.position.y);
 
-            const double tangent_proj = (robot_pos - active_stair_.center).dot(t);
-            const double max_tangent = active_stair_.half_length + stair_backoff_tangent_search_half_width_m_;
+            const double tangent_proj = (robot_pos - active_feature_.center).dot(t);
+            const double max_tangent = active_feature_.half_length + backoff_tangent_half(active_terrain_type_);
             const double s_clamped = std::clamp(tangent_proj, -max_tangent, max_tangent);
-            const Eigen::Vector2d centerline_point = active_stair_.center + s_clamped * t;
+            const Eigen::Vector2d centerline_point = active_feature_.center + s_clamped * t;
             const double signed_dist = (robot_pos - centerline_point).dot(n);
-            const double target_signed = -stair_backoff_distance_m_;
+            const double target_signed = -backoff_distance(active_terrain_type_);
 
-            if (signed_dist <= target_signed + stair_backoff_pos_tolerance_m_) {
+            if (signed_dist <= target_signed + backoff_pos_tol(active_terrain_type_)) {
                 bool should_enter_cooldown = false;
-                if (enable_stair_cooldown_ && active_stair_.stair_id >= 0) {
-                    should_enter_cooldown = isStairInCooldown(active_stair_.stair_id, now_tp, nullptr);
+                if (active_feature_.feature_id >= 0) {
+                    if (active_terrain_type_ == TerrainType::FLY_SLOPE && enable_fly_slope_cooldown_) {
+                        should_enter_cooldown = isFlySlopeInCooldown(active_feature_.feature_id, now_tp, nullptr);
+                    } else if (active_terrain_type_ == TerrainType::STAIR && enable_stair_cooldown_) {
+                        should_enter_cooldown = isStairInCooldown(active_feature_.feature_id, now_tp, nullptr);
+                    }
                 }
 
                 if (should_enter_cooldown) {
-                    cooldown_stair_id_ = active_stair_.stair_id;
+                    cooldown_stair_id_ = active_feature_.feature_id;
                     cooldown_replan_pending_ = true;
                     transitionFsmState(StairFsmState::COOLDOWN_BLOCKED,
                                        "backoff done -> cooldown blocked");
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
-                } else if (active_attempt_count_ < std::max(1, stair_retry_max_attempts_)) {
+                } else if (active_attempt_count_ < std::max(1, retry_max(active_terrain_type_))) {
                     transitionFsmState(StairFsmState::PRE_ALIGN, "backoff done -> retry");
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN; // 触发重规划以刷新实际距离
                 } else {
-                    if (stair_request_recovery_on_max_attempts_) {
+                    if (recovery_on_max(active_terrain_type_)) {
                         decision = nav_core::TerrainControlDecision::REQUEST_RECOVERY;
                     } else {
                         decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
                     }
                     transitionFsmState(StairFsmState::NORMAL, "max retry reached");
+                    active_terrain_type_ = TerrainType::NONE;
                 }
                 break;
             }
@@ -477,10 +699,10 @@ nav_core::TerrainControlDecision StairController::update(
 
             const double heading_err_backoff = normalizeAngle(heading_ref - yaw);
             out_cmd.angular.z = std::clamp(
-                stair_backoff_heading_kp_ * heading_err_backoff,
-                -stair_backoff_max_angular_vel_,
-                stair_backoff_max_angular_vel_);
-            out_cmd.linear.x = stair_backoff_linear_vel_ * std::max(0.0, std::cos(heading_err_backoff));
+                backoff_heading_kp(active_terrain_type_) * heading_err_backoff,
+                -backoff_wz_max(active_terrain_type_),
+                backoff_wz_max(active_terrain_type_));
+            out_cmd.linear.x = backoff_linear_vel(active_terrain_type_) * std::max(0.0, std::cos(heading_err_backoff));
             decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
             break;
         }
@@ -496,13 +718,18 @@ nav_core::TerrainControlDecision StairController::update(
             }
 
             double remain_sec = 0.0;
-            const bool still_cooling = isStairInCooldown(cooldown_stair_id_, now_tp, &remain_sec);
+            const bool still_cooling = (active_terrain_type_ == TerrainType::FLY_SLOPE)
+                ? isFlySlopeInCooldown(cooldown_stair_id_, now_tp, &remain_sec)
+                : isStairInCooldown(cooldown_stair_id_, now_tp, &remain_sec);
             if (!still_cooling) {
                 RCLCPP_INFO(node_->get_logger(),
-                            "stair_fsm cooldown cleared: stair_id=%d", cooldown_stair_id_);
+                            "terrain_fsm cooldown cleared: type=%s id=%d",
+                            terrainTypeName(active_terrain_type_),
+                            cooldown_stair_id_);
                 cooldown_stair_id_ = -1;
                 cooldown_replan_pending_ = false;
                 transitionFsmState(StairFsmState::NORMAL, "cooldown expired");
+                active_terrain_type_ = TerrainType::NONE;
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
                 break;
             }
@@ -510,8 +737,8 @@ nav_core::TerrainControlDecision StairController::update(
             if (cooldown_replan_pending_) {
                 cooldown_replan_pending_ = false;
                 RCLCPP_WARN(node_->get_logger(),
-                            "stair_fsm cooldown blocked: stair_id=%d, remain=%.2fs -> REQUEST_REPLAN",
-                            cooldown_stair_id_, remain_sec);
+                            "terrain_fsm cooldown blocked: type=%s id=%d, remain=%.2fs -> REQUEST_REPLAN",
+                            terrainTypeName(active_terrain_type_), cooldown_stair_id_, remain_sec);
                 decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
             } else {
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
@@ -548,7 +775,8 @@ void StairController::transitionFsmState(StairFsmState new_state, const char* re
         oss << "from=" << fsmStateName(from_state)
             << ",to=" << fsmStateName(new_state)
             << ",reason=" << last_transition_reason_
-            << ",stair_id=" << active_stair_.stair_id
+            << ",terrain=" << terrainTypeName(active_terrain_type_)
+            << ",feature_id=" << active_feature_.feature_id
             << ",attempt=" << active_attempt_count_;
         msg.data = oss.str();
         stair_transition_debug_pub_->publish(msg);
@@ -558,10 +786,61 @@ void StairController::transitionFsmState(StairFsmState new_state, const char* re
     fsm_state_enter_time_ = std::chrono::steady_clock::now();
 }
 
+const char* StairController::terrainTypeName(TerrainType terrain_type) {
+    switch (terrain_type) {
+        case TerrainType::NONE:
+            return "NONE";
+        case TerrainType::STAIR:
+            return "STAIR";
+        case TerrainType::FLY_SLOPE:
+            return "FLY_SLOPE";
+    }
+    return "UNKNOWN";
+}
+
+bool StairController::queryUpcomingTerrainCandidate(
+    const nav_core::TerrainControlContext& context,
+    TerrainType preferred_type,
+    TerrainCandidateInfo& candidate) const {
+    candidate = TerrainCandidateInfo{};
+
+    TerrainCandidateInfo stair_candidate;
+    TerrainCandidateInfo fly_candidate;
+    const bool has_stair = enable_stair_mode_detection_ &&
+        queryUpcomingStairCandidate(context, stair_candidate);
+    const bool has_fly = enable_fly_slope_mode_detection_ &&
+        queryUpcomingFlySlopeCandidate(context, fly_candidate);
+
+    if (preferred_type == TerrainType::STAIR && has_stair) {
+        candidate = stair_candidate;
+        return true;
+    }
+    if (preferred_type == TerrainType::FLY_SLOPE && has_fly) {
+        candidate = fly_candidate;
+        return true;
+    }
+
+    if (has_stair && has_fly) {
+        candidate = (stair_candidate.dist_to_feature_m <= fly_candidate.dist_to_feature_m)
+            ? stair_candidate
+            : fly_candidate;
+        return true;
+    }
+    if (has_stair) {
+        candidate = stair_candidate;
+        return true;
+    }
+    if (has_fly) {
+        candidate = fly_candidate;
+        return true;
+    }
+    return false;
+}
+
 bool StairController::queryUpcomingStairCandidate(
     const nav_core::TerrainControlContext& context,
-    StairCandidateInfo& candidate) const {
-    candidate = StairCandidateInfo{};
+    TerrainCandidateInfo& candidate) const {
+    candidate = TerrainCandidateInfo{};
     if (!map_manager_ || context.current_path.poses.size() < 2) {
         return false;
     }
@@ -619,7 +898,8 @@ bool StairController::queryUpcomingStairCandidate(
             }
 
             candidate.valid = true;
-            candidate.dist_to_stair_m = path_dist;
+            candidate.terrain_type = TerrainType::STAIR;
+            candidate.dist_to_feature_m = path_dist;
             candidate.normal = Eigen::Vector2d(nx, ny);
             if (candidate.normal.norm() > 1e-6) {
                 candidate.normal.normalize();
@@ -630,7 +910,98 @@ bool StairController::queryUpcomingStairCandidate(
 
             LayeredMapManager::StairPrimitive primitive;
             if (map_manager_->getStairPrimitiveAt(wx, wy, primitive)) {
-                candidate.stair_id = primitive.stair_id;
+                candidate.feature_id = primitive.stair_id;
+                candidate.center = primitive.center;
+                if (primitive.normal.norm() > 1e-6) {
+                    candidate.normal = primitive.normal.normalized();
+                    candidate.tangent = Eigen::Vector2d(-candidate.normal.y(), candidate.normal.x());
+                }
+                if (primitive.tangent.norm() > 1e-6) {
+                    candidate.tangent = primitive.tangent.normalized();
+                }
+                candidate.half_length = std::max(0.05, primitive.half_length);
+            }
+            return true;
+        }
+        traveled += seg_len;
+    }
+    return false;
+}
+
+bool StairController::queryUpcomingFlySlopeCandidate(
+    const nav_core::TerrainControlContext& context,
+    TerrainCandidateInfo& candidate) const {
+    candidate = TerrainCandidateInfo{};
+    if (!map_manager_ || context.current_path.poses.size() < 2) {
+        return false;
+    }
+
+    const auto& poses = context.current_path.poses;
+    const double sample_step = std::max(0.02, fly_slope_mode_sample_step_m_);
+    const double lookahead_dist = std::max(0.1, fly_slope_mode_lookahead_dist_m_);
+
+    size_t closest_idx = 0;
+    double min_dist2 = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < poses.size(); ++i) {
+        const auto& p = poses[i].pose.position;
+        const double dx = context.current_pose.pose.position.x - p.x;
+        const double dy = context.current_pose.pose.position.y - p.y;
+        const double d2 = dx * dx + dy * dy;
+        if (d2 < min_dist2) {
+            min_dist2 = d2;
+            closest_idx = i;
+        }
+    }
+
+    double traveled = 0.0;
+    for (size_t i = closest_idx; i + 1 < poses.size() && traveled <= lookahead_dist; ++i) {
+        const auto& p0 = poses[i].pose.position;
+        const auto& p1 = poses[i + 1].pose.position;
+        const double seg_dx = p1.x - p0.x;
+        const double seg_dy = p1.y - p0.y;
+        const double seg_len = std::hypot(seg_dx, seg_dy);
+        if (seg_len < 1e-6) {
+            continue;
+        }
+
+        const double dir_x = seg_dx / seg_len;
+        const double dir_y = seg_dy / seg_len;
+        const int sample_count = std::max(1, static_cast<int>(std::ceil(seg_len / sample_step)));
+        for (int s = 0; s <= sample_count; ++s) {
+            const double t = static_cast<double>(s) / static_cast<double>(sample_count);
+            const double local_dist = seg_len * t;
+            const double path_dist = traveled + local_dist;
+            if (path_dist > lookahead_dist) {
+                break;
+            }
+
+            const double wx = p0.x + seg_dx * t;
+            const double wy = p0.y + seg_dy * t;
+            double nx = 0.0;
+            double ny = 0.0;
+            if (!map_manager_->getFlySlopeTraverseNormal(wx, wy, nx, ny)) {
+                continue;
+            }
+
+            const double dot = dir_x * nx + dir_y * ny;
+            if (dot < 0.0) {
+                continue;
+            }
+
+            candidate.valid = true;
+            candidate.terrain_type = TerrainType::FLY_SLOPE;
+            candidate.dist_to_feature_m = path_dist;
+            candidate.normal = Eigen::Vector2d(nx, ny);
+            if (candidate.normal.norm() > 1e-6) {
+                candidate.normal.normalize();
+            }
+            candidate.tangent = Eigen::Vector2d(-candidate.normal.y(), candidate.normal.x());
+            candidate.center = Eigen::Vector2d(wx, wy);
+            candidate.half_length = 0.3;
+
+            LayeredMapManager::FlySlopePrimitive primitive;
+            if (map_manager_->getFlySlopePrimitiveAt(wx, wy, primitive)) {
+                candidate.feature_id = primitive.fly_slope_id;
                 candidate.center = primitive.center;
                 if (primitive.normal.norm() > 1e-6) {
                     candidate.normal = primitive.normal.normalized();
@@ -727,6 +1098,39 @@ bool StairController::isStairInCooldown(
     return true;
 }
 
+bool StairController::isFlySlopeInCooldown(
+    int fly_slope_id,
+    const std::chrono::steady_clock::time_point& now,
+    double* remain_sec) {
+    if (!enable_fly_slope_cooldown_ || fly_slope_id < 0) {
+        if (remain_sec) {
+            *remain_sec = 0.0;
+        }
+        return false;
+    }
+
+    auto it = fly_slope_cooldown_until_by_id_.find(fly_slope_id);
+    if (it == fly_slope_cooldown_until_by_id_.end()) {
+        if (remain_sec) {
+            *remain_sec = 0.0;
+        }
+        return false;
+    }
+
+    if (now >= it->second) {
+        fly_slope_cooldown_until_by_id_.erase(it);
+        if (remain_sec) {
+            *remain_sec = 0.0;
+        }
+        return false;
+    }
+
+    if (remain_sec) {
+        *remain_sec = std::chrono::duration<double>(it->second - now).count();
+    }
+    return true;
+}
+
 void StairController::onStairAttemptFailed(
     int stair_id,
     const std::chrono::steady_clock::time_point& now) {
@@ -750,11 +1154,41 @@ void StairController::onStairAttemptFailed(
     }
 }
 
+void StairController::onFlySlopeAttemptFailed(
+    int fly_slope_id,
+    const std::chrono::steady_clock::time_point& now) {
+    if (fly_slope_id < 0) {
+        return;
+    }
+
+    const int fail_count = ++fly_slope_fail_count_by_id_[fly_slope_id];
+    if (!enable_fly_slope_cooldown_) {
+        return;
+    }
+
+    if (fail_count >= std::max(1, fly_slope_cooldown_fail_threshold_)) {
+        const double dur_sec = std::max(0.0, fly_slope_cooldown_duration_sec_);
+        fly_slope_cooldown_until_by_id_[fly_slope_id] =
+            now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                      std::chrono::duration<double>(dur_sec));
+        RCLCPP_WARN(node_->get_logger(),
+                    "fly_slope_fsm cooldown set: id=%d, fail_count=%d, duration=%.2fs",
+                    fly_slope_id, fail_count, dur_sec);
+    }
+}
+
 void StairController::onStairAttemptSucceeded(int stair_id) {
     if (stair_id < 0) {
         return;
     }
     stair_fail_count_by_id_.erase(stair_id);
+}
+
+void StairController::onFlySlopeAttemptSucceeded(int fly_slope_id) {
+    if (fly_slope_id < 0) {
+        return;
+    }
+    fly_slope_fail_count_by_id_.erase(fly_slope_id);
 }
 
 bool StairController::queryPathHeadingNearRobot(
@@ -890,15 +1324,17 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
 
     uint8_t effective_mode = mode;
     const auto now_tp = std::chrono::steady_clock::now();
-    if (effective_mode == 1) {
+    if (effective_mode == 1 || effective_mode == 2) {
         stair_mode_last_assert_time_ = now_tp;
     } else if (!bypass_hold &&
-               stair_mode_current_ == 1 &&
-               stair_mode_min_hold_sec_ > 0.0) {
+               (stair_mode_current_ == 1 || stair_mode_current_ == 2)) {
+        const double min_hold_sec = (stair_mode_current_ == 2)
+            ? fly_slope_mode_min_hold_sec_
+            : stair_mode_min_hold_sec_;
         const double elapsed_since_assert = std::chrono::duration<double>(
             now_tp - stair_mode_last_assert_time_).count();
-        if (elapsed_since_assert < stair_mode_min_hold_sec_) {
-            effective_mode = 1;
+        if (elapsed_since_assert < min_hold_sec) {
+            effective_mode = stair_mode_current_;
         }
     }
 
@@ -947,16 +1383,19 @@ void StairController::publishFsmDebug(const std::chrono::steady_clock::time_poin
     double remain_sec = 0.0;
     bool cooling = false;
     if (cooldown_stair_id_ >= 0) {
-        cooling = isStairInCooldown(cooldown_stair_id_, now, &remain_sec);
+        cooling = (active_terrain_type_ == TerrainType::FLY_SLOPE)
+            ? isFlySlopeInCooldown(cooldown_stair_id_, now, &remain_sec)
+            : isStairInCooldown(cooldown_stair_id_, now, &remain_sec);
     }
 
     std_msgs::msg::String msg;
     std::ostringstream oss;
     oss << "state=" << fsmStateName(fsm_state_)
         << ",reason=" << last_transition_reason_
-        << ",active_stair_id=" << active_stair_.stair_id
+        << ",active_terrain=" << terrainTypeName(active_terrain_type_)
+        << ",active_feature_id=" << active_feature_.feature_id
         << ",attempt=" << active_attempt_count_
-        << ",cooldown_stair_id=" << cooldown_stair_id_
+        << ",cooldown_feature_id=" << cooldown_stair_id_
         << ",cooldown_active=" << (cooling ? 1 : 0)
         << ",cooldown_remain_sec=" << remain_sec;
     msg.data = oss.str();
@@ -1076,24 +1515,32 @@ void StairController::syncRuntimeBlockedUphillStairs(
 
 void StairController::applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd,
                                                double control_rate_hz) {
-    if (stair_mode_current_ != 1) {
+    if (stair_mode_current_ != 1 && stair_mode_current_ != 2) {
         stair_mode_omega_limiter_initialized_ = false;
         return;
     }
 
+    const bool fly_mode = (stair_mode_current_ == 2);
+    const double omega_limit = fly_mode
+        ? fly_slope_mode_omega_limit_rad_s_
+        : stair_mode_omega_limit_rad_s_;
+    const double omega_slew = fly_mode
+        ? fly_slope_mode_omega_slew_rate_rad_s2_
+        : stair_mode_omega_slew_rate_rad_s2_;
+
     const double raw_omega = cmd.angular.z;
     double limited_omega = raw_omega;
 
-    if (stair_mode_omega_limit_rad_s_ > 0.0) {
+    if (omega_limit > 0.0) {
         limited_omega = std::clamp(
             limited_omega,
-            -stair_mode_omega_limit_rad_s_,
-            stair_mode_omega_limit_rad_s_);
+            -omega_limit,
+            omega_limit);
     }
 
-    if (stair_mode_omega_slew_rate_rad_s2_ > 0.0) {
+    if (omega_slew > 0.0) {
         const double dt = 1.0 / std::max(1.0, control_rate_hz);
-        const double max_delta = stair_mode_omega_slew_rate_rad_s2_ * dt;
+        const double max_delta = omega_slew * dt;
         if (!stair_mode_omega_limiter_initialized_) {
             last_stair_mode_limited_omega_ = limited_omega;
             stair_mode_omega_limiter_initialized_ = true;
@@ -1114,8 +1561,8 @@ void StairController::applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd,
             "stair_mode omega limit: raw=%.3f -> limited=%.3f (limit=%.3f, slew=%.3f)",
             raw_omega,
             limited_omega,
-            stair_mode_omega_limit_rad_s_,
-            stair_mode_omega_slew_rate_rad_s2_);
+            omega_limit,
+            omega_slew);
     }
 }
 

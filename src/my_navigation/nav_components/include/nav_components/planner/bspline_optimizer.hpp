@@ -42,6 +42,11 @@ struct BSplineOptParams {
     double stair_align_up_post_dist = 0.6;
     double stair_align_down_pre_dist = 0.6;
     double stair_align_down_post_dist = 0.6;
+    // 飞坡独立弧长窗口（用于飞坡簇锚点/走廊）
+    double fly_slope_align_up_pre_dist = 0.6;
+    double fly_slope_align_up_post_dist = 0.6;
+    double fly_slope_align_down_pre_dist = 0.6;
+    double fly_slope_align_down_post_dist = 0.6;
     // 曲线采样级优化参数（Phase B）
     std::string stair_align_mode = "curve_sample"; // "control_point"(旧) or "curve_sample"(新)
     double stair_sample_ds = 0.08; // 曲线采样间距 (m)
@@ -77,6 +82,7 @@ struct StairAlignDiagnostics {
         Eigen::Vector2d center_pos = Eigen::Vector2d::Zero();
         Eigen::Vector2d normal = Eigen::Vector2d::Zero();
         bool is_uphill = true;
+        int terrain_type = 1;  // 1=stair, 2=fly_slope
         double window_arc_start = 0.0;
         double window_arc_end = 0.0;
         Eigen::Vector2d anchor_pre = Eigen::Vector2d::Zero();
@@ -105,6 +111,7 @@ struct StairAlignDiagnostics {
 // 可选输出: 梯度 (指向远离障碍物的方向)
 using ESDFCallback = std::function<double(double x, double y, double* grad_x, double* grad_y)>;
 using StairNormalCallback = std::function<bool(double x, double y, double* nx, double* ny)>;
+using TerrainTypeCallback = std::function<int(double x, double y)>;  // 0=none,1=stair,2=fly_slope
 
 class BSplineOptimizer {
 public:
@@ -114,6 +121,7 @@ public:
     void setParams(const BSplineOptParams& params) { params_ = params; }
     void setESDFCallback(ESDFCallback cb) { esdf_callback_ = cb; }
     void setStairNormalCallback(StairNormalCallback cb) { stair_normal_callback_ = cb; }
+    void setTerrainTypeCallback(TerrainTypeCallback cb) { terrain_type_callback_ = cb; }
     void setAstarStairHits(const std::vector<Eigen::Vector2d>& hits) {
         astar_stair_hits_ = hits;
     }
@@ -742,9 +750,11 @@ private:
         std::vector<int> stair_indices;
         std::vector<Eigen::Vector2d> stair_normals;
         std::vector<uint8_t> stair_is_uphill;
+    std::vector<int> stair_terrain_types;
         stair_indices.reserve(n_ctrl_);
         stair_normals.reserve(n_ctrl_);
         stair_is_uphill.reserve(n_ctrl_);
+    stair_terrain_types.reserve(n_ctrl_);
 
         for (int i = 1; i < n_ctrl_ - 1; ++i) {
             double nx = 0.0;
@@ -761,6 +771,14 @@ private:
             normal /= normal_norm;
             stair_indices.push_back(i);
             stair_normals.push_back(normal);
+            int terrain_type = 1;
+            if (terrain_type_callback_) {
+                const int tt = terrain_type_callback_(ctrl_pts(i, 0), ctrl_pts(i, 1));
+                if (tt == 2) {
+                    terrain_type = 2;
+                }
+            }
+            stair_terrain_types.push_back(terrain_type);
 
             Eigen::Vector2d p_prev = ctrl_pts.row(i - 1).head<2>();
             Eigen::Vector2d p_next = ctrl_pts.row(i + 1).head<2>();
@@ -783,13 +801,19 @@ private:
             arc_length[i] = arc_length[i - 1] + (p_curr - p_prev).norm();
         }
 
-        const double up_pre_dist = std::max(0.0, params_.stair_align_up_pre_dist);
-        const double up_post_dist = std::max(0.0, params_.stair_align_up_post_dist);
-        const double down_pre_dist = std::max(0.0, params_.stair_align_down_pre_dist);
-        const double down_post_dist = std::max(0.0, params_.stair_align_down_post_dist);
+        const double stair_up_pre_dist = std::max(0.0, params_.stair_align_up_pre_dist);
+        const double stair_up_post_dist = std::max(0.0, params_.stair_align_up_post_dist);
+        const double stair_down_pre_dist = std::max(0.0, params_.stair_align_down_pre_dist);
+        const double stair_down_post_dist = std::max(0.0, params_.stair_align_down_post_dist);
+        const double fly_up_pre_dist = std::max(0.0, params_.fly_slope_align_up_pre_dist);
+        const double fly_up_post_dist = std::max(0.0, params_.fly_slope_align_up_post_dist);
+        const double fly_down_pre_dist = std::max(0.0, params_.fly_slope_align_down_pre_dist);
+        const double fly_down_post_dist = std::max(0.0, params_.fly_slope_align_down_post_dist);
         const bool use_arc_window =
-            (up_pre_dist > 1e-6 || up_post_dist > 1e-6 ||
-             down_pre_dist > 1e-6 || down_post_dist > 1e-6);
+            (stair_up_pre_dist > 1e-6 || stair_up_post_dist > 1e-6 ||
+             stair_down_pre_dist > 1e-6 || stair_down_post_dist > 1e-6 ||
+             fly_up_pre_dist > 1e-6 || fly_up_post_dist > 1e-6 ||
+             fly_down_pre_dist > 1e-6 || fly_down_post_dist > 1e-6);
         const int expand_points = std::max(0, params_.stair_expand_points);
         std::vector<int> nearest_stair_index(n_ctrl_, -1);
         std::vector<double> nearest_stair_arc_dist(
@@ -799,8 +823,13 @@ private:
         for (size_t k = 0; k < stair_indices.size(); ++k) {
             int stair_idx = stair_indices[k];
             const bool is_uphill = (stair_is_uphill[k] != 0u);
-            const double pre_dist = is_uphill ? up_pre_dist : down_pre_dist;
-            const double post_dist = is_uphill ? up_post_dist : down_post_dist;
+            const bool is_fly = (stair_terrain_types[k] == 2);
+            const double pre_dist = is_uphill
+                ? (is_fly ? fly_up_pre_dist : stair_up_pre_dist)
+                : (is_fly ? fly_down_pre_dist : stair_down_pre_dist);
+            const double post_dist = is_uphill
+                ? (is_fly ? fly_up_post_dist : stair_up_post_dist)
+                : (is_fly ? fly_down_post_dist : stair_down_post_dist);
 
             int window_start = stair_idx;
             int window_end = stair_idx;
@@ -911,6 +940,7 @@ private:
             bool stair_hit = false;
             Eigen::Vector2d normal = Eigen::Vector2d::Zero();
             bool is_uphill = true;
+            int terrain_type = 1;
         };
 
         std::vector<CurveSample> samples;
@@ -937,6 +967,12 @@ private:
                     nv /= nn;
                     cs.stair_hit = true;
                     cs.normal = nv;
+                    if (terrain_type_callback_) {
+                        const int tt = terrain_type_callback_(cs.pos.x(), cs.pos.y());
+                        if (tt == 2) {
+                            cs.terrain_type = 2;
+                        }
+                    }
                     if (cs.tangent.norm() > 1e-6) {
                         cs.is_uphill = (cs.tangent.dot(nv) >= 0.0);
                     }
@@ -954,6 +990,7 @@ private:
             bool is_uphill = true;
             double center_arc = 0.0;
             Eigen::Vector2d center_pos = Eigen::Vector2d::Zero();
+            int terrain_type = 1;
         };
 
         std::vector<StairCluster> clusters;
@@ -962,6 +999,7 @@ private:
             Eigen::Vector2d cl_n = Eigen::Vector2d::Zero();
             Eigen::Vector2d cl_p = Eigen::Vector2d::Zero();
             int cl_up = 0, cl_cnt = 0;
+            int cl_stair = 0, cl_fly = 0;
 
             auto flush = [&](int end_i) {
                 if (cl_s >= 0 && cl_cnt >= 1) {
@@ -976,6 +1014,7 @@ private:
                     cl.center_arc = (samples[cl_s].arc_len
                                      + samples[end_i].arc_len) * 0.5;
                     cl.center_pos = cl_p / cl_cnt;
+                    cl.terrain_type = (cl_fly > cl_stair) ? 2 : 1;
                     clusters.push_back(cl);
                 }
                 cl_s = -1;
@@ -983,6 +1022,8 @@ private:
                 cl_p.setZero();
                 cl_up = 0;
                 cl_cnt = 0;
+                cl_stair = 0;
+                cl_fly = 0;
             };
 
             for (int i = 0; i < static_cast<int>(samples.size()); ++i) {
@@ -991,6 +1032,11 @@ private:
                     cl_n += samples[i].normal;
                     cl_p += samples[i].pos;
                     if (samples[i].is_uphill) cl_up++;
+                    if (samples[i].terrain_type == 2) {
+                        cl_fly++;
+                    } else {
+                        cl_stair++;
+                    }
                     cl_cnt++;
                 } else {
                     flush(i - 1);
@@ -1002,10 +1048,14 @@ private:
         if (clusters.empty()) return;
 
         // Step 3: 定义作用窗、计算锚点、将采样点分配到最近的台阶簇
-        const double up_pre = std::max(0.0, params_.stair_align_up_pre_dist);
-        const double up_post = std::max(0.0, params_.stair_align_up_post_dist);
-        const double down_pre = std::max(0.0, params_.stair_align_down_pre_dist);
-        const double down_post = std::max(0.0, params_.stair_align_down_post_dist);
+    const double stair_up_pre = std::max(0.0, params_.stair_align_up_pre_dist);
+    const double stair_up_post = std::max(0.0, params_.stair_align_up_post_dist);
+    const double stair_down_pre = std::max(0.0, params_.stair_align_down_pre_dist);
+    const double stair_down_post = std::max(0.0, params_.stair_align_down_post_dist);
+    const double fly_up_pre = std::max(0.0, params_.fly_slope_align_up_pre_dist);
+    const double fly_up_post = std::max(0.0, params_.fly_slope_align_up_post_dist);
+    const double fly_down_pre = std::max(0.0, params_.fly_slope_align_down_pre_dist);
+    const double fly_down_post = std::max(0.0, params_.fly_slope_align_down_post_dist);
 
         struct ClusterAnchorInfo {
             Eigen::Vector2d anchor_pre, anchor_mid, anchor_post;
@@ -1020,8 +1070,13 @@ private:
 
         for (int ci = 0; ci < static_cast<int>(clusters.size()); ++ci) {
             const auto& cl = clusters[ci];
-            double pre  = cl.is_uphill ? up_pre  : down_pre;
-            double post = cl.is_uphill ? up_post : down_post;
+            const bool is_fly = (cl.terrain_type == 2);
+            double pre  = cl.is_uphill
+                ? (is_fly ? fly_up_pre : stair_up_pre)
+                : (is_fly ? fly_down_pre : stair_down_pre);
+            double post = cl.is_uphill
+                ? (is_fly ? fly_up_post : stair_up_post)
+                : (is_fly ? fly_down_post : stair_down_post);
             double w_start = cl.center_arc - pre;
             double w_end   = cl.center_arc + post;
 
@@ -1117,6 +1172,7 @@ private:
             ci_diag.center_pos = center_pos;
             ci_diag.normal = cl.normal;
             ci_diag.is_uphill = cl.is_uphill;
+            ci_diag.terrain_type = cl.terrain_type;
             ci_diag.window_arc_start = w_start;
             ci_diag.window_arc_end = w_end;
             ci_diag.anchor_pre = anc.anchor_pre;
@@ -1331,6 +1387,7 @@ private:
     BSplineOptParams params_;
     ESDFCallback esdf_callback_;
     StairNormalCallback stair_normal_callback_;
+    TerrainTypeCallback terrain_type_callback_;
 
     
     int order_ = 3;
