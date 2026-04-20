@@ -7,6 +7,8 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <queue>
 #include <string>
+#include <limits>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include "nav_components/planner/path_smoother.hpp"
@@ -38,6 +40,14 @@ public:
     void clearCache();  // 清空缓存路径（强制重规划时使用）
 
 private:
+    struct AstarShapeStat {
+        bool found = false;
+        double min_dist = std::numeric_limits<double>::max();
+        double w_sum = 0.0;
+        Eigen::Vector2d n_sum = Eigen::Vector2d::Zero();
+        Eigen::Vector2d c_sum = Eigen::Vector2d::Zero();
+    };
+
     // A*节点
     struct Node {
         int x, y;
@@ -68,6 +78,16 @@ private:
         const std_msgs::msg::Header& header,
         nav_msgs::msg::Path& constrained_path,
         nav_msgs::msg::Path& soft_seed_path,
+        int* fail_best_x = nullptr,
+        int* fail_best_y = nullptr,
+        bool* compare_log_printed = nullptr);
+
+    // 单次搜索的分段硬约束 A*: 按 targets 顺序依次经过约束点
+    bool runAstarPhasedHardConstraint(
+        int sx, int sy,
+        const std::vector<std::pair<int, int>>& targets,
+        const std_msgs::msg::Header& header,
+        nav_msgs::msg::Path& path,
         int* fail_best_x = nullptr,
         int* fail_best_y = nullptr);
 
@@ -114,6 +134,7 @@ private:
     double stair_hard_dist_delta_m_ = 0.0;  // 硬约束 pre/post 距离相对 B-spline 参数的偏移量
     std::string fly_slope_constraint_mode_ = "soft";  // soft/hard
     double fly_slope_hard_dist_delta_m_ = 0.0;  // 飞坡硬约束 pre/post 距离偏移量
+    bool hard_constraint_compare_log_once_ = false;  // 仅一次输出旧三段 vs 新分段估计
 
     // A* 台阶感知形态参数（不含外切奖励）
     bool astar_stair_shape_enable_ = false;
@@ -145,6 +166,10 @@ private:
     int astar_shape_locked_terrain_type_ = 0;  // 0:none, 1:stair, 2:fly_slope
     Eigen::Vector2d astar_stair_locked_center_ = Eigen::Vector2d::Zero();
     Eigen::Vector2d astar_stair_locked_normal_ = Eigen::Vector2d::Zero();
+    // A* 单次规划缓存：减少形态代价重复采样
+    std::unordered_map<uint64_t, double> astar_shape_edge_cost_cache_;
+    std::unordered_map<int, AstarShapeStat> astar_stair_stat_cache_;
+    std::unordered_map<int, AstarShapeStat> astar_fly_slope_stat_cache_;
 
     // B-spline 锚点与 A* 台阶命中点对齐
     bool use_astar_stair_anchors_ = true;

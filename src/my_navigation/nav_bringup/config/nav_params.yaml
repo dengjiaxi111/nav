@@ -101,7 +101,7 @@ nav_server:
       fly_slope_enable_oneway_low_to_high: true
 
     # === 台阶语义调试可视化 ===
-      publish_stair_debug_markers: true
+      publish_stair_debug_markers: false
       debug_marker_max_segments: 1500
 
       # === 台阶动作状态机（阶段B，不含冷却） ===
@@ -116,7 +116,7 @@ nav_server:
       stair_mode_trigger_distance_m: 1.5
       stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
-      stair_mode_entry_heading_error_max_rad: 0.4  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
+      stair_mode_entry_he ading_error_max_rad: 0.4  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
 
     # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       stair_mode_release_grace_cycles: 2
@@ -240,7 +240,7 @@ nav_server:
       astar_stair_lock_cluster_center: true  # 单次A*内锁定同一个台阶簇中心
       # A* 飞坡形态代价（与台阶独立，初值对齐）
       astar_fly_slope_shape_enable: true
-      astar_fly_slope_search_radius_cells: 4
+      astar_fly_slope_search_radius_cells: 2
       astar_fly_slope_trigger_dist_m: 1.5
       astar_fly_slope_tangent_penalty_weight: 30.0
       astar_fly_slope_centerline_penalty_weight: 1.0
@@ -260,8 +260,9 @@ nav_server:
       # - hard: 强制经过飞坡中心法向 pre/post 约束点（结构性约束）
       fly_slope_constraint_mode: "hard"  # 飞坡约束模式
       fly_slope_hard_dist_delta_m: 0.1    # 仅 hard 生效: 对 astar_fly_slope_*_pre/post_dist_m 的统一偏移量(米)
-                # 例如 -0.1 且 astar_fly_slope_up_pre_dist_m=1.0 时，硬约束 pre 点距离变为 0.9m
-      publish_failure_debug_markers: true  # 发布规划失败点到 /debug/planner_failures
+      # 例如 -0.1 且 astar_fly_slope_up_pre_dist_m=1.0 时，硬约束 pre 点距离变为 0.9m
+      hard_constraint_compare_log_once: false  # 开启后每次plan请求最多打印一次：旧三段估计 vs 新分段A*估计
+      publish_failure_debug_markers: false  # 发布规划失败点到 /debug/planner_failures
       failure_marker_scale: 0.2          # 失败点球体尺寸(米)
       
       # B样条优化）

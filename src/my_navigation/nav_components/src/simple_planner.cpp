@@ -39,6 +39,8 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.fly_slope_constraint_mode", std::string("soft"));
     fly_slope_hard_dist_delta_m_ =
         node_->declare_parameter("planner.fly_slope_hard_dist_delta_m", 0.0);
+    hard_constraint_compare_log_once_ =
+        node_->declare_parameter("planner.hard_constraint_compare_log_once", false);
     publish_failure_debug_markers_ =
         node_->declare_parameter("planner.publish_failure_debug_markers", true);
     failure_marker_scale_ =
@@ -341,9 +343,22 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
 
     const Eigen::Vector2d p_from = cellToWorld(from_x, from_y);
     const Eigen::Vector2d p_to = cellToWorld(to_x, to_y);
+
+    // 缓存 key: (from -> to) 有向边
+    const uint64_t edge_key =
+        (static_cast<uint64_t>(static_cast<uint32_t>(from_x & 0xFFFF)) << 48) |
+        (static_cast<uint64_t>(static_cast<uint32_t>(from_y & 0xFFFF)) << 32) |
+        (static_cast<uint64_t>(static_cast<uint32_t>(to_x & 0xFFFF)) << 16) |
+        static_cast<uint64_t>(static_cast<uint32_t>(to_y & 0xFFFF));
+    auto edge_it = astar_shape_edge_cost_cache_.find(edge_key);
+    if (edge_it != astar_shape_edge_cost_cache_.end()) {
+        return edge_it->second;
+    }
+
     Eigen::Vector2d move = p_to - p_from;
     double mv_norm = move.norm();
     if (mv_norm < 1e-6) {
+        astar_shape_edge_cost_cache_[edge_key] = 0.0;
         return 0.0;
     }
     Eigen::Vector2d move_dir = move / mv_norm;
@@ -361,15 +376,18 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
         double down_post_dist_m;
     };
 
-    struct ShapeStat {
-        bool found{false};
-        double min_dist{std::numeric_limits<double>::max()};
-        double w_sum{0.0};
-        Eigen::Vector2d n_sum{Eigen::Vector2d::Zero()};
-        Eigen::Vector2d c_sum{Eigen::Vector2d::Zero()};
-    };
+    auto sampleTerrain = [&](const ShapeParams& params,
+                             auto normal_getter,
+                             std::unordered_map<int, AstarShapeStat>& cache,
+                             AstarShapeStat& stat) {
+        const int to_idx = to_y * width_ + to_x;
+        auto cache_it = cache.find(to_idx);
+        if (cache_it != cache.end()) {
+            stat = cache_it->second;
+            return;
+        }
 
-    auto sampleTerrain = [&](const ShapeParams& params, auto normal_getter, ShapeStat& stat) {
+        AstarShapeStat computed;
         const int r = std::max(1, params.search_radius_cells);
         for (int dy = -r; dy <= r; ++dy) {
             for (int dx = -r; dx <= r; ++dx) {
@@ -390,14 +408,17 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
                 }
                 n_local /= nn_local;
                 double d = (p - p_to).norm();
-                stat.min_dist = std::min(stat.min_dist, d);
+                computed.min_dist = std::min(computed.min_dist, d);
                 double w = 1.0 / (d * d + 1e-4);
-                stat.w_sum += w;
-                stat.n_sum += w * n_local;
-                stat.c_sum += w * p;
-                stat.found = true;
+                computed.w_sum += w;
+                computed.n_sum += w * n_local;
+                computed.c_sum += w * p;
+                computed.found = true;
             }
         }
+
+        cache.emplace(to_idx, computed);
+        stat = computed;
     };
 
     const ShapeParams stair_params{
@@ -425,13 +446,14 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
         astar_fly_slope_down_post_dist_m_,
     };
 
-    ShapeStat stair_stat;
-    ShapeStat fly_stat;
+    AstarShapeStat stair_stat;
+    AstarShapeStat fly_stat;
     if (astar_stair_shape_enable_) {
         sampleTerrain(stair_params,
             [this](double x, double y, double& nx, double& ny) {
                 return map_manager_->getStairTraverseNormal(x, y, nx, ny);
             },
+            astar_stair_stat_cache_,
             stair_stat);
     }
     if (astar_fly_slope_shape_enable_) {
@@ -439,11 +461,12 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
             [this](double x, double y, double& nx, double& ny) {
                 return map_manager_->getFlySlopeTraverseNormal(x, y, nx, ny);
             },
+            astar_fly_slope_stat_cache_,
             fly_stat);
     }
 
     const ShapeParams* selected = nullptr;
-    ShapeStat selected_stat;
+    AstarShapeStat selected_stat;
     if (astar_shape_locked_terrain_type_ == 1 && stair_stat.found) {
         selected = &stair_params;
         selected_stat = stair_stat;
@@ -465,16 +488,19 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
         selected = &fly_params;
         selected_stat = fly_stat;
     } else {
+        astar_shape_edge_cost_cache_[edge_key] = 0.0;
         return 0.0;
     }
 
     if (!selected || selected_stat.w_sum < 1e-9) {
+        astar_shape_edge_cost_cache_[edge_key] = 0.0;
         return 0.0;
     }
 
     Eigen::Vector2d n = selected_stat.n_sum;
     double nn = n.norm();
     if (nn < 1e-6) {
+        astar_shape_edge_cost_cache_[edge_key] = 0.0;
         return 0.0;
     }
     n /= nn;
@@ -509,11 +535,13 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
     const double min_required_trigger = std::max(pre, post);
     const double effective_trigger = std::max(selected->trigger_dist_m, min_required_trigger);
     if (selected_stat.min_dist > effective_trigger) {
+        astar_shape_edge_cost_cache_[edge_key] = 0.0;
         return 0.0;
     }
 
     // 核心窗口：长度直接来自 stair_align_*_pre/post，与 B-spline 一致
     if (s_n < -pre - 1e-6 || s_n > post + 1e-6) {
+        astar_shape_edge_cost_cache_[edge_key] = 0.0;
         return 0.0;
     }
 
@@ -525,7 +553,9 @@ double SimplePlanner::computeStairShapeCost(int from_x, int from_y,
     double u = d_t / denom;
     double c_center = selected->centerline_penalty_weight * u * u;
 
-    return c_tan + c_center;
+    const double shape_cost = c_tan + c_center;
+    astar_shape_edge_cost_cache_[edge_key] = shape_cost;
+    return shape_cost;
 }
 
 bool SimplePlanner::findNearestFreeCell(int cx, int cy, int& fx, int& fy, int max_radius) {
@@ -655,6 +685,7 @@ bool SimplePlanner::plan(
     const int original_threshold = obstacle_threshold_;
     int attempts_done = 0;
     
+    bool hard_compare_logged_this_request = false;
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
         attempts_done++;
         int current_threshold = std::clamp(original_threshold - attempt * threshold_step, 1, 100);
@@ -665,13 +696,13 @@ bool SimplePlanner::plan(
         nav_msgs::msg::Path soft_seed_path;
         int fail_best_x = sx;
         int fail_best_y = sy;
-        bool astar_success = false;
+    bool astar_success = false;
         const bool enable_stair_hard = (stair_constraint_mode_ == "hard");
         const bool enable_fly_hard = (fly_slope_constraint_mode_ == "hard");
         if (enable_stair_hard || enable_fly_hard) {
             astar_success = runAstarWithHardTerrainConstraint(
                 sx, sy, gx, gy, goal.header, raw_path, soft_seed_path,
-                &fail_best_x, &fail_best_y);
+        &fail_best_x, &fail_best_y, &hard_compare_logged_this_request);
             if (!astar_success && !soft_seed_path.poses.empty()) {
                 raw_path = soft_seed_path;
                 astar_success = true;
@@ -807,6 +838,9 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     astar_shape_locked_terrain_type_ = 0;
     astar_stair_locked_center_.setZero();
     astar_stair_locked_normal_.setZero();
+    astar_shape_edge_cost_cache_.clear();
+    astar_stair_stat_cache_.clear();
+    astar_fly_slope_stat_cache_.clear();
 
     auto cmp = [](Node* a, Node* b) { return a->f() > b->f(); };
     std::priority_queue<Node*, std::vector<Node*>, decltype(cmp)> open(cmp);
@@ -930,13 +964,216 @@ bool SimplePlanner::runAstar(int sx, int sy, int gx, int gy,
     return true;
 }
 
+bool SimplePlanner::runAstarPhasedHardConstraint(
+    int sx, int sy,
+    const std::vector<std::pair<int, int>>& targets,
+    const std_msgs::msg::Header& header,
+    nav_msgs::msg::Path& path,
+    int* fail_best_x,
+    int* fail_best_y) {
+    path = nav_msgs::msg::Path();
+    if (targets.empty()) {
+        return false;
+    }
+
+    struct PhaseNode {
+        int x = 0;
+        int y = 0;
+        int phase = 0;  // 已完成 [0, phase) 的 target，当前要到达 target[phase]
+        double g = 0.0;
+        double h = 0.0;
+        PhaseNode* parent = nullptr;
+        double f() const { return g + h; }
+    };
+
+    auto remainingHeuristic = [&targets](int x, int y, int phase) -> double {
+        if (phase >= static_cast<int>(targets.size())) {
+            return 0.0;
+        }
+        auto dist = [](double x1, double y1, double x2, double y2) {
+            return std::hypot(x2 - x1, y2 - y1);
+        };
+        double h = dist(x, y, targets[phase].first, targets[phase].second);
+        for (int i = phase; i + 1 < static_cast<int>(targets.size()); ++i) {
+            h += dist(targets[i].first, targets[i].second,
+                      targets[i + 1].first, targets[i + 1].second);
+        }
+        return h;
+    };
+
+    auto encodeStateIndex = [this](int x, int y, int phase) -> int {
+        return phase * (width_ * height_) + y * width_ + x;
+    };
+
+    // 每次搜索开始前重置簇锁定状态与形态代价缓存
+    astar_stair_cluster_locked_ = false;
+    astar_shape_locked_terrain_type_ = 0;
+    astar_stair_locked_center_.setZero();
+    astar_stair_locked_normal_.setZero();
+    astar_shape_edge_cost_cache_.clear();
+    astar_stair_stat_cache_.clear();
+    astar_fly_slope_stat_cache_.clear();
+
+    int start_phase = 0;
+    while (start_phase < static_cast<int>(targets.size()) &&
+           sx == targets[start_phase].first && sy == targets[start_phase].second) {
+        start_phase++;
+    }
+
+    if (start_phase >= static_cast<int>(targets.size())) {
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = header;
+        mapToWorld(sx, sy, pose.pose.position.x, pose.pose.position.y);
+        pose.pose.orientation.w = 1.0;
+        path.header = header;
+        path.poses = {pose};
+        return true;
+    }
+
+    auto cmp = [](PhaseNode* a, PhaseNode* b) { return a->f() > b->f(); };
+    std::priority_queue<PhaseNode*, std::vector<PhaseNode*>, decltype(cmp)> open(cmp);
+    std::vector<std::unique_ptr<PhaseNode>> all_nodes;
+
+    const int state_layers = static_cast<int>(targets.size()) + 1;
+    const int total_states = state_layers * width_ * height_;
+    std::vector<bool> closed(total_states, false);
+    std::vector<double> best_g(total_states, std::numeric_limits<double>::infinity());
+    std::vector<PhaseNode*> best_node(total_states, nullptr);
+
+    auto start_node = std::make_unique<PhaseNode>();
+    start_node->x = sx;
+    start_node->y = sy;
+    start_node->phase = start_phase;
+    start_node->g = 0.0;
+    start_node->h = remainingHeuristic(sx, sy, start_phase);
+    const int sidx = encodeStateIndex(sx, sy, start_phase);
+    best_g[sidx] = 0.0;
+    best_node[sidx] = start_node.get();
+    open.push(start_node.get());
+    all_nodes.push_back(std::move(start_node));
+
+    const int dx[] = {1, 1, 0, -1, -1, -1, 0, 1};
+    const int dy[] = {0, 1, 1, 1, 0, -1, -1, -1};
+    const double move_cost[] = {1, 1.414, 1, 1.414, 1, 1.414, 1, 1.414};
+
+    PhaseNode* goal_node = nullptr;
+    PhaseNode* closest_node = nullptr;
+    double closest_h = std::numeric_limits<double>::infinity();
+
+    int iterations = 0;
+    const int auto_max_iter = std::min(width_ * height_ * 4, 2000000);
+    const int max_iter = (astar_max_iterations_ > 0) ? astar_max_iterations_ : auto_max_iter;
+
+    while (!open.empty() && iterations++ < max_iter) {
+        PhaseNode* curr = open.top();
+        open.pop();
+
+        if (curr->h < closest_h) {
+            closest_h = curr->h;
+            closest_node = curr;
+        }
+
+        if (curr->phase >= static_cast<int>(targets.size())) {
+            goal_node = curr;
+            break;
+        }
+
+        const int cidx = encodeStateIndex(curr->x, curr->y, curr->phase);
+        if (closed[cidx]) {
+            continue;
+        }
+        closed[cidx] = true;
+
+        for (int i = 0; i < 8; ++i) {
+            const int nx = curr->x + dx[i];
+            const int ny = curr->y + dy[i];
+
+            if (dx[i] != 0 && dy[i] != 0) {
+                const int ortho_x = curr->x + dx[i];
+                const int ortho_y = curr->y + dy[i];
+                if (!isValid(ortho_x, curr->y) || !isValid(curr->x, ortho_y)) {
+                    continue;
+                }
+            }
+
+            if (map_manager_ && !map_manager_->isTransitionAllowed(curr->x, curr->y, nx, ny)) {
+                continue;
+            }
+
+            if (!isValid(nx, ny)) {
+                continue;
+            }
+
+            int next_phase = curr->phase;
+            while (next_phase < static_cast<int>(targets.size()) &&
+                   nx == targets[next_phase].first && ny == targets[next_phase].second) {
+                next_phase++;
+            }
+
+            const int nidx = encodeStateIndex(nx, ny, next_phase);
+            if (closed[nidx]) {
+                continue;
+            }
+
+            const double cell_cost = getCost(nx, ny);
+            const double stair_shape_cost = computeStairShapeCost(curr->x, curr->y, nx, ny);
+            const double total_cost = move_cost[i] + cost_weight_ * cell_cost + stair_shape_cost;
+            const double tentative_g = curr->g + total_cost;
+
+            if (tentative_g + 1e-9 >= best_g[nidx]) {
+                continue;
+            }
+
+            auto new_node = std::make_unique<PhaseNode>();
+            new_node->x = nx;
+            new_node->y = ny;
+            new_node->phase = next_phase;
+            new_node->g = tentative_g;
+            new_node->h = remainingHeuristic(nx, ny, next_phase);
+            new_node->parent = curr;
+
+            best_g[nidx] = tentative_g;
+            best_node[nidx] = new_node.get();
+            open.push(new_node.get());
+            all_nodes.push_back(std::move(new_node));
+        }
+    }
+
+    if (!goal_node) {
+        if (closest_node) {
+            if (fail_best_x) {
+                *fail_best_x = closest_node->x;
+            }
+            if (fail_best_y) {
+                *fail_best_y = closest_node->y;
+            }
+        }
+        return false;
+    }
+
+    std::vector<geometry_msgs::msg::PoseStamped> waypoints;
+    for (PhaseNode* n = goal_node; n != nullptr; n = n->parent) {
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = header;
+        mapToWorld(n->x, n->y, pose.pose.position.x, pose.pose.position.y);
+        pose.pose.orientation.w = 1.0;
+        waypoints.push_back(pose);
+    }
+    std::reverse(waypoints.begin(), waypoints.end());
+
+    path.header = header;
+    path.poses = std::move(waypoints);
+    return true;
+}
+
 bool SimplePlanner::runAstarWithHardTerrainConstraint(
     int sx, int sy, int gx, int gy,
     const std_msgs::msg::Header& header,
     nav_msgs::msg::Path& constrained_path,
     nav_msgs::msg::Path& soft_seed_path,
     int* fail_best_x,
-    int* fail_best_y) {
+    int* fail_best_y,
+    bool* compare_log_printed) {
     constrained_path = nav_msgs::msg::Path();
     soft_seed_path = nav_msgs::msg::Path();
 
@@ -1075,48 +1312,62 @@ bool SimplePlanner::runAstarWithHardTerrainConstraint(
         return false;
     }
 
-    const std::vector<std::pair<int, int>> segment_pts = {
-        {sx, sy}, {pre_x, pre_y}, {post_x, post_y}, {gx, gy}};
+    std::vector<std::pair<int, int>> targets;
+    targets.reserve(3);
+    targets.emplace_back(pre_x, pre_y);
+    targets.emplace_back(post_x, post_y);
+    targets.emplace_back(gx, gy);
 
-    nav_msgs::msg::Path stitched;
-    stitched.header = header;
-
-    for (size_t i = 0; i + 1 < segment_pts.size(); ++i) {
-        const int from_x = segment_pts[i].first;
-        const int from_y = segment_pts[i].second;
-        const int to_x = segment_pts[i + 1].first;
-        const int to_y = segment_pts[i + 1].second;
-
-        if (from_x == to_x && from_y == to_y) {
-            continue;
-        }
-
-        nav_msgs::msg::Path seg;
-        int seg_fail_x = from_x;
-        int seg_fail_y = from_y;
-        if (!runAstar(from_x, from_y, to_x, to_y, header, seg, &seg_fail_x, &seg_fail_y)) {
-            if (fail_best_x) *fail_best_x = seg_fail_x;
-            if (fail_best_y) *fail_best_y = seg_fail_y;
-            return false;
-        }
-
-        if (seg.poses.empty()) {
-            continue;
-        }
-
-        if (stitched.poses.empty()) {
-            stitched.poses = seg.poses;
-        } else {
-            stitched.poses.insert(stitched.poses.end(), seg.poses.begin() + 1, seg.poses.end());
-        }
+    nav_msgs::msg::Path phased_path;
+    int phased_fail_x = sx;
+    int phased_fail_y = sy;
+    if (!runAstarPhasedHardConstraint(
+            sx, sy, targets, header, phased_path, &phased_fail_x, &phased_fail_y)) {
+        if (fail_best_x) *fail_best_x = phased_fail_x;
+        if (fail_best_y) *fail_best_y = phased_fail_y;
+        return false;
     }
 
-    if (stitched.poses.empty()) {
+    if (phased_path.poses.empty()) {
         constrained_path = soft_seed_path;
         return true;
     }
 
-    constrained_path = stitched;
+    constrained_path = phased_path;
+
+    if (hard_constraint_compare_log_once_ && compare_log_printed && !(*compare_log_printed)) {
+        auto estimatePathLength = [](const nav_msgs::msg::Path& p) -> double {
+            if (p.poses.size() < 2) {
+                return 0.0;
+            }
+            double len = 0.0;
+            for (size_t i = 1; i < p.poses.size(); ++i) {
+                const auto& a = p.poses[i - 1].pose.position;
+                const auto& b = p.poses[i].pose.position;
+                len += std::hypot(b.x - a.x, b.y - a.y);
+            }
+            return len;
+        };
+
+        double s_wx = 0.0, s_wy = 0.0, g_wx = 0.0, g_wy = 0.0;
+        mapToWorld(sx, sy, s_wx, s_wy);
+        mapToWorld(gx, gy, g_wx, g_wy);
+
+        const double old_seg_est_m =
+            std::hypot(pre_pt.x() - s_wx, pre_pt.y() - s_wy) +
+            std::hypot(post_pt.x() - pre_pt.x(), post_pt.y() - pre_pt.y()) +
+            std::hypot(g_wx - post_pt.x(), g_wy - post_pt.y());
+        const double new_seg_est_m = estimatePathLength(constrained_path);
+
+        RCLCPP_INFO(node_->get_logger(),
+            "hard约束分段对比(单次): old_3seg_est=%.3fm, new_phased_est=%.3fm, diff=%.3fm, terrain=%s",
+            old_seg_est_m,
+            new_seg_est_m,
+            new_seg_est_m - old_seg_est_m,
+            (terrain_type == 1) ? "stair" : "fly_slope");
+        *compare_log_printed = true;
+    }
+
     const char* terrain_name = (terrain_type == 1) ? "stair" : "fly_slope";
     RCLCPP_INFO(node_->get_logger(),
         "硬约束路径生成: terrain=%s, dir=%s, pre=%.2fm, post=%.2fm, delta=%.2fm, soft=%zu, hard=%zu",
