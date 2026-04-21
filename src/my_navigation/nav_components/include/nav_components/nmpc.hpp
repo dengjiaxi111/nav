@@ -157,6 +157,7 @@ private:
         double max_linear_vel = 2.0;
         double max_angular_vel = 2.0;
         double max_linear_accel = 2.0;
+        double max_linear_decel = 2.0;
         double max_angular_accel = 3.0;
         bool allow_reverse = false;
 
@@ -188,22 +189,9 @@ private:
         double horizon_kappa_scale = 0.5;  // 曲率对 horizon 的压缩系数
         double horizon_min_length = 0.4;   // horizon 最小值 (米)
 
-        // 终点减速与起步对齐（参考轨迹整形）
-        double goal_decel_start_dist = 1.5;      // 距终点开始减速距离 (m)
+    // 终点减速与起步对齐（参考轨迹整形）
         double goal_crawl_speed = 0.15;          // 终点前爬行速度下限 (m/s)
-        bool enable_goal_speed_guard = true;     // 启用近终点速度安全包络
-        double goal_speed_guard_dist_scale = 1.5; // 包络生效距离倍率(相对 goal_decel_start_dist)
-        double goal_speed_guard_decel_scale = 1.2; // 安全刹车减速度倍率(相对 max_linear_accel)
-        double goal_speed_guard_abs_floor = 0.5; // 安全刹车最小减速度(m/s^2)
         double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
-        bool enable_heading_slowdown = true;     // 是否启用航向误差触发的速度缩减
-        double heading_slowdown_start = 0.2;     // 航向误差大于该阈值开始降速 (rad)
-        double heading_slowdown_min_factor = 0.1; // 航向降速最小倍率
-
-        // 高曲率路段速度衰减（参考速度整形）
-        bool enable_curvature_speed_decay = true;   // 启用曲率速度衰减
-        double curvature_decay_kappa_ref = 0.8;     // 曲率参考值 (1/m)
-        double curvature_decay_min_factor = 0.45;   // 曲率衰减最小倍率
 
     // 速度规划（第一批参数）
     bool speed_profile_enable = true;
@@ -218,9 +206,6 @@ private:
         // alpha=1.0 为纯闭环里程计；alpha=0.0 为纯指令前馈
         double odom_feedback_alpha = 0.0;
 
-        // 横向误差自适应速度缩减 (图片策略)
-        double lateral_error_threshold = 0.15;  // 横向误差阈值 (m)，超过此值启用速度缩减
-
         // 近端权重递增
         double near_weight_multiplier = 2.0;  // 前 1/4 时域权重倍数
 
@@ -230,11 +215,6 @@ private:
         // 底层闭环速度一阶滞后模型时间常数（秒）
         double vel_lag_tau = 0.6;
         double omega_lag_tau = 0.6;
-
-        // 输出端前馈补偿：v_out = v_cmd + vel_ff_time * a_cmd
-        //                 w_out = w_cmd + omega_ff_time * alpha_cmd
-        double vel_ff_time = 0.0;
-        double omega_ff_time = 0.0;
     } params_;
     
     // ========== ROS 接口 ==========
@@ -260,9 +240,6 @@ private:
         int consecutive_failures = 0;
     } stats_;
 
-    // 终点减速锁存：进入减速区后只允许参考速度上限递减，避免速度回跳
-    bool goal_brake_latched_ = false;
-    double goal_brake_speed_cap_ = 1e9;
     bool pivot_turn_active_ = false;
     double pivot_turn_heading_error_ = 0.0;
     bool startup_pivot_phase_active_ = false;
