@@ -153,9 +153,10 @@ namespace small_point_lio {
             auto dt_state = static_cast<state::value_type>(timestamp - time_predict_state_last);
             if (dt_state > 0) [[likely]] {
                 time_predict_state_last = timestamp;
+                const auto rotation_prev = x.rotation;
                 x.position += x.velocity * dt_state;
                 x.rotation *= exp<state::value_type>(x.omg * dt_state);
-                x.velocity += (x.rotation * x.acceleration + x.gravity) * dt_state;
+                x.velocity += (rotation_prev * x.acceleration + x.gravity) * dt_state;
             }
         }
 

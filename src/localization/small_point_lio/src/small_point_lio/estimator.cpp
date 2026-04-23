@@ -55,11 +55,11 @@ namespace small_point_lio {
         // get closest point
         Eigen::Matrix<state::value_type, 3, 1> point_imu_frame;
         if (parameters->extrinsic_est_en) {
-            point_imu_frame = kf.x.offset_R_L_I * point_lidar_frame.cast<state::value_type>() + kf.x.offset_T_L_I;
+            point_imu_frame = s.offset_R_L_I * point_lidar_frame.cast<state::value_type>() + s.offset_T_L_I;
         } else {
             point_imu_frame = Lidar_R_wrt_IMU * point_lidar_frame.cast<state::value_type>() + Lidar_T_wrt_IMU;
         }
-        point_odom_frame = (kf.x.rotation * point_imu_frame + kf.x.position).cast<float>();
+        point_odom_frame = (s.rotation * point_imu_frame + s.position).cast<float>();
         ivox->get_closest_point(point_odom_frame, nearest_points, NUM_MATCH_POINTS);
         if (nearest_points.size() != NUM_MATCH_POINTS) {
             return;
@@ -193,8 +193,8 @@ namespace small_point_lio {
         double last_time = batch_points_timestamps.back();
         
         // 获取当前速度和角速度（在IMU坐标系下）
-        Eigen::Vector3f velocity_imu = (kf.x.rotation * kf.x.velocity).cast<float>();
-        Eigen::Vector3f angular_velocity_imu = kf.x.omg.cast<float>();
+        Eigen::Vector3f velocity_imu = (s.rotation.transpose() * s.velocity).cast<float>();
+        Eigen::Vector3f angular_velocity_imu = s.omg.cast<float>();
         
         // 预分配存储空间
         batch_points_undistorted.clear();
@@ -220,13 +220,13 @@ namespace small_point_lio {
             // 2. 变换到IMU坐标系
             Eigen::Matrix<state::value_type, 3, 1> point_imu_frame;
             if (parameters->extrinsic_est_en) {
-                point_imu_frame = kf.x.offset_R_L_I * point_undistorted.cast<state::value_type>() + kf.x.offset_T_L_I;
+                point_imu_frame = s.offset_R_L_I * point_undistorted.cast<state::value_type>() + s.offset_T_L_I;
             } else {
                 point_imu_frame = Lidar_R_wrt_IMU * point_undistorted.cast<state::value_type>() + Lidar_T_wrt_IMU;
             }
             
             // 3. 变换到odom坐标系
-            Eigen::Vector3f point_odom = (kf.x.rotation * point_imu_frame + kf.x.position).cast<float>();
+            Eigen::Vector3f point_odom = (s.rotation * point_imu_frame + s.position).cast<float>();
             batch_points_odom_frame.push_back(point_odom);
             
             // 4. 在地图中搜索最近邻点
