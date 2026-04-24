@@ -328,15 +328,14 @@ namespace small_point_lio {
                         }
                         
                         // Batch更新
-                        bool update_success;
                         {
                             static AccumulativeTimer acc_timer("B3.update_point_batch", 10000, parameters.enable_performance_debug);
                             ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
-                            update_success = estimator.kf.update_point_batch();
+                            estimator.kf.update_point_batch();
                         }
                         
-                        // 将Batch中的点添加到地图（使用去畸变后的点）
-                        if (update_success) {
+                        // 将Batch中能完成坐标转换的点添加到地图
+                        if (!estimator.batch_points_odom_frame.empty()) {
                             static AccumulativeTimer acc_timer("B4.map_add_points", 10000, parameters.enable_performance_debug);
                             ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
                             for (const auto &pt_odom : estimator.batch_points_odom_frame) {

@@ -189,6 +189,9 @@ namespace small_point_lio {
             }
             Eigen::Matrix<state::value_type, state::DIM, 1> K = PHT / temp;
             x.plus(K * measurement_result.z);
+            // TODO: After boxplus on SO(3) states, remap P with the reset Jacobian
+            // (e.g. A_matrix(dx_rot)^T for rotation / extrinsic rotation) to keep the
+            // covariance consistent with the new linearization point, as IKFoM does.
             P = P - K * measurement_result.H * P.template block<12, state::DIM>(0, 0);
             return true;
         }
@@ -226,6 +229,8 @@ namespace small_point_lio {
             }
             Eigen::Matrix<state::value_type, state::DIM, 6> K = PHT * ldlt.solve(Eigen::Matrix<state::value_type, 6, 6>::Identity());
             x.plus(K * z);
+            // TODO: After boxplus on SO(3) states, remap P with the reset Jacobian
+            // so the covariance stays in the tangent space of the updated nominal state.
             P -= K * HP;
             return true;
         }
@@ -271,6 +276,8 @@ namespace small_point_lio {
             // 状态更新：x = x ⊞ K*z
             Eigen::Matrix<state::value_type, state::DIM, 1> dx = K * z;
             x.plus(dx);
+            // TODO: After boxplus on SO(3) states, remap P with the reset Jacobian
+            // to match IKFoM's covariance reset after manifold state injection.
             
             // 协方差更新：P = P - K*H*P
             HP.noalias() = H * P.template block<12, state::DIM>(0, 0);
