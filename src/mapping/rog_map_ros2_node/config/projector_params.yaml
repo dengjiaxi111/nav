@@ -14,7 +14,7 @@
     projector.robot_width: 0.4            # [m] 机器人宽度（用于邻域/可通行性分析）
     projector.base_to_ground_default: 0.05 # [m] base_link 到地面的默认距离（推荐键名）
     projector.base_to_ground: 0.05         # [m] 兼容旧键名（仍可用，建议迁移到 base_to_ground_default）
-    projector.ground_tolerance: 0.10      # [m] 地面高度容差，抑制小起伏误判
+    projector.ground_tolerance: 0.15      # [m] 地面高度容差，抑制小起伏误判
 
     # === 动态腿长相关 ===
     projector.enable_dynamic_leg_length: false   # 是否通过 TF(base_link->wheel_frame)动态估计离地高度
@@ -23,18 +23,18 @@
     projector.leg_length_max: 0.25               # [m] 动态腿长最大夹紧值
 
     # === 柱状高程分类阈值 ===
-    projector.slope_height_max: 0.40       # [m] 高度差低于该值倾向视作可通行坡/平面
-    projector.step_height_min: 0.12         # [m] 台阶高度下限（低于此值视作小起伏）
-    projector.step_height_max: 0.40         # [m] 台阶高度上限（高于此值倾向障碍）
+    projector.slope_height_max: 0.55       # [m] 高度差低于该值倾向视作可通行坡/平面
+    projector.step_height_min: 0.10         # [m] 台阶高度下限（低于此值视作小起伏）
+    projector.step_height_max: 0.55         # [m] 台阶高度上限（高于此值倾向障碍）
     projector.obstacle_height_min: 0.25     # [m] 障碍物高度下限
-    projector.high_occupancy_thresh: 0.6    # 占据率阈值（高占据柱体更偏向障碍判断）
+    projector.high_occupancy_thresh: 0.85    # 占据率阈值（高占据柱体更偏向障碍判断）
     projector.keep_step_cells: false        # 是否将台阶栅格保留为 STEP；false 时按 FREE 输出
 
     # === 法向量/PCA判别参数 ===
-    projector.normal_z_slope_thresh: 0.70   # |nz| 阈值，越大越接近水平地面/缓坡
-    projector.normal_z_wall_thresh: 0.42    # |nz| 阈值，低于该值更接近垂直墙体
-    projector.normal_min_points: 3           # 每柱计算法向量所需最少点数
-    projector.planarity_thresh: 0.6          # 平面性阈值（PCA 特征值比）
+    projector.normal_z_slope_thresh: 0.65   # |nz| 阈值，越大越接近水平地面/缓坡
+    projector.normal_z_wall_thresh: 0.30    # |nz| 阈值，低于该值更接近垂直墙体
+    projector.normal_min_points: 4           # 每柱计算法向量所需最少点数
+    projector.planarity_thresh: 0.5          # 平面性阈值（PCA 特征值比）
 
     # === 地图范围/分辨率 ===
     projector.map_range_x: 10.0              # [m] 机器人中心前后左右窗口 X 范围
