@@ -6,8 +6,7 @@
  * 1. 柱状高程分析：对每个(x,y)坐标分析z轴点云分布
  * 2. 高度差判定：H = max_z - min_z，判断是否为垂直障碍物
  * 3. 占据率判定：((n+1)*res)/H，判断柱体内点云密度
- * 4. 邻域分析：区分台阶（可跨越）和矮墙（不可跨越）
- * 5. 动态腿长：支持轮腿机器人站高/站低时的可通行性变化
+ * 4. 动态腿长：支持轮腿机器人站高/站低时的可通行性变化
  * 
  * 适用场景：
  * - RoboMaster场地：矮墙、高墙、坡道、台阶、多层平面
@@ -58,7 +57,7 @@ enum class CellType : int8_t {
 };
 
 /**
- * @brief 柱状高程分析结果（含法向量特征和悬崖边缘检测）
+ * @brief 柱状高程分析结果（含法向量特征）
  */
 struct ColumnMetrics {
     // === 基础高程特征 ===
@@ -75,11 +74,6 @@ struct ColumnMetrics {
     float planarity = 0.0f;          // 平面性：1-(λ2/λ1)，越大越平坦
     bool normal_valid = false;       // 法向量是否有效计算
     
-    // === 悬崖边缘检测（下行台阶）===
-    bool is_cliff_edge = false;      // 是否为悬崖/台阶边缘
-    float inferred_lower_z = 0.0f;   // 推断的下方地面高度
-    bool lower_z_valid = false;      // 下方高度是否可靠
-    
     // === 分类结果 ===
     CellType cell_type = CellType::UNKNOWN;
 };
@@ -90,7 +84,7 @@ struct ColumnMetrics {
 struct ProjectorConfig {
     // === 机器人几何参数 ===
     float robot_height = 0.5f;           // 机器人高度（底部到顶部）
-    float robot_width = 0.4f;            // 机器人宽度（用于台阶邻域分析）
+    float robot_width = 0.4f;            // 机器人宽度
     float base_to_ground_default = 0.10f; // base_link到地面的默认距离
     float ground_tolerance = 0.03f;      // 地面起伏容差
     
@@ -106,6 +100,7 @@ struct ProjectorConfig {
     float step_height_max = 0.23f;       // 台阶最大高度差 (支持20cm台阶，留3cm容差)
     float obstacle_height_min = 0.25f;   // 障碍物最小高度差
     float high_occupancy_thresh = 0.5f;  // 高占据率阈值（跳过法向量分析）
+    bool keep_step_cells = false;        // 是否将台阶保留为STEP，否则按FREE处理
     
     // === 法向量分析参数 ===
     float normal_z_slope_thresh = 0.866f;   // cos(30°)，|nz|大于此值为可通行坡面
@@ -246,7 +241,6 @@ private:
     void publishStepDebugMarkers();
     void updateTimerCallback();  // 改名: publishTimerCallback() -> updateTimerCallback()
     
-    // === 工具函数 ===
     inline int64_t xyToGridKey(float x, float y) const {
         int ix = static_cast<int>(std::floor(x / cfg_.resolution));
         int iy = static_cast<int>(std::floor(y / cfg_.resolution));
@@ -263,11 +257,6 @@ private:
         gridKeyToXY(key, ix, iy);
         return Vec2f((ix + 0.5f) * cfg_.resolution, (iy + 0.5f) * cfg_.resolution);
     }
-    
-    /**
-     * @brief 获取8邻域的grid key
-     */
-    std::vector<int64_t> getNeighborKeys(int64_t key) const;
 };
 
 } // namespace map_2d_projector

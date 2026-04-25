@@ -55,7 +55,7 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
         "ground_tolerance",
         "enable_dynamic_leg_length", "wheel_frame", "leg_length_min", "leg_length_max",
         "slope_height_max", "step_height_min", "step_height_max", "obstacle_height_min",
-        "high_occupancy_thresh", "normal_z_slope_thresh", "normal_z_wall_thresh",
+        "high_occupancy_thresh", "keep_step_cells", "normal_z_slope_thresh", "normal_z_wall_thresh",
         "normal_min_points", "planarity_thresh",
         "map_range_x", "map_range_y", "resolution", "z_min_relative", "z_max_relative",
         "publish_rate", "frame_id", "topic_name",

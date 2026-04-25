@@ -3,7 +3,7 @@
  * @brief 3D→2D地图投影实现（基于中科大高程分析方案）
  * 
  * 核心算法：对每个(x,y)柱进行高度差H + 占据率分析
- * 新增功能：动态腿长支持、台阶邻域检测
+ * 新增功能：动态腿长支持
  * 
  * **组件模式 + 直接调用**: 继承 rclcpp::Node，通过 rog_map_ptr_ 直接访问 
  *                         ROGMapROS boxSearchInflate()，避免 topic 序列化开销
@@ -42,6 +42,7 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.step_height_max = this->declare_parameter<double>("step_height_max", 0.23);
     cfg_.obstacle_height_min = this->declare_parameter<double>("obstacle_height_min", 0.25);
     cfg_.high_occupancy_thresh = this->declare_parameter<double>("high_occupancy_thresh", 0.5);
+    cfg_.keep_step_cells = this->declare_parameter<bool>("keep_step_cells", false);
     
     cfg_.normal_z_slope_thresh = this->declare_parameter<double>("normal_z_slope_thresh", 0.866);
     cfg_.normal_z_wall_thresh = this->declare_parameter<double>("normal_z_wall_thresh", 0.5);
@@ -53,10 +54,19 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.resolution = this->declare_parameter<double>("resolution", 0.05);
     cfg_.z_min_relative = this->declare_parameter<double>("z_min_relative", -0.5);
     cfg_.z_max_relative = this->declare_parameter<double>("z_max_relative", 2.0);
+
+    cfg_.obstacle_value = this->declare_parameter<int>("obstacle_value", 100);
+    cfg_.step_value = this->declare_parameter<int>("step_value", 50);
+    cfg_.free_value = this->declare_parameter<int>("free_value", 0);
+    cfg_.unknown_value = this->declare_parameter<int>("unknown_value", -1);
+
+    cfg_.enable_debug_log = this->declare_parameter<bool>("enable_debug_log", false);
+    cfg_.enable_step_debug_viz = this->declare_parameter<bool>("enable_step_debug_viz", true);
     
     cfg_.publish_rate = this->declare_parameter<double>("publish_rate", 10.0);
     cfg_.frame_id = this->declare_parameter<std::string>("frame_id", "odom");
     cfg_.topic_name = this->declare_parameter<std::string>("topic_name", "rog_map/map_2d");
+    cfg_.step_debug_topic = this->declare_parameter<std::string>("step_debug_topic", "rog_map/step_debug");
 
     current_leg_length_ = cfg_.base_to_ground_default;
     current_base_to_ground_ = cfg_.base_to_ground_default;
@@ -97,6 +107,8 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     RCLCPP_INFO(this->get_logger(), "  Map range: %.1fx%.1f m", cfg_.map_range_x, cfg_.map_range_y);
     RCLCPP_INFO(this->get_logger(), "  Height thresholds: slope<%.2f, step[%.2f-%.2f], obs>%.2f",
                 cfg_.slope_height_max, cfg_.step_height_min, cfg_.step_height_max, cfg_.obstacle_height_min);
+    RCLCPP_INFO(this->get_logger(), "  Keep step cells: %s",
+                cfg_.keep_step_cells ? "ENABLED" : "DISABLED");
     RCLCPP_INFO(this->get_logger(), "  Dynamic leg length: %s (frame: %s)",
                 cfg_.enable_dynamic_leg_length ? "ENABLED" : "DISABLED", cfg_.wheel_frame.c_str());
     RCLCPP_INFO(this->get_logger(), "  Direct ROG-Map access: %s", rog_map_ptr_ ? "ENABLED" : "PENDING");
@@ -184,7 +196,9 @@ void Map2DProjector::updateTimerCallback() {
     publishMap();
 
     // 发布台阶调试可视化
-   
+    if (cfg_.enable_step_debug_viz && step_debug_pub_) {
+        publishStepDebugMarkers();
+    }
 }
 
 bool Map2DProjector::getRobotPose(geometry_msgs::msg::Pose& robot_pose) {
@@ -251,25 +265,6 @@ void Map2DProjector::updateDynamicLegLength() {
     }
 }
 
-std::vector<int64_t> Map2DProjector::getNeighborKeys(int64_t key) const {
-    int ix, iy;
-    gridKeyToXY(key, ix, iy);
-    
-    std::vector<int64_t> neighbors;
-    neighbors.reserve(8);
-    
-    // 8邻域
-    for (int dx = -1; dx <= 1; ++dx) {
-        for (int dy = -1; dy <= 1; ++dy) {
-            if (dx == 0 && dy == 0) continue;
-            int64_t nkey = (static_cast<int64_t>(ix + dx) << 32) | 
-                           (static_cast<int64_t>(iy + dy) & 0xFFFFFFFF);
-            neighbors.push_back(nkey);
-        }
-    }
-    return neighbors;
-}
-
 void Map2DProjector::elevationAnalysis(
     const pcl::PointCloud<pcl::PointXYZ>& cloud,
     float robot_z,
@@ -332,8 +327,6 @@ void Map2DProjector::elevationAnalysis(
         
         col.cell_type = CellType::UNKNOWN;
         col.normal_valid = false;
-        col.is_cliff_edge = false;
-        col.lower_z_valid = false;
     }
 }
 
@@ -413,7 +406,7 @@ void Map2DProjector::normalEstimation(std::unordered_map<int64_t, ColumnMetrics>
 
 int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_z) {
     /**
-     * 综合分类（结合高程分析、法向量、台阶检测）
+     * 综合分类（结合高程分析和法向量）
      * 
      * 分类优先级：
      * 1. 已标记为STEP或FREE → 直接返回
@@ -421,8 +414,7 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
      * 3. 高占据率 + H大 → 障碍物（墙壁/人/车）
      * 4. 法向量有效 + |nz|小 → 垂直障碍物
      * 5. H很小 → 可通行地面/坡面
-     * 6. 悬崖边缘 → 台阶
-     * 7. 默认按高度判断
+     * 6. 默认按高度判断
      */
     
     // 调试日志辅助宏
@@ -435,7 +427,7 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     
     // 已分类的直接返回
     if (metrics.cell_type == CellType::STEP) {
-        return cfg_.step_value;
+        return cfg_.keep_step_cells ? cfg_.step_value : cfg_.free_value;
     }
     if (metrics.cell_type == CellType::FREE) {
         return cfg_.free_value;
@@ -471,11 +463,14 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
             DEBUG_CLASSIFY("Slope(nz>=thresh,ground)", "FREE");
             return cfg_.free_value;
         }
-        // 高层平台：min_z高于地面，但法向量朝上，说明是可以上去的平台
-        // 如果min_z在机器人可达范围内（台阶或矮平台），可以考虑标记为台阶
+        // 高层平台：min_z高于地面，但法向量朝上，说明是可以上去的平台。
         if (metrics.min_z <= ground_level + cfg_.step_height_max) {
-            DEBUG_CLASSIFY("Slope(nz>=thresh,step)", "STEP");
-            return cfg_.step_value;  // 作为台阶处理
+            if (cfg_.keep_step_cells) {
+                DEBUG_CLASSIFY("Slope(nz>=thresh,step)", "STEP");
+                return cfg_.step_value;
+            }
+            DEBUG_CLASSIFY("Slope(nz>=thresh,step->free)", "FREE");
+            return cfg_.free_value;
         }
         // 过高的平台，但不阻挡通行（机器人从下方穿过）
         if (metrics.min_z > robot_top) {
@@ -515,13 +510,7 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
         return cfg_.free_value;
     }
     
-    // === Case 7: 悬崖边缘（下行台阶）===
-    if (metrics.is_cliff_edge && metrics.lower_z_valid) {
-        DEBUG_CLASSIFY("CliffEdge", "STEP");
-        return cfg_.step_value;
-    }
-    
-    // === Case 8: 法向量在中间范围（坡面阈值~墙面阈值之间）===
+    // === Case 7: 法向量在中间范围（坡面阈值~墙面阈值之间）===
     // 这种情况可能是：中等坡度坡面、倾斜墙面、复杂结构
     // 策略：结合占据率和高度综合判断
     if (metrics.normal_valid && 
@@ -535,7 +524,7 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
         // 否则按高度判断
     }
     
-    // === Case 9: 台阶范围但未被标记 → 矮墙 ===
+    // === Case 8: 台阶范围但未被标记 → 矮墙 ===
     if (H >= cfg_.step_height_min && H <= cfg_.step_height_max) {
         bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
         if (blocks_passage) {
@@ -545,7 +534,7 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
         return cfg_.free_value;
     }
     
-    // === Case 10: 高障碍物 ===
+    // === Case 9: 高障碍物 ===
     if (H >= cfg_.obstacle_height_min) {
         bool blocks_passage = (metrics.min_z < robot_top) && (metrics.max_z > ground_level);
         if (blocks_passage) {
@@ -594,6 +583,7 @@ void Map2DProjector::update2DMap(
     
     // 重置地图为unknown
     std::fill(map_2d_->data.begin(), map_2d_->data.end(), cfg_.unknown_value);
+    step_cells_.clear();
     
     // 填充分析结果
     int obstacle_count = 0;
@@ -622,6 +612,9 @@ void Map2DProjector::update2DMap(
         // 分类并设置占据值
         int8_t value = classifyColumn(col, robot_pos.z());
         map_2d_->data[index] = value;
+        if (value == cfg_.step_value) {
+            step_cells_.insert(key);
+        }
         
         // 统计
         if (value == cfg_.obstacle_value) obstacle_count++;
@@ -651,11 +644,6 @@ nav_msgs::msg::OccupancyGrid::SharedPtr Map2DProjector::getLatestMap() {
 }
 
 void Map2DProjector::publishStepDebugMarkers() {
-
-    if (step_cells_.empty()) {
-        return;
-    }
-    
     visualization_msgs::msg::MarkerArray markers;
     auto now = this->get_clock()->now();
     
@@ -666,6 +654,11 @@ void Map2DProjector::publishStepDebugMarkers() {
     delete_marker.ns = "steps";
     delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
     markers.markers.push_back(delete_marker);
+
+    if (step_cells_.empty()) {
+        step_debug_pub_->publish(markers);
+        return;
+    }
     
     // 台阶栅格可视化（使用CUBE_LIST提高效率）
     visualization_msgs::msg::Marker step_marker;
