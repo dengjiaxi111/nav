@@ -116,7 +116,7 @@ nav_server:
       stair_mode_trigger_distance_m: 1.5
       stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
-      stair_mode_entry_he ading_error_max_rad: 0.5  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
+      stair_mode_entry_heading_error_max_rad: 0.5  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
 
     # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       stair_mode_release_grace_cycles: 2
@@ -173,6 +173,12 @@ nav_server:
       fly_slope_mode_max_assert_sec: 8.0               # mode=2 最大持续时长(秒)，超时强制回0
       fly_slope_mode_omega_limit_rad_s: 100.0          # mode=2 角速度绝对值限幅(rad/s)
       fly_slope_mode_omega_slew_rate_rad_s2: 50.0      # mode=2 角速度斜率限幅(rad/s^2)
+      fly_slope_pre_align_lateral_error_max_m: 0.03    # PRE_ALIGN -> COMMIT 前允许的最大横向离线距离(米)
+      fly_slope_pre_align_return_max_linear_vel: 0.40  # 横向离线时慢速回线的线速度上限(m/s)
+      fly_slope_pre_align_return_max_angular_vel: 2.0  # 横向离线时慢速回线的角速度上限(rad/s)
+      enable_fly_slope_pre_align_turn_in_place: true   # PRE_ALIGN 中若航向未对齐，先原地转正再允许进入 COMMIT
+      fly_slope_pre_align_heading_kp: 3.0              # PRE_ALIGN 原地对齐角速度增益
+      fly_slope_pre_align_max_angular_vel: 6.0         # PRE_ALIGN 原地对齐角速度上限(rad/s)
       fly_slope_contact_distance_m: 2.9              # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
       fly_slope_commit_success_dist_m: 1.0           # COMMIT/VERIFY 成功判定法向距离阈值(米)
       fly_slope_verify_timeout_sec: 1.2                # VERIFY_SUCCESS 最大等待时长(秒)

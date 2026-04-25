@@ -69,6 +69,8 @@ private:
                                    double& heading_rad) const;
     bool queryHeadingErrorToPathNearRobot(const nav_core::TerrainControlContext& context,
                                           double& heading_err_rad) const;
+    bool queryLateralErrorToPathNearRobot(const nav_core::TerrainControlContext& context,
+                                          double& lateral_err_m) const;
     bool computePathArcAtRobot(const nav_core::TerrainControlContext& context,
                                double& arc_m) const;
     bool isStairInCooldown(int stair_id,
@@ -133,6 +135,12 @@ private:
     double fly_slope_mode_max_assert_sec_{6.0};
     double fly_slope_mode_omega_limit_rad_s_{0.20};
     double fly_slope_mode_omega_slew_rate_rad_s2_{1.2};
+    double fly_slope_pre_align_lateral_error_max_m_{0.08};
+    double fly_slope_pre_align_return_max_linear_vel_{0.35};
+    double fly_slope_pre_align_return_max_angular_vel_{1.0};
+    bool enable_fly_slope_pre_align_turn_in_place_{true};
+    double fly_slope_pre_align_heading_kp_{2.0};
+    double fly_slope_pre_align_max_angular_vel_{1.2};
     bool enable_fly_slope_fixed_velocity_strategy_{false};
     double fly_slope_fixed_velocity_trigger_distance_m_{0.35};
     double fly_slope_fixed_linear_vel_{0.35};

@@ -72,6 +72,12 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.fly_slope_mode_max_assert_sec", 6.0);
     declare_if_needed("special_terrain.fly_slope_mode_omega_limit_rad_s", 0.20);
     declare_if_needed("special_terrain.fly_slope_mode_omega_slew_rate_rad_s2", 1.2);
+    declare_if_needed("special_terrain.fly_slope_pre_align_lateral_error_max_m", 0.08);
+    declare_if_needed("special_terrain.fly_slope_pre_align_return_max_linear_vel", 0.35);
+    declare_if_needed("special_terrain.fly_slope_pre_align_return_max_angular_vel", 1.0);
+    declare_if_needed("special_terrain.enable_fly_slope_pre_align_turn_in_place", true);
+    declare_if_needed("special_terrain.fly_slope_pre_align_heading_kp", 2.0);
+    declare_if_needed("special_terrain.fly_slope_pre_align_max_angular_vel", 1.2);
     declare_if_needed("special_terrain.enable_fly_slope_fixed_velocity_strategy", false);
     declare_if_needed("special_terrain.fly_slope_fixed_velocity_trigger_distance_m", 0.35);
     declare_if_needed("special_terrain.fly_slope_raise_leg_distance_m", 0.40);
@@ -196,6 +202,26 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.fly_slope_mode_omega_limit_rad_s").as_double();
     fly_slope_mode_omega_slew_rate_rad_s2_ =
         node_->get_parameter("special_terrain.fly_slope_mode_omega_slew_rate_rad_s2").as_double();
+    fly_slope_pre_align_lateral_error_max_m_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_lateral_error_max_m").as_double();
+    fly_slope_pre_align_return_max_linear_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_return_max_linear_vel").as_double();
+    fly_slope_pre_align_return_max_angular_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_return_max_angular_vel").as_double();
+    fly_slope_pre_align_lateral_error_max_m_ =
+        std::max(0.0, fly_slope_pre_align_lateral_error_max_m_);
+    fly_slope_pre_align_return_max_linear_vel_ =
+        std::max(0.0, fly_slope_pre_align_return_max_linear_vel_);
+    fly_slope_pre_align_return_max_angular_vel_ =
+        std::max(0.0, fly_slope_pre_align_return_max_angular_vel_);
+    enable_fly_slope_pre_align_turn_in_place_ =
+        node_->get_parameter("special_terrain.enable_fly_slope_pre_align_turn_in_place").as_bool();
+    fly_slope_pre_align_heading_kp_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_heading_kp").as_double();
+    fly_slope_pre_align_max_angular_vel_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_max_angular_vel").as_double();
+    fly_slope_pre_align_max_angular_vel_ =
+        std::max(0.0, fly_slope_pre_align_max_angular_vel_);
     enable_fly_slope_fixed_velocity_strategy_ =
         node_->get_parameter("special_terrain.enable_fly_slope_fixed_velocity_strategy").as_bool();
     fly_slope_fixed_velocity_trigger_distance_m_ =
@@ -293,10 +319,17 @@ void StairController::initialize(rclcpp::Node* node) {
 
     if (enable_fly_slope_mode_detection_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "fly_slope_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm",
+                    "fly_slope_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, entry_heading_err_max=%.2f rad, pre_align_lateral_max=%.2fm, return(v_max=%.2f,wz_max=%.2f), pre_align_turn(en=%d,kp=%.2f,wz_max=%.2f)",
                     fly_slope_mode_trigger_distance_m_,
                     fly_slope_mode_lookahead_dist_m_,
-                    fly_slope_mode_sample_step_m_);
+                    fly_slope_mode_sample_step_m_,
+                    fly_slope_mode_entry_heading_error_max_rad_,
+                    fly_slope_pre_align_lateral_error_max_m_,
+                    fly_slope_pre_align_return_max_linear_vel_,
+                    fly_slope_pre_align_return_max_angular_vel_,
+                    enable_fly_slope_pre_align_turn_in_place_,
+                    fly_slope_pre_align_heading_kp_,
+                    fly_slope_pre_align_max_angular_vel_);
     }
 }
 
@@ -434,10 +467,14 @@ nav_core::TerrainControlDecision StairController::update(
 
     double heading_err = 0.0;
     const bool has_heading_ref = queryHeadingErrorToPathNearRobot(context, heading_err);
+    double lateral_err = 0.0;
+    const bool has_lateral_ref = queryLateralErrorToPathNearRobot(context, lateral_err);
     const double entry_heading_error_max = is_fly(active_terrain_type_) ? 
         fly_slope_mode_entry_heading_error_max_rad_ : stair_mode_entry_heading_error_max_rad_;
     const bool heading_aligned = has_heading_ref &&
         (std::abs(heading_err) <= entry_heading_error_max);
+    const bool fly_slope_lateral_aligned = has_lateral_ref &&
+        (lateral_err <= fly_slope_pre_align_lateral_error_max_m_);
 
     auto enter_fail_backoff = [&](const char* reason) {
         ++active_attempt_count_;
@@ -499,10 +536,45 @@ nav_core::TerrainControlDecision StairController::update(
             // PRE_ALIGN 阶段尚未下令抬腿，因此不应再检查判据A短腿失败
             precontact_miss_counter_ = 0;
 
+            if (active_terrain_type_ == TerrainType::FLY_SLOPE &&
+                has_lateral_ref &&
+                !fly_slope_lateral_aligned) {
+                out_cmd = base_cmd;
+                out_cmd.linear.x = std::clamp(
+                    out_cmd.linear.x,
+                    -fly_slope_pre_align_return_max_linear_vel_,
+                    fly_slope_pre_align_return_max_linear_vel_);
+                out_cmd.linear.y = 0.0;
+                out_cmd.angular.z = std::clamp(
+                    out_cmd.angular.z,
+                    -fly_slope_pre_align_return_max_angular_vel_,
+                    fly_slope_pre_align_return_max_angular_vel_);
+                decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+                break;
+            }
+
+            if (active_terrain_type_ == TerrainType::FLY_SLOPE &&
+                enable_fly_slope_pre_align_turn_in_place_ &&
+                has_heading_ref &&
+                !heading_aligned) {
+                out_cmd.linear.x = 0.0;
+                out_cmd.linear.y = 0.0;
+                out_cmd.angular.z = std::clamp(
+                    fly_slope_pre_align_heading_kp_ * heading_err,
+                    -fly_slope_pre_align_max_angular_vel_,
+                    fly_slope_pre_align_max_angular_vel_);
+                decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+                break;
+            }
+
             if (fsm_state_ == StairFsmState::PRE_ALIGN &&
                 candidate.dist_to_feature_m <= contact_dist(active_terrain_type_) &&
-                heading_aligned) {
-                transitionFsmState(StairFsmState::COMMIT_ASCENT, "contact + heading aligned");
+                heading_aligned &&
+                (!is_fly(active_terrain_type_) || fly_slope_lateral_aligned)) {
+                transitionFsmState(StairFsmState::COMMIT_ASCENT,
+                                   is_fly(active_terrain_type_)
+                                       ? "contact + lateral + heading aligned"
+                                       : "contact + heading aligned");
                 precontact_miss_counter_ = 0;
                 if (!computePathArcAtRobot(context, commit_arc_start_m_)) {
                     commit_arc_start_m_ = 0.0;
@@ -1256,6 +1328,43 @@ bool StairController::queryHeadingErrorToPathNearRobot(
     tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
     heading_err_rad = normalizeAngle(heading_ref - yaw);
+    return true;
+}
+
+bool StairController::queryLateralErrorToPathNearRobot(
+    const nav_core::TerrainControlContext& context,
+    double& lateral_err_m) const {
+    lateral_err_m = std::numeric_limits<double>::infinity();
+    const auto& poses = context.current_path.poses;
+    if (poses.size() < 2) {
+        return false;
+    }
+
+    const Eigen::Vector2d robot_pos(context.current_pose.pose.position.x,
+                                    context.current_pose.pose.position.y);
+    double best_dist2 = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i + 1 < poses.size(); ++i) {
+        const Eigen::Vector2d a(poses[i].pose.position.x, poses[i].pose.position.y);
+        const Eigen::Vector2d b(poses[i + 1].pose.position.x, poses[i + 1].pose.position.y);
+        const Eigen::Vector2d ab = b - a;
+        const double ab2 = ab.squaredNorm();
+        if (ab2 < 1e-9) {
+            continue;
+        }
+
+        const double t = std::clamp((robot_pos - a).dot(ab) / ab2, 0.0, 1.0);
+        const Eigen::Vector2d projection = a + t * ab;
+        const double dist2 = (robot_pos - projection).squaredNorm();
+        if (dist2 < best_dist2) {
+            best_dist2 = dist2;
+        }
+    }
+
+    if (!std::isfinite(best_dist2)) {
+        return false;
+    }
+
+    lateral_err_m = std::sqrt(best_dist2);
     return true;
 }
 
