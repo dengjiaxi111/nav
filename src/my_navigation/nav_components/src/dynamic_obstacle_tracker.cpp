@@ -133,6 +133,8 @@ std::vector<DynamicObstacleTracker::Observation> DynamicObstacleTracker::cluster
 }
 
 void DynamicObstacleTracker::updateTracks(const std::vector<Observation>& observations, double dt) {
+    const size_t existing_track_count = tracks_.size();
+
     // 预测
     for (auto& tr : tracks_) {
         tr.x += tr.vx * dt;
@@ -140,7 +142,7 @@ void DynamicObstacleTracker::updateTracks(const std::vector<Observation>& observ
     }
 
     std::vector<int> obs_match(observations.size(), -1);
-    std::vector<uint8_t> track_used(tracks_.size(), 0);
+    std::vector<uint8_t> track_used(existing_track_count, 0);
 
     // 贪心关联
     for (size_t oi = 0; oi < observations.size(); ++oi) {
@@ -191,6 +193,14 @@ void DynamicObstacleTracker::updateTracks(const std::vector<Observation>& observ
         }
     }
 
+    // 标记未匹配轨迹
+    for (size_t ti = 0; ti < existing_track_count; ++ti) {
+        if (track_used[ti]) {
+            continue;
+        }
+        tracks_[ti].missed += 1;
+    }
+
     // 新建未匹配观测
     for (size_t oi = 0; oi < observations.size(); ++oi) {
         if (obs_match[oi] >= 0) {
@@ -207,14 +217,6 @@ void DynamicObstacleTracker::updateTracks(const std::vector<Observation>& observ
         tr.missed = 0;
         tr.confirmed = (params_.confirm_hits <= 1);
         tracks_.push_back(tr);
-    }
-
-    // 标记未匹配轨迹
-    for (size_t ti = 0; ti < tracks_.size(); ++ti) {
-        if (track_used[ti]) {
-            continue;
-        }
-        tracks_[ti].missed += 1;
     }
 
     // 清理丢失轨迹

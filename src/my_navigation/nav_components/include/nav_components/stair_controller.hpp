@@ -109,6 +109,7 @@ private:
     double stair_mode_entry_heading_error_max_rad_{0.35};
     int stair_mode_release_grace_cycles_{5};
     double stair_mode_min_hold_sec_{0.35};
+    double stair_mode_reassert_block_sec_{0.0};
     double stair_mode_force_release_distance_m_{2.5};
     double stair_mode_max_assert_sec_{6.0};
     double stair_mode_omega_limit_rad_s_{0.20};
@@ -127,6 +128,7 @@ private:
     double fly_slope_mode_entry_heading_error_max_rad_{0.35};
     int fly_slope_mode_release_grace_cycles_{5};
     double fly_slope_mode_min_hold_sec_{0.35};
+    double fly_slope_mode_reassert_block_sec_{0.0};
     double fly_slope_mode_force_release_distance_m_{2.5};
     double fly_slope_mode_max_assert_sec_{6.0};
     double fly_slope_mode_omega_limit_rad_s_{0.20};
@@ -184,6 +186,8 @@ private:
     int virtual_leg_length_{1}; // 预留的虚拟腿长信号(1表示长腿，满足条件不触发失败，0表示短腿会触发失败)
     int stair_mode_release_counter_{0};
     std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
+    std::chrono::steady_clock::time_point stair_mode_last_mode1_publish_time_{};
+    std::chrono::steady_clock::time_point stair_mode_last_mode2_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_enter_time_{};
     bool stair_mode_omega_limiter_initialized_{false};
     double last_stair_mode_limited_omega_{0.0};

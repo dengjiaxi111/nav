@@ -31,6 +31,7 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_mode_entry_heading_error_max_rad", 0.35);
     declare_if_needed("special_terrain.stair_mode_release_grace_cycles", 5);
     declare_if_needed("special_terrain.stair_mode_min_hold_sec", 0.35);
+    declare_if_needed("special_terrain.stair_mode_reassert_block_sec", 0.0);
     declare_if_needed("special_terrain.stair_mode_force_release_distance_m", 2.5);
     declare_if_needed("special_terrain.stair_mode_max_assert_sec", 6.0);
     declare_if_needed("special_terrain.stair_mode_omega_limit_rad_s", 0.20);
@@ -66,6 +67,7 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.fly_slope_mode_entry_heading_error_max_rad", 0.35);
     declare_if_needed("special_terrain.fly_slope_mode_release_grace_cycles", 5);
     declare_if_needed("special_terrain.fly_slope_mode_min_hold_sec", 0.35);
+    declare_if_needed("special_terrain.fly_slope_mode_reassert_block_sec", 0.0);
     declare_if_needed("special_terrain.fly_slope_mode_force_release_distance_m", 2.5);
     declare_if_needed("special_terrain.fly_slope_mode_max_assert_sec", 6.0);
     declare_if_needed("special_terrain.fly_slope_mode_omega_limit_rad_s", 0.20);
@@ -113,6 +115,8 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_mode_release_grace_cycles").as_int();
     stair_mode_min_hold_sec_ =
         node_->get_parameter("special_terrain.stair_mode_min_hold_sec").as_double();
+    stair_mode_reassert_block_sec_ =
+        node_->get_parameter("special_terrain.stair_mode_reassert_block_sec").as_double();
     stair_mode_force_release_distance_m_ =
         node_->get_parameter("special_terrain.stair_mode_force_release_distance_m").as_double();
     stair_mode_max_assert_sec_ =
@@ -182,6 +186,8 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.fly_slope_mode_release_grace_cycles").as_int();
     fly_slope_mode_min_hold_sec_ =
         node_->get_parameter("special_terrain.fly_slope_mode_min_hold_sec").as_double();
+    fly_slope_mode_reassert_block_sec_ =
+        node_->get_parameter("special_terrain.fly_slope_mode_reassert_block_sec").as_double();
     fly_slope_mode_force_release_distance_m_ =
         node_->get_parameter("special_terrain.fly_slope_mode_force_release_distance_m").as_double();
     fly_slope_mode_max_assert_sec_ =
@@ -247,13 +253,14 @@ void StairController::initialize(rclcpp::Node* node) {
 
     if (enable_stair_mode_detection_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill(dot>=0), entry_heading_err_max=%.2f rad, grace=%d, min_hold=%.2fs, force_release_dist=%.2fm, max_assert=%.2fs, omega_limit=%.2f rad/s, omega_slew=%.2f rad/s^2",
+                    "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill(dot>=0), entry_heading_err_max=%.2f rad, grace=%d, min_hold=%.2fs, reassert_block=%.2fs, force_release_dist=%.2fm, max_assert=%.2fs, omega_limit=%.2f rad/s, omega_slew=%.2f rad/s^2",
                     stair_mode_trigger_distance_m_,
                     stair_mode_lookahead_dist_m_,
                     stair_mode_sample_step_m_,
                     stair_mode_entry_heading_error_max_rad_,
                     stair_mode_release_grace_cycles_,
                     stair_mode_min_hold_sec_,
+                    stair_mode_reassert_block_sec_,
                     stair_mode_force_release_distance_m_,
                     stair_mode_max_assert_sec_,
                     stair_mode_omega_limit_rad_s_,
@@ -427,8 +434,10 @@ nav_core::TerrainControlDecision StairController::update(
 
     double heading_err = 0.0;
     const bool has_heading_ref = queryHeadingErrorToPathNearRobot(context, heading_err);
+    const double entry_heading_error_max = is_fly(active_terrain_type_) ? 
+        fly_slope_mode_entry_heading_error_max_rad_ : stair_mode_entry_heading_error_max_rad_;
     const bool heading_aligned = has_heading_ref &&
-        (std::abs(heading_err) <= stair_mode_entry_heading_error_max_rad_);
+        (std::abs(heading_err) <= entry_heading_error_max);
 
     auto enter_fail_backoff = [&](const char* reason) {
         ++active_attempt_count_;
@@ -1324,7 +1333,25 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
 
     uint8_t effective_mode = mode;
     const auto now_tp = std::chrono::steady_clock::now();
-    if (effective_mode == 1 || effective_mode == 2) {
+    if (effective_mode == 1) {
+        if (stair_mode_reassert_block_sec_ > 0.0 &&
+            stair_mode_last_mode1_publish_time_ != std::chrono::steady_clock::time_point{}) {
+            const double elapsed_since_mode1_publish = std::chrono::duration<double>(
+                now_tp - stair_mode_last_mode1_publish_time_).count();
+            if (elapsed_since_mode1_publish < stair_mode_reassert_block_sec_) {
+                return;
+            }
+        }
+        stair_mode_last_assert_time_ = now_tp;
+    } else if (effective_mode == 2) {
+        if (fly_slope_mode_reassert_block_sec_ > 0.0 &&
+            stair_mode_last_mode2_publish_time_ != std::chrono::steady_clock::time_point{}) {
+            const double elapsed_since_mode2_publish = std::chrono::duration<double>(
+                now_tp - stair_mode_last_mode2_publish_time_).count();
+            if (elapsed_since_mode2_publish < fly_slope_mode_reassert_block_sec_) {
+                return;
+            }
+        }
         stair_mode_last_assert_time_ = now_tp;
     } else if (!bypass_hold &&
                (stair_mode_current_ == 1 || stair_mode_current_ == 2)) {
@@ -1345,6 +1372,11 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
     std_msgs::msg::UInt8 msg;
     msg.data = effective_mode;
     stair_mode_pub_->publish(msg);
+    if (effective_mode == 1) {
+        stair_mode_last_mode1_publish_time_ = now_tp;
+    } else if (effective_mode == 2) {
+        stair_mode_last_mode2_publish_time_ = now_tp;
+    }
 
     if (effective_mode != stair_mode_current_) {
         RCLCPP_INFO(node_->get_logger(), "stair_mode -> %u", static_cast<unsigned>(effective_mode));

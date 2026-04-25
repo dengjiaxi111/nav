@@ -3,12 +3,12 @@
 nav_server:
   ros__parameters:
     # 静态重定位开关 (true: 从RViz的"2D Pose Estimate"接收初始位姿并作为固定的map->odom; false: 实际场地使用NDT重定位)
-    use_static_map_odom: true
+    use_static_map_odom: false
     # 调试开关：重定位或给初始位姿后强制 odom==base_link（仅用于路径规划调试）
-    debug_reset_odom_to_base_link: true
+    debug_reset_odom_to_base_link: false
     
     # 地图路径由 navigation.launch.py 注入
-    map_file: "/home/li/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
+    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
     control_rate: 50.0
     goal_timeout: 60.0
     goal_tolerance: 0.1
@@ -48,21 +48,21 @@ nav_server:
     # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
     
     # 动态层: 来自rog_map的局部障碍物
-    enable_dynamic_layer: true  # 启用动态层融合
+    enable_dynamic_layer: false   # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
 
     # 动态障碍物跟踪层（导航侧，可选）
     dynamic_tracking:
       enable: false                    # 总开关：true 时先跟踪聚类，再送入动态层融合
-      occupied_threshold: 80           # 占据判定阈值（>=该值视为障碍）
-      min_cluster_size: 3              # 聚类最小像素数
+      occupied_threshold: 50           # 占据判定阈值（>=该值视为障碍）
+      min_cluster_size: 2              # 聚类最小像素数
       association_distance_m: 0.7      # 帧间关联最大距离（米）
-      confirm_hits: 3                  # 轨迹确认所需连续命中次数
+      confirm_hits: 4                  # 轨迹确认所需连续命中次数
       max_missed_frames: 5             # 最大丢失帧数，超过后删除轨迹
-      velocity_smooth_alpha: 0.6       # 速度平滑系数 [0,1]
-      obstacle_radius_m: 0.30          # 输出到动态层的障碍膨胀半径（米）
-      publish_tentative_tracks: true   # 是否发布未确认轨迹（更敏捷但噪声稍高）
+      velocity_smooth_alpha: 0.4       # 速度平滑系数 [0,1]
+      obstacle_radius_m: 0.15          # 输出到动态层的障碍膨胀半径（米）
+      publish_tentative_tracks: false   # 是否发布未确认轨迹（更敏捷但噪声稍高）
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
@@ -87,7 +87,7 @@ nav_server:
 
       # 飞坡层（低侧线/高侧线）
       enable_fly_slope_layer: true
-      fly_slope_mask_yaml: "/home/li/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"  # 默认可与台阶mask共图，不同像素段区分
+      fly_slope_mask_yaml: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"  # 默认可与台阶mask共图，不同像素段区分
       fly_slope_clear_perp_dist_m: 0.45
       fly_slope_clear_perp_high_dist_m: 0.45
       fly_slope_clear_perp_low_dist_m: 0.45
@@ -116,11 +116,12 @@ nav_server:
       stair_mode_trigger_distance_m: 1.5
       stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
-      stair_mode_entry_he ading_error_max_rad: 0.4  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
+      stair_mode_entry_he ading_error_max_rad: 0.5  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
 
     # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       stair_mode_release_grace_cycles: 2
-      stair_mode_min_hold_sec: 0.2  # 抬腿信号最小保持时间(秒)，用于抑制 1->0 瞬时抖动
+      stair_mode_min_hold_sec: 0.5  # 抬腿信号最小保持时间(秒)，用于抑制 1->0 瞬时抖动
+      stair_mode_reassert_block_sec: 2.0  # 发送过 mode=1 后的重发保护时间窗(秒)，窗口内禁止再次发送 mode=1
       stair_mode_force_release_distance_m: 2.6  # mode=1 时若检测到台阶距离过远(或无 upcoming)，强制回0
       stair_mode_max_assert_sec: 8.0   # mode=1 最大持续时间(秒)，超时强制回0，便于下次上升沿再次触发
       stair_mode_omega_limit_rad_s: 100.0  # stair_mode=1 时角速度上限 |omega| (rad/s)
@@ -128,7 +129,7 @@ nav_server:
 
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
       stair_contact_distance_m: 1.00              # 接触判定阈值(米)
-      stair_commit_success_dist_m: 0.45          # 越过台阶中心线后的成功法向距离阈值(米)
+      stair_commit_success_dist_m: 0.10          # 越过台阶中心线后的成功法向距离阈值(米)
       stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
 
       # [失败判据] A + B(弧长进展超时)
@@ -138,9 +139,9 @@ nav_server:
 
     # [提交段控制] COMMIT_ASCENT
       enable_stair_fixed_velocity_strategy: true
-      stair_raise_leg_distance_m: 0.75           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
+      stair_raise_leg_distance_m: 0.90           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
       stair_fixed_velocity_trigger_distance_m: 0.9 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
-      stair_fixed_linear_vel: 1.6
+      stair_fixed_linear_vel: 1.35
       stair_fixed_heading_kp: 2.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
       stair_fixed_max_angular_vel: 100.0
       stair_fixed_heading_deadband: 0.05    # 固定速度航向死区(rad)，小于此值不进行航向调整，防止过近时的过度修正和震荡
@@ -160,27 +161,28 @@ nav_server:
       stair_cooldown_fail_threshold: 3           # 同一 stair_id 连续失败达到阈值进入冷却
       stair_cooldown_duration_sec: 1000.0          # 冷却时长(秒)，期间触发 REQUEST_REPLAN
 
-          # [飞坡动作状态机参数]（与台阶独立，初值对齐台阶）
-      fly_slope_mode_trigger_distance_m: 3.0          # PRE_ALIGN 触发窗口：候选地形距离小于该值进入预对准
+      # [飞坡动作状态机参数]（与台阶独立，初值对齐台阶）
+      fly_slope_mode_trigger_distance_m: 3.2          # PRE_ALIGN 触发窗口：候选地形距离小于该值进入预对准
       fly_slope_mode_lookahead_dist_m: 2.0             # 前向沿路径扫描飞坡候选的最大距离(米)
       fly_slope_mode_sample_step_m: 0.05               # 候选扫描采样步长(米)，越小检测越细
-      fly_slope_mode_entry_heading_error_max_rad: 0.4  # PRE_ALIGN -> COMMIT 的航向误差阈值(rad)
+      fly_slope_mode_entry_heading_error_max_rad: 0.1  # PRE_ALIGN -> COMMIT 的航向误差阈值(rad)
       fly_slope_mode_release_grace_cycles: 2           # mode=2 释放保护周期数（抑制短时抖动）
-      fly_slope_mode_min_hold_sec: 0.2                 # mode=2 最小保持时长(秒)
+      fly_slope_mode_min_hold_sec: 0.3                 # mode=2 最小保持时长(秒)
+      fly_slope_mode_reassert_block_sec: 0.3           # 发送过 mode=2 后的重发保护时间窗(秒)，窗口内禁止再次发送 mode=2
       fly_slope_mode_force_release_distance_m: 3.0    # mode=2 强制释放距离阈值(米)，超出则回0
       fly_slope_mode_max_assert_sec: 8.0               # mode=2 最大持续时长(秒)，超时强制回0
       fly_slope_mode_omega_limit_rad_s: 100.0          # mode=2 角速度绝对值限幅(rad/s)
       fly_slope_mode_omega_slew_rate_rad_s2: 50.0      # mode=2 角速度斜率限幅(rad/s^2)
-      fly_slope_contact_distance_m: 2.5               # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
+      fly_slope_contact_distance_m: 2.9              # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
       fly_slope_commit_success_dist_m: 1.0           # COMMIT/VERIFY 成功判定法向距离阈值(米)
       fly_slope_verify_timeout_sec: 1.2                # VERIFY_SUCCESS 最大等待时长(秒)
       fly_slope_fail_a_precontact_miss_cycles: 3       # 判据A：接触前短腿连续失败周期阈值
-      fly_slope_progress_timeout_sec: 1.2              # 判据B：COMMIT 弧长进展超时(秒)
+      fly_slope_progress_timeout_sec: 2.5              # 判据B：COMMIT 弧长进展超时(秒)
       fly_slope_progress_min_arc_m: 0.3              # 判据B：最小弧长进展阈值(米)
       enable_fly_slope_fixed_velocity_strategy: true   # COMMIT 段启用固定速度策略
-      fly_slope_raise_leg_distance_m: 2.0            # COMMIT 内触发 mode=2（抬腿）距离阈值(米)
-      fly_slope_fixed_velocity_trigger_distance_m: 2.35 # COMMIT 内固定速度真正生效距离阈值(米)
-      fly_slope_fixed_linear_vel: 1.75                  # COMMIT 固定线速度(m/s)
+      fly_slope_raise_leg_distance_m: 2.75           # COMMIT 内触发 mode=2（抬腿）距离阈值(米)
+      fly_slope_fixed_velocity_trigger_distance_m: 2.95 # COMMIT 内固定速度真正生效距离阈值(米)
+      fly_slope_fixed_linear_vel: 1.85                  # COMMIT 固定线速度(m/s)
       fly_slope_fixed_heading_kp: 3.0                  # COMMIT 航向控制增益
       fly_slope_fixed_max_angular_vel: 100.0           # COMMIT 角速度上限(rad/s)
       fly_slope_fixed_heading_deadband: 0.05           # COMMIT 航向死区(rad)
@@ -193,8 +195,8 @@ nav_server:
       fly_slope_retry_max_attempts: 3                  # 单次任务最大重试次数
       fly_slope_request_recovery_on_max_attempts: true # 超过重试次数后请求恢复（否则请求重规划）
       enable_fly_slope_cooldown: true                  # 启用同飞坡对象失败冷却
-      fly_slope_cooldown_fail_threshold: 3             # 连续失败达到阈值进入冷却
-      fly_slope_cooldown_duration_sec: 1000.0          # 冷却时长(秒)，冷却期内触发 REQUEST_REPLAN
+      fly_slope_cooldown_fail_threshold: 10             # 连续失败达到阈值进入冷却
+      fly_slope_cooldown_duration_sec: 10.0          # 冷却时长(秒)，冷却期内触发 REQUEST_REPLAN
     
     # ============ 地图更新性能日志 ============
     enable_performance_logging: false  # 启用地图更新性能日志 (开发/调试时启用)
@@ -245,7 +247,7 @@ nav_server:
       astar_fly_slope_tangent_penalty_weight: 30.0
       astar_fly_slope_centerline_penalty_weight: 1.0
       astar_fly_slope_lock_cluster_center: true
-      astar_fly_slope_up_pre_dist_m: 2.80
+      astar_fly_slope_up_pre_dist_m: 2.0
       astar_fly_slope_up_post_dist_m: 0.4
       astar_fly_slope_down_pre_dist_m: 0.01
       astar_fly_slope_down_post_dist_m: 0.01
@@ -321,7 +323,7 @@ nav_server:
       max_linear_vel: 2.5        # 最大线速度 (m/s) 
       max_angular_vel: 3.5       # 最大角速度 (rad/s)
       max_linear_accel: 5.0      # 最大线加速度 (m/s²)
-      max_linear_decel: 1.5      # 最大线减速度 (m/s²)
+      max_linear_decel: 6.0     # 最大线减速度 (m/s²)
       max_angular_accel: 7.0     # 最大角加速度 (rad/s²) 
       allow_reverse: false       # 倒车
       
@@ -336,10 +338,10 @@ nav_server:
       speed_profile:
         enable: true
         v_cruise: 2.5              # 解耦后的巡航参考速度 (m/s)
-        v_min: 0.15                # 非终点工况最低参考速度 (m/s)
-        max_lateral_accel: 1.6     # 横向加速度上限，用于曲率限速 (m/s^2)
+        v_min: 0.30                # 非终点工况最低参考速度 (m/s)
+        max_lateral_accel: 3.5   # 横向加速度上限，用于曲率限速 (m/s^2)
         kappa_epsilon: 0.08        # 曲率分母下限，防止小曲率时限速发散 (1/m)
-        curvature_window_m: 1.5    # 曲率统计窗口长度 (m)
+        curvature_window_m: 1.0   # 曲率统计窗口长度 (m)
 
       # 曲率自适应 horizon：effective_horizon = horizon_length / (1 + kappa_scale * kappa_max)
       # 同时自动压缩位置间距和速度参考上限（运动学一致），一致降低弯道速度
@@ -348,9 +350,9 @@ nav_server:
       #   κ=1/m       : horizon=1.50m → v_implicit=1.00 m/s
       #   κ=2/m       : horizon=1.12m → v_implicit=0.75 m/s
       #   κ=3/m       : horizon=0.90m → v_implicit=0.60 m/s
-      enable_curvature_horizon_adapt: true
-      horizon_kappa_scale: 0.5   # 压缩强度
-      horizon_min_length: 0.8   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
+      enable_curvature_horizon_adapt: false  # 启用曲率自适应 horizon
+      horizon_kappa_scale: 0.05   # 压缩强度
+      horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
       pivot_turn_heading_thresh: 1.0  # 航向误差>该值时原地转向 (rad)
@@ -362,13 +364,13 @@ nav_server:
       omega_lag_tau: 0.26        # 角速度一阶滞后时间常数(s)
 
       # === 代价权重（运行时生效） ===
-      Q_position: 25.0           # 位置(x,y)跟踪权重
-      Q_orientation: 8.0         # 航向角(theta)跟踪权重
+      Q_position: 30.0           # 位置(x,y)跟踪权重
+      Q_orientation: 5.0         # 航向角(theta)跟踪权重
       Q_velocity: 5.0            # 线速度跟踪权重
       Q_omega: 5.0               # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
       R_linear: 0.01             # 线加速度平滑权重
       R_angular: 0.01            # 角加速度平滑权重
-      contouring_weight: 10.0   # 路径横向偏离(contouring)权重
+      contouring_weight: 15.0   # 路径横向偏离(contouring)权重
 
 
       # === ESDF/轮廓代价（运行时生效） ===
@@ -377,7 +379,7 @@ nav_server:
 
       # === 权重缩放/ESDF开关（运行时生效） ===
       terminal_multiplier: 2.0   # 终端代价
-      enable_esdf_cost: false      # 启用 ESDF 障碍物代价
+      enable_esdf_cost: true      # 启用 ESDF 障碍物代价
       near_weight_multiplier: 2.0  # 近端权重倍增，强化近距离避障
       
       # === 可视化选项 ===
