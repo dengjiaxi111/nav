@@ -166,13 +166,13 @@ public:
 
     // 动态障碍物跟踪层（导航侧）
     declare_parameter("dynamic_tracking.enable", false);
-    declare_parameter("dynamic_tracking.occupied_threshold", 80);
-    declare_parameter("dynamic_tracking.min_cluster_size", 3);
-    declare_parameter("dynamic_tracking.association_distance_m", 0.8);
+    declare_parameter("dynamic_tracking.occupied_threshold", 65);
+    declare_parameter("dynamic_tracking.min_cluster_size", 2);
+    declare_parameter("dynamic_tracking.association_distance_m", 0.6);
     declare_parameter("dynamic_tracking.confirm_hits", 2);
-    declare_parameter("dynamic_tracking.max_missed_frames", 5);
-    declare_parameter("dynamic_tracking.velocity_smooth_alpha", 0.6);
-    declare_parameter("dynamic_tracking.obstacle_radius_m", 0.35);
+    declare_parameter("dynamic_tracking.max_missed_frames", 2);
+    declare_parameter("dynamic_tracking.velocity_smooth_alpha", 0.5);
+    declare_parameter("dynamic_tracking.obstacle_radius_m", 0.3);
     declare_parameter("dynamic_tracking.publish_tentative_tracks", true);
 
         // 特殊地形层（stair layer）配置

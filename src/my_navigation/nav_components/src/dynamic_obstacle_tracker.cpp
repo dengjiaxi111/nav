@@ -230,13 +230,6 @@ nav_msgs::msg::OccupancyGrid::SharedPtr DynamicObstacleTracker::buildTrackedDyna
     const nav_msgs::msg::OccupancyGrid::SharedPtr& input_map) const {
     auto output = std::make_shared<nav_msgs::msg::OccupancyGrid>(*input_map);
 
-    // 先清空原始占据（保留 unknown）
-    for (auto& v : output->data) {
-        if (v > 0) {
-            v = 0;
-        }
-    }
-
     const int width = static_cast<int>(output->info.width);
     const int height = static_cast<int>(output->info.height);
     if (width <= 0 || height <= 0 || output->info.resolution <= 0.0f) {
@@ -249,6 +242,8 @@ nav_msgs::msg::OccupancyGrid::SharedPtr DynamicObstacleTracker::buildTrackedDyna
         if (!tr.confirmed && !params_.publish_tentative_tracks) {
             continue;
         }
+
+        const int8_t track_occupancy = tr.confirmed ? 100 : 90;
 
         const int cx = static_cast<int>(std::floor((tr.x - output->info.origin.position.x) / output->info.resolution));
         const int cy = static_cast<int>(std::floor((tr.y - output->info.origin.position.y) / output->info.resolution));
@@ -264,7 +259,11 @@ nav_msgs::msg::OccupancyGrid::SharedPtr DynamicObstacleTracker::buildTrackedDyna
                     continue;
                 }
                 const int idx = y * width + x;
-                output->data[static_cast<size_t>(idx)] = 100;
+                auto& cell = output->data[static_cast<size_t>(idx)];
+                if (cell < 0) {
+                    continue;
+                }
+                cell = std::max(cell, track_occupancy);
             }
         }
     }

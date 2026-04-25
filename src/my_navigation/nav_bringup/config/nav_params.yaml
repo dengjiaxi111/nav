@@ -55,14 +55,14 @@ nav_server:
     # 动态障碍物跟踪层（导航侧，可选）
     dynamic_tracking:
       enable: false                    # 总开关：true 时先跟踪聚类，再送入动态层融合
-      occupied_threshold: 50           # 占据判定阈值（>=该值视为障碍）
-      min_cluster_size: 2              # 聚类最小像素数
-      association_distance_m: 0.7      # 帧间关联最大距离（米）
-      confirm_hits: 4                  # 轨迹确认所需连续命中次数
-      max_missed_frames: 5             # 最大丢失帧数，超过后删除轨迹
-      velocity_smooth_alpha: 0.4       # 速度平滑系数 [0,1]
-      obstacle_radius_m: 0.15          # 输出到动态层的障碍膨胀半径（米）
-      publish_tentative_tracks: false   # 是否发布未确认轨迹（更敏捷但噪声稍高）
+      occupied_threshold: 65           # 近场优先：适当抬高阈值，抑制弱噪声占据
+      min_cluster_size: 2              # 近场仍保留较小团簇，避免漏掉小目标
+      association_distance_m: 0.6      # 近场关联门限略收紧，减少串轨
+      confirm_hits: 2                  # 近场快速确认，提升避障响应
+      max_missed_frames: 2             # 目标离开后尽快清理残留轨迹
+      velocity_smooth_alpha: 0.5       # 适度平滑速度，兼顾稳定性和响应
+      obstacle_radius_m: 0.3           # 用更保守的近场圆斑覆盖动态目标
+      publish_tentative_tracks: true   # 近场先避后说，未确认轨迹也参与增强
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
