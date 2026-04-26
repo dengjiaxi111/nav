@@ -32,6 +32,7 @@ private:
         NONE = 0,
         STAIR = 1,
         FLY_SLOPE = 2,
+        STAIR_LEVEL2 = 3,
     };
 
     enum class StairFsmState : uint8_t {
@@ -119,6 +120,8 @@ private:
     bool enable_stair_fixed_velocity_strategy_{false};
     double stair_fixed_velocity_trigger_distance_m_{0.35};
     double stair_fixed_linear_vel_{0.35};
+    double stair_level2_fixed_velocity_trigger_distance_m_{0.35};
+    double stair_level2_fixed_linear_vel_{0.35};
     double stair_fixed_heading_kp_{1.8};
     double stair_fixed_max_angular_vel_{0.8};
     double stair_fixed_heading_deadband_{0.05};
@@ -168,6 +171,7 @@ private:
 
     // 独立动作阈值（在 COMMIT_ASCENT 及以内生效）
     double stair_raise_leg_distance_m_{0.40};
+    double stair_level2_raise_leg_distance_m_{0.40};
 
     // 阶段B FSM 参数（不含冷却）
     double stair_contact_distance_m_{0.25};
@@ -196,6 +200,7 @@ private:
     std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
     std::chrono::steady_clock::time_point stair_mode_last_mode1_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_last_mode2_publish_time_{};
+    std::chrono::steady_clock::time_point stair_mode_last_mode3_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_enter_time_{};
     bool stair_mode_omega_limiter_initialized_{false};
     double last_stair_mode_limited_omega_{0.0};

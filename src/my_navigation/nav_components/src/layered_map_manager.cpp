@@ -489,8 +489,10 @@ void LayeredMapManager::rebuildStairLayerCache() {
 
     std::vector<uint8_t> class_map(static_cast<size_t>(stair_mask_width_ * stair_mask_height_), 0);
     std::vector<std::pair<int, int>> bidir_black_cells;
+    std::vector<std::pair<int, int>> level2_black_cells;
     std::vector<std::pair<int, int>> oneway_black_cells;
     bidir_black_cells.reserve(1024);
+    level2_black_cells.reserve(1024);
     oneway_black_cells.reserve(1024);
 
     for (int my = 0; my < stair_mask_height_; ++my) {
@@ -504,6 +506,13 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 bidir_black_cells.emplace_back(mx, my);
             } else if (v >= stair_layer_cfg_.gray_min && v <= stair_layer_cfg_.gray_max) {
                 class_map[mask_idx] = 2;
+            } else if (v >= stair_layer_cfg_.stair_level2_black_min &&
+                       v <= stair_layer_cfg_.stair_level2_black_max) {
+                class_map[mask_idx] = 5;
+                level2_black_cells.emplace_back(mx, my);
+            } else if (v >= stair_layer_cfg_.stair_level2_gray_min &&
+                       v <= stair_layer_cfg_.stair_level2_gray_max) {
+                class_map[mask_idx] = 6;
             } else if (stair_layer_cfg_.enable_oneway_stair_down &&
                        v >= stair_layer_cfg_.oneway_black_min &&
                        v <= stair_layer_cfg_.oneway_black_max) {
@@ -517,13 +526,14 @@ void LayeredMapManager::rebuildStairLayerCache() {
         }
     }
 
-    if (bidir_black_cells.empty() && oneway_black_cells.empty()) {
+    if (bidir_black_cells.empty() && level2_black_cells.empty() && oneway_black_cells.empty()) {
         RCLCPP_WARN(logger_, "stair_layer: mask 中未找到任何台阶黑线像素");
         return;
     }
 
     struct PrimitiveAccumulator {
         bool is_oneway_down{false};
+        bool is_level2{false};
         std::vector<std::pair<int, int>> black_cells;
         Eigen::Vector2d normal_sum = Eigen::Vector2d::Zero();
         int normal_count{0};
@@ -533,7 +543,8 @@ void LayeredMapManager::rebuildStairLayerCache() {
         static_cast<size_t>(stair_mask_width_ * stair_mask_height_), -1);
 
     auto is_black_cell = [&](int cls) {
-        return (cls == 1) || (stair_layer_cfg_.enable_oneway_stair_down && cls == 3);
+        return (cls == 1) || (cls == 5) ||
+               (stair_layer_cfg_.enable_oneway_stair_down && cls == 3);
     };
 
     for (int my = 0; my < stair_mask_height_; ++my) {
@@ -557,6 +568,8 @@ void LayeredMapManager::rebuildStairLayerCache() {
                 const int cls = class_map[cur];
                 if (cls == 3) {
                     acc.is_oneway_down = true;
+                } else if (cls == 5) {
+                    acc.is_level2 = true;
                 }
                 acc.black_cells.emplace_back(cx, cy);
 
@@ -587,7 +600,8 @@ void LayeredMapManager::rebuildStairLayerCache() {
     }
 
     std::unordered_set<int> clear_idx_set;
-    clear_idx_set.reserve((bidir_black_cells.size() + oneway_black_cells.size()) * 8);
+    clear_idx_set.reserve(
+        (bidir_black_cells.size() + level2_black_cells.size() + oneway_black_cells.size()) * 8);
 
     const int search_r = std::max(1, stair_layer_cfg_.pair_search_radius_cells);
     const double clear_high_m = std::max(
@@ -742,6 +756,7 @@ void LayeredMapManager::rebuildStairLayerCache() {
     };
 
     process_stair_type(bidir_black_cells, 2, false);
+    process_stair_type(level2_black_cells, 6, false);
     if (stair_layer_cfg_.enable_oneway_stair_down) {
         process_stair_type(oneway_black_cells, 4, true);
     }
@@ -832,12 +847,14 @@ void LayeredMapManager::rebuildStairLayerCache() {
         primitive.crossing_band.high_side_dist_m = clear_high_m;
         primitive.crossing_band.tangent_half_width_m = half_length;
         primitive.is_oneway_down = acc.is_oneway_down;
+        primitive.is_level2 = acc.is_level2;
         stair_primitives_.push_back(primitive);
     }
 
     RCLCPP_INFO(logger_,
-                "stair_layer: 双向黑线=%zu, 单向黑线=%zu, 对象=%zu, 清除栅格=%zu, 禁止边=%zu",
+                "stair_layer: 双向黑线=%zu, 二级黑线=%zu, 单向黑线=%zu, 对象=%zu, 清除栅格=%zu, 禁止边=%zu",
                 bidir_black_cells.size(),
+                level2_black_cells.size(),
                 oneway_black_cells.size(),
                 stair_primitives_.size(),
                 stair_clear_indices_.size(),

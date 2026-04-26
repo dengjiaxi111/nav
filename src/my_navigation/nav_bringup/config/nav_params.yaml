@@ -77,6 +77,11 @@ nav_server:
       black_max: 20
       gray_min: 100
       gray_max: 140
+      # 二级台阶像素范围（高侧=black，低侧=gray），清除逻辑复用双向台阶
+      stair_level2_black_min: 71
+      stair_level2_black_max: 90
+      stair_level2_gray_min: 221
+      stair_level2_gray_max: 230
       pair_search_radius_cells: 4
       # 单向台阶（仅允许高->低，禁止低->高）
       enable_oneway_stair_down: true
@@ -142,6 +147,9 @@ nav_server:
       stair_raise_leg_distance_m: 0.90           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
       stair_fixed_velocity_trigger_distance_m: 0.9 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
       stair_fixed_linear_vel: 1.35
+      stair_level2_raise_leg_distance_m: 0.90    # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3 抬腿
+      stair_level2_fixed_velocity_trigger_distance_m: 0.9 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
+      stair_level2_fixed_linear_vel: 1.35        # 二级台阶：固定速度线速度(m/s)
       stair_fixed_heading_kp: 2.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
       stair_fixed_max_angular_vel: 100.0
       stair_fixed_heading_deadband: 0.05    # 固定速度航向死区(rad)，小于此值不进行航向调整，防止过近时的过度修正和震荡

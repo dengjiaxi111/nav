@@ -40,6 +40,9 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_fixed_velocity_trigger_distance_m", 0.35);
     declare_if_needed("special_terrain.stair_raise_leg_distance_m", 0.40);
     declare_if_needed("special_terrain.stair_fixed_linear_vel", 0.35);
+    declare_if_needed("special_terrain.stair_level2_raise_leg_distance_m", 0.40);
+    declare_if_needed("special_terrain.stair_level2_fixed_velocity_trigger_distance_m", 0.35);
+    declare_if_needed("special_terrain.stair_level2_fixed_linear_vel", 0.35);
     declare_if_needed("special_terrain.stair_fixed_heading_kp", 1.8);
     declare_if_needed("special_terrain.stair_fixed_max_angular_vel", 0.8);
     declare_if_needed("special_terrain.stair_fixed_heading_deadband", 0.05);
@@ -139,6 +142,12 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_raise_leg_distance_m").as_double();
     stair_fixed_linear_vel_ =
         node_->get_parameter("special_terrain.stair_fixed_linear_vel").as_double();
+    stair_level2_raise_leg_distance_m_ =
+        node_->get_parameter("special_terrain.stair_level2_raise_leg_distance_m").as_double();
+    stair_level2_fixed_velocity_trigger_distance_m_ =
+        node_->get_parameter("special_terrain.stair_level2_fixed_velocity_trigger_distance_m").as_double();
+    stair_level2_fixed_linear_vel_ =
+        node_->get_parameter("special_terrain.stair_level2_fixed_linear_vel").as_double();
     stair_fixed_heading_kp_ =
         node_->get_parameter("special_terrain.stair_fixed_heading_kp").as_double();
     stair_fixed_max_angular_vel_ =
@@ -294,9 +303,11 @@ void StairController::initialize(rclcpp::Node* node) {
     }
     if (enable_stair_fixed_velocity_strategy_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_mode 固定速度策略启用: trigger=%.2fm, v=%.2f m/s, kp=%.2f, wz_max=%.2f rad/s, deadband=%.3f rad",
+                    "stair_mode 固定速度策略启用: trigger=%.2fm, v=%.2f m/s, level2(trigger=%.2fm,v=%.2f m/s), kp=%.2f, wz_max=%.2f rad/s, deadband=%.3f rad",
                     stair_fixed_velocity_trigger_distance_m_,
                     stair_fixed_linear_vel_,
+                    stair_level2_fixed_velocity_trigger_distance_m_,
+                    stair_level2_fixed_linear_vel_,
                     stair_fixed_heading_kp_,
                     stair_fixed_max_angular_vel_,
                     stair_fixed_heading_deadband_);
@@ -378,8 +389,11 @@ nav_core::TerrainControlDecision StairController::update(
     const bool has_candidate = queryUpcomingTerrainCandidate(context, active_terrain_type_, candidate);
 
     auto is_fly = [&](TerrainType tt) { return tt == TerrainType::FLY_SLOPE; };
+    auto is_level2_stair = [&](TerrainType tt) { return tt == TerrainType::STAIR_LEVEL2; };
     auto mode_of = [&](TerrainType tt) -> uint8_t {
-        return (tt == TerrainType::STAIR) ? 1 : ((tt == TerrainType::FLY_SLOPE) ? 2 : 0);
+        return (tt == TerrainType::STAIR) ? 1 :
+               ((tt == TerrainType::FLY_SLOPE) ? 2 :
+                (is_level2_stair(tt) ? 3 : 0));
     };
     auto trigger_dist = [&](TerrainType tt) {
         return is_fly(tt) ? fly_slope_mode_trigger_distance_m_ : stair_mode_trigger_distance_m_;
@@ -388,11 +402,14 @@ nav_core::TerrainControlDecision StairController::update(
         return is_fly(tt) ? fly_slope_contact_distance_m_ : stair_contact_distance_m_;
     };
     auto raise_dist = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_raise_leg_distance_m_ : stair_raise_leg_distance_m_;
+        return is_fly(tt) ? fly_slope_raise_leg_distance_m_ :
+               (is_level2_stair(tt) ? stair_level2_raise_leg_distance_m_
+                                    : stair_raise_leg_distance_m_);
     };
     auto fix_vel_dist = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_fixed_velocity_trigger_distance_m_
-                          : stair_fixed_velocity_trigger_distance_m_;
+        return is_fly(tt) ? fly_slope_fixed_velocity_trigger_distance_m_ :
+               (is_level2_stair(tt) ? stair_level2_fixed_velocity_trigger_distance_m_
+                                    : stair_fixed_velocity_trigger_distance_m_);
     };
     auto progress_min_arc = [&](TerrainType tt) {
         return is_fly(tt) ? fly_slope_progress_min_arc_m_ : stair_progress_min_arc_m_;
@@ -415,7 +432,9 @@ nav_core::TerrainControlDecision StairController::update(
                           : enable_stair_fixed_velocity_strategy_;
     };
     auto fixed_linear_vel = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_fixed_linear_vel_ : stair_fixed_linear_vel_;
+        return is_fly(tt) ? fly_slope_fixed_linear_vel_ :
+               (is_level2_stair(tt) ? stair_level2_fixed_linear_vel_
+                                    : stair_fixed_linear_vel_);
     };
     auto fixed_heading_kp = [&](TerrainType tt) {
         return is_fly(tt) ? fly_slope_fixed_heading_kp_ : stair_fixed_heading_kp_;
@@ -875,6 +894,8 @@ const char* StairController::terrainTypeName(TerrainType terrain_type) {
             return "STAIR";
         case TerrainType::FLY_SLOPE:
             return "FLY_SLOPE";
+        case TerrainType::STAIR_LEVEL2:
+            return "STAIR_LEVEL2";
     }
     return "UNKNOWN";
 }
@@ -892,7 +913,8 @@ bool StairController::queryUpcomingTerrainCandidate(
     const bool has_fly = enable_fly_slope_mode_detection_ &&
         queryUpcomingFlySlopeCandidate(context, fly_candidate);
 
-    if (preferred_type == TerrainType::STAIR && has_stair) {
+    if ((preferred_type == TerrainType::STAIR ||
+         preferred_type == TerrainType::STAIR_LEVEL2) && has_stair) {
         candidate = stair_candidate;
         return true;
     }
@@ -992,6 +1014,9 @@ bool StairController::queryUpcomingStairCandidate(
             LayeredMapManager::StairPrimitive primitive;
             if (map_manager_->getStairPrimitiveAt(wx, wy, primitive)) {
                 candidate.feature_id = primitive.stair_id;
+                if (primitive.is_level2) {
+                    candidate.terrain_type = TerrainType::STAIR_LEVEL2;
+                }
                 candidate.center = primitive.center;
                 if (primitive.normal.norm() > 1e-6) {
                     candidate.normal = primitive.normal.normalized();
@@ -1442,12 +1467,15 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
 
     uint8_t effective_mode = mode;
     const auto now_tp = std::chrono::steady_clock::now();
-    if (effective_mode == 1) {
+    if (effective_mode == 1 || effective_mode == 3) {
+        const auto last_publish_time = (effective_mode == 3)
+            ? stair_mode_last_mode3_publish_time_
+            : stair_mode_last_mode1_publish_time_;
         if (stair_mode_reassert_block_sec_ > 0.0 &&
-            stair_mode_last_mode1_publish_time_ != std::chrono::steady_clock::time_point{}) {
-            const double elapsed_since_mode1_publish = std::chrono::duration<double>(
-                now_tp - stair_mode_last_mode1_publish_time_).count();
-            if (elapsed_since_mode1_publish < stair_mode_reassert_block_sec_) {
+            last_publish_time != std::chrono::steady_clock::time_point{}) {
+            const double elapsed_since_publish = std::chrono::duration<double>(
+                now_tp - last_publish_time).count();
+            if (elapsed_since_publish < stair_mode_reassert_block_sec_) {
                 return;
             }
         }
@@ -1463,7 +1491,9 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
         }
         stair_mode_last_assert_time_ = now_tp;
     } else if (!bypass_hold &&
-               (stair_mode_current_ == 1 || stair_mode_current_ == 2)) {
+               (stair_mode_current_ == 1 ||
+                stair_mode_current_ == 2 ||
+                stair_mode_current_ == 3)) {
         const double min_hold_sec = (stair_mode_current_ == 2)
             ? fly_slope_mode_min_hold_sec_
             : stair_mode_min_hold_sec_;
@@ -1485,11 +1515,13 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
         stair_mode_last_mode1_publish_time_ = now_tp;
     } else if (effective_mode == 2) {
         stair_mode_last_mode2_publish_time_ = now_tp;
+    } else if (effective_mode == 3) {
+        stair_mode_last_mode3_publish_time_ = now_tp;
     }
 
     if (effective_mode != stair_mode_current_) {
         RCLCPP_INFO(node_->get_logger(), "stair_mode -> %u", static_cast<unsigned>(effective_mode));
-        if (effective_mode == 1) {
+        if (effective_mode == 1 || effective_mode == 3) {
             stair_mode_enter_time_ = now_tp;
         } else {
             stair_mode_enter_time_ = std::chrono::steady_clock::time_point{};
@@ -1656,7 +1688,7 @@ void StairController::syncRuntimeBlockedUphillStairs(
 
 void StairController::applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd,
                                                double control_rate_hz) {
-    if (stair_mode_current_ != 1 && stair_mode_current_ != 2) {
+    if (stair_mode_current_ != 1 && stair_mode_current_ != 2 && stair_mode_current_ != 3) {
         stair_mode_omega_limiter_initialized_ = false;
         return;
     }

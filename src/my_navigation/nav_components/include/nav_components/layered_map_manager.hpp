@@ -138,6 +138,10 @@ public:
         int black_max{40};
         int gray_min{90};
         int gray_max{170};
+        int stair_level2_black_min{-1};
+        int stair_level2_black_max{-1};
+        int stair_level2_gray_min{-1};
+        int stair_level2_gray_max{-1};
         int pair_search_radius_cells{4};
         bool enable_oneway_stair_down{false};
         int oneway_black_min{41};
@@ -162,6 +166,7 @@ public:
         double half_length{0.0};
         StairCrossingBand crossing_band{};
         bool is_oneway_down{false};
+        bool is_level2{false};
     };
 
     struct FlySlopeLayerConfig {
