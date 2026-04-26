@@ -48,6 +48,7 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_fixed_heading_deadband", 0.05);
     declare_if_needed("special_terrain.stair_contact_distance_m", 0.25);
     declare_if_needed("special_terrain.stair_commit_success_dist_m", 0.18);
+    declare_if_needed("special_terrain.stair_level2_commit_success_dist_m", 0.18);
     declare_if_needed("special_terrain.stair_verify_timeout_sec", 1.2);
     declare_if_needed("special_terrain.stair_progress_timeout_sec", 1.2);
     declare_if_needed("special_terrain.stair_progress_min_arc_m", 0.18);
@@ -158,6 +159,8 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_contact_distance_m").as_double();
     stair_commit_success_dist_m_ =
         node_->get_parameter("special_terrain.stair_commit_success_dist_m").as_double();
+    stair_level2_commit_success_dist_m_ =
+        node_->get_parameter("special_terrain.stair_level2_commit_success_dist_m").as_double();
     stair_verify_timeout_sec_ =
         node_->get_parameter("special_terrain.stair_verify_timeout_sec").as_double();
     stair_progress_timeout_sec_ =
@@ -314,9 +317,10 @@ void StairController::initialize(rclcpp::Node* node) {
     }
     if (enable_stair_fsm_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, failA_miss=%d, backoff=%.2fm, retry_max=%d, cooldown(en=%d,th=%d,dur=%.1fs)",
+                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, failA_miss=%d, backoff=%.2fm, retry_max=%d, cooldown(en=%d,th=%d,dur=%.1fs)",
                     stair_contact_distance_m_,
                     stair_commit_success_dist_m_,
+                    stair_level2_commit_success_dist_m_,
                     stair_verify_timeout_sec_,
                     stair_progress_timeout_sec_,
                     stair_progress_min_arc_m_,
@@ -418,7 +422,9 @@ nav_core::TerrainControlDecision StairController::update(
         return is_fly(tt) ? fly_slope_progress_timeout_sec_ : stair_progress_timeout_sec_;
     };
     auto commit_success_dist = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_commit_success_dist_m_ : stair_commit_success_dist_m_;
+        return is_fly(tt) ? fly_slope_commit_success_dist_m_ :
+               (is_level2_stair(tt) ? stair_level2_commit_success_dist_m_
+                                    : stair_commit_success_dist_m_);
     };
     auto verify_timeout = [&](TerrainType tt) {
         return is_fly(tt) ? fly_slope_verify_timeout_sec_ : stair_verify_timeout_sec_;

@@ -176,6 +176,7 @@ private:
     // 阶段B FSM 参数（不含冷却）
     double stair_contact_distance_m_{0.25};
     double stair_commit_success_dist_m_{0.18};
+    double stair_level2_commit_success_dist_m_{0.18};
     double stair_verify_timeout_sec_{1.2};
     double stair_progress_timeout_sec_{1.2};
     double stair_progress_min_arc_m_{0.18};

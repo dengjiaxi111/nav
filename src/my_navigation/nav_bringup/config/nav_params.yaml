@@ -135,6 +135,7 @@ nav_server:
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
       stair_contact_distance_m: 1.00              # 接触判定阈值(米)
       stair_commit_success_dist_m: 0.10          # 越过台阶中心线后的成功法向距离阈值(米)
+      stair_level2_commit_success_dist_m: 0.8   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
       stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
 
       # [失败判据] A + B(弧长进展超时)
@@ -147,9 +148,9 @@ nav_server:
       stair_raise_leg_distance_m: 0.90           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
       stair_fixed_velocity_trigger_distance_m: 0.9 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
       stair_fixed_linear_vel: 1.35
-      stair_level2_raise_leg_distance_m: 0.90    # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3 抬腿
+      stair_level2_raise_leg_distance_m: 0.3    # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3 抬腿
       stair_level2_fixed_velocity_trigger_distance_m: 0.9 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
-      stair_level2_fixed_linear_vel: 1.35        # 二级台阶：固定速度线速度(m/s)
+      stair_level2_fixed_linear_vel: 1.7        # 二级台阶：固定速度线速度(m/s)
       stair_fixed_heading_kp: 2.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
       stair_fixed_max_angular_vel: 100.0
       stair_fixed_heading_deadband: 0.05    # 固定速度航向死区(rad)，小于此值不进行航向调整，防止过近时的过度修正和震荡
