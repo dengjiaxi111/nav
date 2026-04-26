@@ -494,11 +494,20 @@ nav_core::ControlResult NMPC::computeVelocity(
             x0[3], x0[5], nearest_idx_);
     }
     
-    // 更新状态
+    // 更新状态: last_state_[3]/[4] 保存实际速度估计, last_state_[5]/[6] 保存命令速度状态.
+    // 在开环或低里程计反馈权重下, 用最终下发命令按一阶滞后模型滚动一拍,
+    // 避免把实际速度直接写成命令速度而抹掉模型中的滞后误差.
+    const double tau_v = std::max(0.05, params_.vel_lag_tau);
+    const double tau_w = std::max(0.05, params_.omega_lag_tau);
+    const double v_lag_alpha = 1.0 - std::exp(-dt / tau_v);
+    const double w_lag_alpha = 1.0 - std::exp(-dt / tau_w);
+    const double v_est_next = x0[3] + v_lag_alpha * (v_cmd - x0[3]);
+    const double w_est_next = x0[4] + w_lag_alpha * (omega_cmd - x0[4]);
+
     last_state_ = x0;
-    last_state_[3] = v_cmd;      // 开环回退时作为速度估计
-    last_state_[4] = omega_cmd;
-    last_state_[5] = v_cmd;      // 命令状态缓存
+    last_state_[3] = v_est_next;
+    last_state_[4] = w_est_next;
+    last_state_[5] = v_cmd;
     last_state_[6] = omega_cmd;
     last_control_ = u_opt;
     
