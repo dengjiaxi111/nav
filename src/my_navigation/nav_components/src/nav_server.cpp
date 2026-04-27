@@ -44,6 +44,7 @@ public:
         declare_parameter("yaw_tolerance", 0.1);
         declare_parameter("controller_timeout", 10.0);
         declare_parameter("controller_progress_threshold", 0.15);
+        declare_parameter("recovery.max_recovery", 3);
         declare_parameter("decision_bridge.goal_dedup_tolerance", 0.05);
         
         control_rate_ = get_parameter("control_rate").as_double();
@@ -52,6 +53,8 @@ public:
         yaw_tolerance_ = get_parameter("yaw_tolerance").as_double();
         controller_timeout_ = get_parameter("controller_timeout").as_double();
         controller_progress_threshold_ = get_parameter("controller_progress_threshold").as_double();
+        const int max_recovery = static_cast<int>(get_parameter("recovery.max_recovery").as_int());
+        fsm_.setMaxRecovery(std::max(0, max_recovery));
         decision_goal_dedup_tolerance_ =
             get_parameter("decision_bridge.goal_dedup_tolerance").as_double();
         
@@ -146,6 +149,7 @@ public:
         RCLCPP_INFO(get_logger(), "control_rate: %.1f Hz", control_rate_);
         RCLCPP_INFO(get_logger(), "controller_timeout: %.1f s", controller_timeout_);
         RCLCPP_INFO(get_logger(), "controller_progress_threshold: %.2f m", controller_progress_threshold_);
+        RCLCPP_INFO(get_logger(), "recovery.max_recovery: %d", std::max(0, max_recovery));
         RCLCPP_INFO(get_logger(), "path_check_period: %.2f s", path_check_period_);
         RCLCPP_INFO(get_logger(), "path_lateral_tolerance: %.3f m ", path_lateral_tolerance_);
         RCLCPP_INFO(get_logger(), "path_io.enable_save_planned_path: %d", enable_save_planned_path_);
@@ -782,6 +786,56 @@ private:
         
         auto backup = std::make_shared<nav_components::BackupRecovery>();
         backup->initialize(this, vel_pub);
+        backup->setSafetyChecker(
+            [this](const geometry_msgs::msg::PoseStamped& pose,
+                   double check_distance,
+                   std::string* reason) -> bool {
+                auto costmap = map_manager_ ? map_manager_->getCostmap() : nullptr;
+                if (!costmap) {
+                    if (reason) {
+                        *reason = "costmap 不可用";
+                    }
+                    return false;
+                }
+
+                tf2::Quaternion q;
+                tf2::fromMsg(pose.pose.orientation, q);
+                double roll, pitch, yaw;
+                tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+                const double resolution = costmap->info.resolution;
+                const double origin_x = costmap->info.origin.position.x;
+                const double origin_y = costmap->info.origin.position.y;
+                const int width = static_cast<int>(costmap->info.width);
+                const int height = static_cast<int>(costmap->info.height);
+                const double step = std::max(0.02, resolution * 0.5);
+                const double max_dist = std::max(0.0, check_distance);
+                const double rear_yaw = yaw + M_PI;
+
+                for (double dist = step; dist <= max_dist + 1e-6; dist += step) {
+                    const double wx = pose.pose.position.x + dist * std::cos(rear_yaw);
+                    const double wy = pose.pose.position.y + dist * std::sin(rear_yaw);
+                    const int mx = static_cast<int>((wx - origin_x) / resolution);
+                    const int my = static_cast<int>((wy - origin_y) / resolution);
+                    if (mx < 0 || mx >= width || my < 0 || my >= height) {
+                        if (reason) {
+                            *reason = "后退轨迹越出 costmap";
+                        }
+                        return false;
+                    }
+
+                    const int idx = my * width + mx;
+                    const int8_t cost = costmap->data[idx];
+                    if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
+                        if (reason) {
+                            *reason = "后退轨迹存在障碍/未知区域";
+                        }
+                        return false;
+                    }
+                }
+
+                return true;
+            });
         recovery_mgr_.addRecovery(backup);
         
         auto spin = std::make_shared<nav_components::SpinRecovery>();

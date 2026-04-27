@@ -10,7 +10,7 @@ nav_server:
     # 地图路径由 navigation.launch.py 注入
     map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
     control_rate: 50.0
-    goal_timeout: 60.0
+    goal_timeout: 60.0      # 总任务超时(s)，从收到目标开始超过该时间仍未完成则触发 TIMEOUT recovery
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
     
@@ -20,8 +20,8 @@ nav_server:
     odom_frame: "odom"
     
     # 控制器超时保护
-    controller_timeout: 10.0  # 控制器无进展超时(秒)
-    controller_progress_threshold: 0.15  # 进展检测距离阈值(米)
+    controller_timeout: 10.0  # 控制器无进展超时(s)，超过该时间无有效位移则触发 CONTROL_FAILED recovery
+    controller_progress_threshold: 0.15  # 控制器有效进展距离阈值(m)，移动超过该距离才刷新进展时间
     
     # 周期性路径检查 (动态障碍物应对，默认启用)
     path_check_period: 0.1  # 路径检查周期(秒) - 降低以快速响应动态障碍物
@@ -417,10 +417,28 @@ nav_server:
     
     # 恢复行为
     recovery:
-      backup_dist: 0.3
-      backup_vel: -0.2
-      spin_angle: 3.14
-      spin_vel: 0.5
+      # 恢复触发次数上限：同一导航任务中 triggerRecovery() 达到该次数后直接 FAILED
+      max_recovery: 3
+      
+      # 后退恢复：用于从局部卡住、控制失败等状态中先退开一点，再重新规划
+      backup_dist: 0.3              # 后退目标距离(m)，达到该位移后认为后退动作完成
+      backup_vel: -0.5              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
+      backup_timeout: 2.0           # 后退动作最大执行时间(s)，超时则该恢复动作失败
+      
+      # 恢复动作进展检测：防止底盘卡住后一直发送恢复速度
+      min_progress: 0.02            # 后退恢复的最小有效位移(m)，超过该值才刷新进展时间
+      progress_timeout: 1.0         # 后退时允许无有效进展的最长时间(s)，超过则判定失败
+      
+      # 后退安全检查：执行后退前沿 base_link 后方采样 costmap，避免盲退撞障碍
+      enable_safety_check: true     # 是否启用后退轨迹安全检查
+      safety_check_distance: 0.5    # 后退方向安全检查距离(m)，建议 >= backup_dist
+      
+      # 旋转恢复：后退不可行或失败后，原地旋转以改变姿态/刷新局部观测
+      spin_angle: 3.14              # 旋转目标角度(rad)，3.14 约等于原地转半圈
+      spin_vel: 0.5                 # 旋转角速度(rad/s)
+      spin_timeout: 5.0             # 旋转动作最大执行时间(s)，超时则该恢复动作失败
+      spin_min_progress: 0.03       # 旋转恢复的最小有效角度进展(rad)
+      spin_progress_timeout: 1.5    # 旋转时允许无有效进展的最长时间(s)，超过则判定失败
     
     # 脱困系统 (ESCAPING 状态)
     escape:
@@ -438,7 +456,7 @@ nav_server:
       position_tolerance: 0.1        # 到达位置容差 (m)
       
       # 超时保护
-      timeout: 10.0                   # 脱困最大时长 (秒)，超时进入 RECOVERY
+      timeout: 10.0                   # 脱困最大时长(s)，超时触发 STUCK recovery
 
 two_point_patrol:
   ros__parameters:
