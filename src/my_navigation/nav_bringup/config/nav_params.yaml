@@ -384,7 +384,8 @@ nav_server:
       horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
-      pivot_turn_heading_thresh: 1.0  # 航向误差>该值时原地转向 (rad)
+      pivot_turn_heading_thresh: 3.00  # 航向误差>该值时原地转向 (rad)
+      pivot_turn_startup_only: false  # true=仅新路径起步阶段生效, false=控制过程中任意时刻生效
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
       chassis_odom_topic: "/Odometry" # 需为 nav_msgs/msg/Odometry，避免与 /ChassisOdom 多类型冲突

@@ -192,6 +192,7 @@ private:
     // 终点减速与起步对齐（参考轨迹整形）
         double goal_crawl_speed = 0.15;          // 终点前爬行速度下限 (m/s)
         double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
+        bool pivot_turn_startup_only = true;      // true=仅起步阶段原地转向, false=控制全程生效
 
     // 速度规划（第一批参数）
     bool speed_profile_enable = true;

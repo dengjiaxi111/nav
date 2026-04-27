@@ -47,6 +47,7 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.use_omega_ref_from_path", params_.use_omega_ref_from_path);
     node_->declare_parameter("nmpc.goal_crawl_speed", params_.goal_crawl_speed);
     node_->declare_parameter("nmpc.pivot_turn_heading_thresh", params_.pivot_turn_heading_thresh);
+    node_->declare_parameter("nmpc.pivot_turn_startup_only", params_.pivot_turn_startup_only);
     node_->declare_parameter("nmpc.speed_profile.enable", params_.speed_profile_enable);
     node_->declare_parameter("nmpc.speed_profile.v_cruise", params_.speed_profile_v_cruise);
     node_->declare_parameter("nmpc.speed_profile.v_min", params_.speed_profile_v_min);
@@ -102,6 +103,8 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.goal_crawl_speed = node_->get_parameter("nmpc.goal_crawl_speed").as_double();
     params_.pivot_turn_heading_thresh =
         node_->get_parameter("nmpc.pivot_turn_heading_thresh").as_double();
+    params_.pivot_turn_startup_only =
+        node_->get_parameter("nmpc.pivot_turn_startup_only").as_bool();
     params_.speed_profile_enable = node_->get_parameter("nmpc.speed_profile.enable").as_bool();
     params_.speed_profile_v_cruise =
         node_->get_parameter("nmpc.speed_profile.v_cruise").as_double();
@@ -605,6 +608,9 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
             } else if (name == "nmpc.pivot_turn_heading_thresh") {
                 params_.pivot_turn_heading_thresh = p.as_double();
                 changed = true;
+            } else if (name == "nmpc.pivot_turn_startup_only") {
+                params_.pivot_turn_startup_only = p.as_bool();
+                changed = true;
             } else if (name == "nmpc.speed_profile.enable") {
                 params_.speed_profile_enable = p.as_bool();
                 changed = true;
@@ -912,13 +918,13 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 }
 
 
-                // 起步/大角度场景：优先原地转向对齐，再前进
+                // 大角度场景：按参数选择仅起步阶段或控制全程优先原地转向对齐
                 double d_theta = theta - robot_theta_now;
                 while (d_theta > M_PI) d_theta -= 2.0 * M_PI;
                 while (d_theta < -M_PI) d_theta += 2.0 * M_PI;
                 double heading_err = std::abs(d_theta);
                 if (heading_err > params_.pivot_turn_heading_thresh) {
-                    if (startup_pivot_phase_active_) {
+                    if (!params_.pivot_turn_startup_only || startup_pivot_phase_active_) {
                         desired_v = 0.0;
                         pivot_turn_stop = true;
                     }
