@@ -81,6 +81,8 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.fly_slope_pre_align_return_max_angular_vel", 1.0);
     declare_if_needed("special_terrain.enable_fly_slope_pre_align_turn_in_place", true);
     declare_if_needed("special_terrain.fly_slope_pre_align_heading_kp", 2.0);
+    declare_if_needed("special_terrain.fly_slope_pre_align_lateral_kp", 1.0);
+    declare_if_needed("special_terrain.fly_slope_pre_align_turn_in_place_error_rad", 0.5);
     declare_if_needed("special_terrain.fly_slope_pre_align_max_angular_vel", 1.2);
     declare_if_needed("special_terrain.enable_fly_slope_fixed_velocity_strategy", false);
     declare_if_needed("special_terrain.fly_slope_fixed_velocity_trigger_distance_m", 0.35);
@@ -230,8 +232,14 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.enable_fly_slope_pre_align_turn_in_place").as_bool();
     fly_slope_pre_align_heading_kp_ =
         node_->get_parameter("special_terrain.fly_slope_pre_align_heading_kp").as_double();
+    fly_slope_pre_align_lateral_kp_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_lateral_kp").as_double();
+    fly_slope_pre_align_turn_in_place_error_rad_ =
+        node_->get_parameter("special_terrain.fly_slope_pre_align_turn_in_place_error_rad").as_double();
     fly_slope_pre_align_max_angular_vel_ =
         node_->get_parameter("special_terrain.fly_slope_pre_align_max_angular_vel").as_double();
+    fly_slope_pre_align_turn_in_place_error_rad_ =
+        std::max(0.0, fly_slope_pre_align_turn_in_place_error_rad_);
     fly_slope_pre_align_max_angular_vel_ =
         std::max(0.0, fly_slope_pre_align_max_angular_vel_);
     enable_fly_slope_fixed_velocity_strategy_ =
@@ -334,7 +342,7 @@ void StairController::initialize(rclcpp::Node* node) {
 
     if (enable_fly_slope_mode_detection_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "fly_slope_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, entry_heading_err_max=%.2f rad, pre_align_lateral_max=%.2fm, return(v_max=%.2f,wz_max=%.2f), pre_align_turn(en=%d,kp=%.2f,wz_max=%.2f)",
+                    "fly_slope_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, entry_heading_err_max=%.2f rad, pre_align_lateral_max=%.2fm, return(v_max=%.2f,wz_max=%.2f), pre_align_turn(en=%d,kp=%.2f,lat_kp=%.2f,turn_err=%.2f,wz_max=%.2f)",
                     fly_slope_mode_trigger_distance_m_,
                     fly_slope_mode_lookahead_dist_m_,
                     fly_slope_mode_sample_step_m_,
@@ -344,6 +352,8 @@ void StairController::initialize(rclcpp::Node* node) {
                     fly_slope_pre_align_return_max_angular_vel_,
                     enable_fly_slope_pre_align_turn_in_place_,
                     fly_slope_pre_align_heading_kp_,
+                    fly_slope_pre_align_lateral_kp_,
+                    fly_slope_pre_align_turn_in_place_error_rad_,
                     fly_slope_pre_align_max_angular_vel_);
     }
 }
@@ -492,14 +502,10 @@ nav_core::TerrainControlDecision StairController::update(
 
     double heading_err = 0.0;
     const bool has_heading_ref = queryHeadingErrorToPathNearRobot(context, heading_err);
-    double lateral_err = 0.0;
-    const bool has_lateral_ref = queryLateralErrorToPathNearRobot(context, lateral_err);
     const double entry_heading_error_max = is_fly(active_terrain_type_) ? 
         fly_slope_mode_entry_heading_error_max_rad_ : stair_mode_entry_heading_error_max_rad_;
     const bool heading_aligned = has_heading_ref &&
         (std::abs(heading_err) <= entry_heading_error_max);
-    const bool fly_slope_lateral_aligned = has_lateral_ref &&
-        (lateral_err <= fly_slope_pre_align_lateral_error_max_m_);
 
     auto enter_fail_backoff = [&](const char* reason) {
         ++active_attempt_count_;
@@ -532,7 +538,6 @@ nav_core::TerrainControlDecision StairController::update(
                 precontact_miss_counter_ = 0;
                 transitionFsmState(StairFsmState::PRE_ALIGN, "candidate in trigger window");
             }
-            decision = nav_core::TerrainControlDecision::PASS_THROUGH;
             break;
         }
 
@@ -561,44 +566,63 @@ nav_core::TerrainControlDecision StairController::update(
             // PRE_ALIGN 阶段尚未下令抬腿，因此不应再检查判据A短腿失败
             precontact_miss_counter_ = 0;
 
-            if (active_terrain_type_ == TerrainType::FLY_SLOPE &&
-                has_lateral_ref &&
-                !fly_slope_lateral_aligned) {
-                out_cmd = base_cmd;
-                out_cmd.linear.x = std::clamp(
-                    out_cmd.linear.x,
-                    -fly_slope_pre_align_return_max_linear_vel_,
-                    fly_slope_pre_align_return_max_linear_vel_);
-                out_cmd.linear.y = 0.0;
-                out_cmd.angular.z = std::clamp(
-                    out_cmd.angular.z,
-                    -fly_slope_pre_align_return_max_angular_vel_,
-                    fly_slope_pre_align_return_max_angular_vel_);
-                decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
-                break;
-            }
+            if (active_terrain_type_ == TerrainType::FLY_SLOPE) {
+                PathAlignReference align_ref;
+                if (queryFlySlopePreAlignReference(context, active_feature_, align_ref)) {
+                    tf2::Quaternion q;
+                    tf2::fromMsg(context.current_pose.pose.orientation, q);
+                    double roll, pitch, yaw;
+                    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-            if (active_terrain_type_ == TerrainType::FLY_SLOPE &&
-                enable_fly_slope_pre_align_turn_in_place_ &&
-                has_heading_ref &&
-                !heading_aligned) {
-                out_cmd.linear.x = 0.0;
-                out_cmd.linear.y = 0.0;
-                out_cmd.angular.z = std::clamp(
-                    fly_slope_pre_align_heading_kp_ * heading_err,
-                    -fly_slope_pre_align_max_angular_vel_,
-                    fly_slope_pre_align_max_angular_vel_);
-                decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
-                break;
+                    const double fly_heading_err = normalizeAngle(align_ref.heading_rad - yaw);
+                    out_cmd.linear.y = 0.0;
+                    if (enable_fly_slope_pre_align_turn_in_place_ &&
+                        std::abs(fly_heading_err) > fly_slope_pre_align_turn_in_place_error_rad_) {
+                        out_cmd.linear.x = 0.0;
+                        out_cmd.angular.z = std::clamp(
+                            fly_slope_pre_align_heading_kp_ * fly_heading_err,
+                            -fly_slope_pre_align_max_angular_vel_,
+                            fly_slope_pre_align_max_angular_vel_);
+                    } else {
+                        const double abs_base_vx = std::abs(base_cmd.linear.x);
+                        const double min_align_vx =
+                            (fly_slope_pre_align_return_max_linear_vel_ > 1e-6) ? 0.10 : 0.0;
+                        const double target_vx = std::clamp(
+                            abs_base_vx,
+                            min_align_vx,
+                            fly_slope_pre_align_return_max_linear_vel_);
+                        const double lateral_term =
+                            -fly_slope_pre_align_lateral_kp_ *
+                            std::atan2(align_ref.signed_lateral_error_m,
+                                       std::max(0.10, target_vx));
+                        out_cmd.linear.x = target_vx;
+                        out_cmd.angular.z = std::clamp(
+                            fly_slope_pre_align_heading_kp_ * fly_heading_err + lateral_term,
+                            -fly_slope_pre_align_return_max_angular_vel_,
+                            fly_slope_pre_align_return_max_angular_vel_);
+                    }
+                    decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+                } else {
+                    out_cmd = base_cmd;
+                    out_cmd.linear.x = std::clamp(
+                        out_cmd.linear.x,
+                        -fly_slope_pre_align_return_max_linear_vel_,
+                        fly_slope_pre_align_return_max_linear_vel_);
+                    out_cmd.linear.y = 0.0;
+                    out_cmd.angular.z = std::clamp(
+                        out_cmd.angular.z,
+                        -fly_slope_pre_align_return_max_angular_vel_,
+                        fly_slope_pre_align_return_max_angular_vel_);
+                    decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+                }
             }
 
             if (fsm_state_ == StairFsmState::PRE_ALIGN &&
                 candidate.dist_to_feature_m <= contact_dist(active_terrain_type_) &&
-                heading_aligned &&
-                (!is_fly(active_terrain_type_) || fly_slope_lateral_aligned)) {
+                (is_fly(active_terrain_type_) || heading_aligned)) {
                 transitionFsmState(StairFsmState::COMMIT_ASCENT,
-                                   is_fly(active_terrain_type_)
-                                       ? "contact + lateral + heading aligned"
+                                    is_fly(active_terrain_type_)
+                                       ? "contact"
                                        : "contact + heading aligned");
                 precontact_miss_counter_ = 0;
                 if (!computePathArcAtRobot(context, commit_arc_start_m_)) {
@@ -607,7 +631,6 @@ nav_core::TerrainControlDecision StairController::update(
                 commit_progress_start_time_ = std::chrono::steady_clock::now();
             }
 
-            decision = nav_core::TerrainControlDecision::PASS_THROUGH;
             break;
         }
 
@@ -1396,6 +1419,59 @@ bool StairController::queryLateralErrorToPathNearRobot(
     }
 
     lateral_err_m = std::sqrt(best_dist2);
+    return true;
+}
+
+bool StairController::queryFlySlopePreAlignReference(
+    const nav_core::TerrainControlContext& context,
+    const TerrainCandidateInfo& feature,
+    PathAlignReference& reference) const {
+    reference = PathAlignReference{};
+    const auto& poses = context.current_path.poses;
+    if (poses.size() < 2 || feature.terrain_type != TerrainType::FLY_SLOPE) {
+        return false;
+    }
+
+    const Eigen::Vector2d robot_pos(context.current_pose.pose.position.x,
+                                    context.current_pose.pose.position.y);
+
+    bool found = false;
+    double best_dist2 = std::numeric_limits<double>::infinity();
+    Eigen::Vector2d best_dir = Eigen::Vector2d::Zero();
+    Eigen::Vector2d best_projection = Eigen::Vector2d::Zero();
+
+    for (size_t i = 0; i + 1 < poses.size(); ++i) {
+        const Eigen::Vector2d a(poses[i].pose.position.x, poses[i].pose.position.y);
+        const Eigen::Vector2d b(poses[i + 1].pose.position.x, poses[i + 1].pose.position.y);
+        const Eigen::Vector2d ab = b - a;
+        const double len = ab.norm();
+        if (len < 1e-6) {
+            continue;
+        }
+
+        const Eigen::Vector2d dir = ab / len;
+        const double robot_t = std::clamp((robot_pos - a).dot(ab) / ab.squaredNorm(), 0.0, 1.0);
+        const Eigen::Vector2d robot_proj = a + robot_t * ab;
+        const double dist2 = (robot_pos - robot_proj).squaredNorm();
+        if (!found || dist2 < best_dist2) {
+            found = true;
+            best_dist2 = dist2;
+            best_dir = dir;
+            best_projection = robot_proj;
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+
+    reference.valid = true;
+    reference.projection = best_projection;
+    reference.direction = best_dir;
+    reference.heading_rad = std::atan2(best_dir.y(), best_dir.x());
+    const Eigen::Vector2d err_vec = robot_pos - reference.projection;
+    reference.signed_lateral_error_m = best_dir.x() * err_vec.y() -
+        best_dir.y() * err_vec.x();
     return true;
 }
 

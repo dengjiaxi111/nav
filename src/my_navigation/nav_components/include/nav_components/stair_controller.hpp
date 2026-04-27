@@ -55,6 +55,14 @@ private:
         double half_length{0.0};
     };
 
+    struct PathAlignReference {
+        bool valid{false};
+        Eigen::Vector2d projection{Eigen::Vector2d::Zero()};
+        Eigen::Vector2d direction{Eigen::Vector2d::Zero()};
+        double heading_rad{0.0};
+        double signed_lateral_error_m{0.0};
+    };
+
     static double normalizeAngle(double angle);
     static const char* fsmStateName(StairFsmState state);
     static const char* terrainTypeName(TerrainType terrain_type);
@@ -72,6 +80,9 @@ private:
                                           double& heading_err_rad) const;
     bool queryLateralErrorToPathNearRobot(const nav_core::TerrainControlContext& context,
                                           double& lateral_err_m) const;
+    bool queryFlySlopePreAlignReference(const nav_core::TerrainControlContext& context,
+                                        const TerrainCandidateInfo& feature,
+                                        PathAlignReference& reference) const;
     bool computePathArcAtRobot(const nav_core::TerrainControlContext& context,
                                double& arc_m) const;
     bool isStairInCooldown(int stair_id,
@@ -143,6 +154,8 @@ private:
     double fly_slope_pre_align_return_max_angular_vel_{1.0};
     bool enable_fly_slope_pre_align_turn_in_place_{true};
     double fly_slope_pre_align_heading_kp_{2.0};
+    double fly_slope_pre_align_lateral_kp_{1.0};
+    double fly_slope_pre_align_turn_in_place_error_rad_{0.5};
     double fly_slope_pre_align_max_angular_vel_{1.2};
     bool enable_fly_slope_fixed_velocity_strategy_{false};
     double fly_slope_fixed_velocity_trigger_distance_m_{0.35};

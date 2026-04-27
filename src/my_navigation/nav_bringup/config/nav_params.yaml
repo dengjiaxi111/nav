@@ -188,11 +188,13 @@ nav_server:
       fly_slope_mode_omega_slew_rate_rad_s2: 50.0      # mode=2 角速度斜率限幅(rad/s^2)
 
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
-      fly_slope_pre_align_lateral_error_max_m: 0.03    # PRE_ALIGN -> COMMIT 前允许的最大横向离线距离(米)
-      fly_slope_pre_align_return_max_linear_vel: 0.50  # 横向离线时慢速回线的线速度上限(m/s)
-      fly_slope_pre_align_return_max_angular_vel: 6.0  # 横向离线时慢速回线的角速度上限(rad/s)
-      enable_fly_slope_pre_align_turn_in_place: true   # PRE_ALIGN 中若航向未对齐，先原地转正再允许进入 COMMIT
-      fly_slope_pre_align_heading_kp: 3.0              # PRE_ALIGN 原地对齐角速度增益
+      fly_slope_pre_align_lateral_error_max_m: 0.03    # PRE_ALIGN 对齐监控阈值(米)，飞坡 COMMIT 不再以此作为硬门槛
+      fly_slope_pre_align_return_max_linear_vel: 0.50  # PRE_ALIGN 飞坡垂直段跟踪线速度上限(m/s)
+      fly_slope_pre_align_return_max_angular_vel: 6.0  # PRE_ALIGN 飞坡垂直段跟踪角速度上限(rad/s)
+      enable_fly_slope_pre_align_turn_in_place: true   # PRE_ALIGN 中若航向误差过大，先原地粗对齐
+      fly_slope_pre_align_heading_kp: 3.0              # PRE_ALIGN 飞坡垂直段航向对齐角速度增益
+      fly_slope_pre_align_lateral_kp: 1.0              # PRE_ALIGN 飞坡垂直段有符号横向误差修正增益
+      fly_slope_pre_align_turn_in_place_error_rad: 0.5 # PRE_ALIGN 触发原地粗对齐的航向误差阈值(rad)
       fly_slope_pre_align_max_angular_vel: 6.0         # PRE_ALIGN 原地对齐角速度上限(rad/s)
       fly_slope_contact_distance_m: 2.5              # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
       fly_slope_commit_success_dist_m: 1.0           # COMMIT/VERIFY 成功判定法向距离阈值(米)
