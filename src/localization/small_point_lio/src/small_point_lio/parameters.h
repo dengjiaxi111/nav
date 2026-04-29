@@ -15,6 +15,7 @@ namespace small_point_lio {
         int point_filter_num;
         float min_distance_squared;
         float max_distance_squared;
+        Eigen::Vector3f base_link_to_lidar_xyz = Eigen::Vector3f::Zero();
         bool space_downsample;
         float space_downsample_leaf_size;
 

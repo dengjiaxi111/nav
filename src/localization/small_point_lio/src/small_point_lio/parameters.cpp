@@ -15,6 +15,16 @@ namespace small_point_lio {
         auto max_distance = node.declare_parameter<float>("max_distance");
         min_distance_squared = min_distance * min_distance;
         max_distance_squared = max_distance * max_distance;
+        std::vector<double> base_link_to_lidar_xyz_temp =
+                node.declare_parameter<std::vector<double>>("base_link_to_lidar_xyz", {0.0, 0.0, 0.0});
+        if (base_link_to_lidar_xyz_temp.size() != 3) {
+            RCLCPP_WARN(node.get_logger(), "base_link_to_lidar_xyz size must be 3, use zero offset");
+            base_link_to_lidar_xyz.setZero();
+        } else {
+            base_link_to_lidar_xyz << static_cast<float>(base_link_to_lidar_xyz_temp[0]),
+                    static_cast<float>(base_link_to_lidar_xyz_temp[1]),
+                    static_cast<float>(base_link_to_lidar_xyz_temp[2]);
+        }
         space_downsample = node.declare_parameter<bool>("space_downsample");
         space_downsample_leaf_size = node.declare_parameter<float>("space_downsample_leaf_size");
 

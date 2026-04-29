@@ -26,8 +26,8 @@ namespace small_point_lio {
         for (size_t i = 0; i < pointcloud.size(); i++) {
             const auto &point = pointcloud[i];
 
-            float dist = point.position.squaredNorm(); 
-            
+            float dist = (point.position + parameters->base_link_to_lidar_xyz).squaredNorm();
+
             if (dist < parameters->min_distance_squared || dist > parameters->max_distance_squared) {
                 continue;
             }
