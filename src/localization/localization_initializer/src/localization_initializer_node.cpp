@@ -400,24 +400,24 @@ private:
         localization_initialized_ = false;
         clearScanBuffer();
 
-        user_initial_guess_ = poseToMatrix(msg->pose.pose);
+        Eigen::Matrix4f T_map_to_base = poseToMatrix(msg->pose.pose);
+        user_initial_guess_ = T_map_to_base;
 
-        // 重定位时，RViz 给出的 /initialpose 表示 map 系下的 base_link 位姿，
-        // 而 NDT 需要的初值是 map -> odom（因为 /cloud_registered 在 odom 系下）。
-        // 第一次定位保留原有行为，仅在多次定位时做坐标换算，最小化对已有流程的影响。
-        if (was_initialized) {
-            try {
-                auto odom_to_base_msg = tf_buffer_->lookupTransform(
-                    "odom", "base_link", tf2::TimePointZero);
-                Eigen::Matrix4f T_odom_to_base = transformToMatrix(odom_to_base_msg.transform);
-                user_initial_guess_ = user_initial_guess_ * T_odom_to_base.inverse();
-                RCLCPP_INFO(get_logger(), " 多次定位: 已将 /initialpose 从 map->base_link 换算为 map->odom 初值");
-            } catch (const tf2::TransformException& ex) {
-                RCLCPP_WARN(
-                    get_logger(),
-                    "⚠️ 多次定位时查询 odom->base_link 失败，回退为原始 /initialpose: %s",
-                    ex.what());
-            }
+        // RViz 的 /initialpose 表示 map -> base_link。
+        // NDT 对齐的是 odom 系下的 /cloud_registered，因此初值必须是 map -> odom：
+        //   T_map_base = T_map_odom * T_odom_base
+        //   T_map_odom = T_map_base * inverse(T_odom_base)
+        try {
+            auto odom_to_base_msg = tf_buffer_->lookupTransform(
+                "odom", "base_link", tf2::TimePointZero);
+            Eigen::Matrix4f T_odom_to_base = transformToMatrix(odom_to_base_msg.transform);
+            user_initial_guess_ = T_map_to_base * T_odom_to_base.inverse();
+            RCLCPP_INFO(get_logger(), " 已将 /initialpose 从 map->base_link 换算为 map->odom 初值");
+        } catch (const tf2::TransformException& ex) {
+            RCLCPP_WARN(
+                get_logger(),
+                "⚠️ 查询 odom->base_link 失败，回退为原始 /initialpose 作为初值: %s",
+                ex.what());
         }
         has_initial_guess_ = true;
         
