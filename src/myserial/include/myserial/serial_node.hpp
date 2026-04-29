@@ -35,6 +35,7 @@
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
+#include "robots_msgs/msg/leg_length.hpp"
 
 
 using namespace std;
@@ -118,6 +119,7 @@ public:
         game_pub_ = this->create_publisher<robots_msgs::msg::GameStatus>("GameFeedBack", 2);     // 发布比赛数据话题
         robot_pub_ = this->create_publisher<robots_msgs::msg::RobotStatus>("RobotFeedBack", 2);  // 发布比赛数据话题
         chassis_odom_pub_ = this->create_publisher<robots_msgs::msg::ChassisOdom>("ChassisOdom", 2);  // 发布电控里程计数据
+        leg_length_pub_ = this->create_publisher<robots_msgs::msg::LegLength>("LegLength", 2);   // 发布腿长信息
         enemypose_pub_ = this->create_publisher<robots_msgs::msg::EnemyPose>("EnemyPose", 2);   // 发布自瞄敌人信息
         // 决策系统消息（整合后直接发布，供决策节点订阅）
         our_state_pub_   = this->create_publisher<decision_messages::msg::OurRobotState>("/decision_messages/OurRobotState", 10);
@@ -269,6 +271,7 @@ private:
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::GameStatus>>    game_pub_;
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::RobotStatus>>   robot_pub_;
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::ChassisOdom>>   chassis_odom_pub_;
+    std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::LegLength>>     leg_length_pub_;
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::EnemyPose>>     enemypose_pub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> enemy_tf_pub_;
     // 决策系统消息发布者
@@ -288,6 +291,7 @@ private:
     robots_msgs::msg::GameStatus game_status_;
     robots_msgs::msg::RobotStatus robot_status_;
     robots_msgs::msg::ChassisOdom chassis_odom_speed_;
+    robots_msgs::msg::LegLength leg_length_msg_;
     robots_msgs::msg::EnemyPose enemypose_;
     geometry_msgs::msg::TransformStamped enemypose_tf_;
 

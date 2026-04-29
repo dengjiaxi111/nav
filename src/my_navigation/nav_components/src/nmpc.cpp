@@ -508,8 +508,8 @@ nav_core::ControlResult NMPC::computeVelocity(
     const double w_est_next = x0[4] + w_lag_alpha * (omega_cmd - x0[4]);
 
     last_state_ = x0;
-    last_state_[3] = v_est_next;
-    last_state_[4] = w_est_next;
+    last_state_[3] = v_cmd;
+    last_state_[4] = omega_cmd;
     last_state_[5] = v_cmd;
     last_state_[6] = omega_cmd;
     last_control_ = u_opt;

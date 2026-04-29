@@ -138,6 +138,9 @@ public:
         int black_max{40};
         int gray_min{90};
         int gray_max{170};
+        double stair_level2_clear_perp_dist_m{-1.0};
+        double stair_level2_clear_perp_high_dist_m{-1.0};
+        double stair_level2_clear_perp_low_dist_m{-1.0};
         int stair_level2_black_min{-1};
         int stair_level2_black_max{-1};
         int stair_level2_gray_min{-1};

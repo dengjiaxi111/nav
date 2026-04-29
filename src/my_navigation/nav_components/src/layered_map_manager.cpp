@@ -63,6 +63,19 @@ void LayeredMapManager::setStairLayerConfig(const StairLayerConfig& cfg) {
         stair_layer_cfg_.clear_perp_low_dist_m = -1.0;
     }
 
+    if (stair_layer_cfg_.stair_level2_clear_perp_dist_m < 0.0) {
+        RCLCPP_WARN(logger_, "stair_layer stair_level2_clear_perp_dist_m<0, 自动修正为 clear_perp_dist_m 或者 0.0m");
+        stair_layer_cfg_.stair_level2_clear_perp_dist_m = stair_layer_cfg_.clear_perp_dist_m;
+    }
+    if (stair_layer_cfg_.stair_level2_clear_perp_high_dist_m < -1e-9) {
+        RCLCPP_WARN(logger_, "stair_layer stair_level2_clear_perp_high_dist_m<0, 采用 stair_level2_clear_perp_dist_m");
+        stair_layer_cfg_.stair_level2_clear_perp_high_dist_m = -1.0;
+    }
+    if (stair_layer_cfg_.stair_level2_clear_perp_low_dist_m < -1e-9) {
+        RCLCPP_WARN(logger_, "stair_layer stair_level2_clear_perp_low_dist_m<0, 采用 stair_level2_clear_perp_dist_m");
+        stair_layer_cfg_.stair_level2_clear_perp_low_dist_m = -1.0;
+    }
+
     rebuildStairLayerCache();
 }
 
@@ -619,6 +632,21 @@ void LayeredMapManager::rebuildStairLayerCache() {
     const int clear_low_steps =
         std::max(0, static_cast<int>(std::ceil(clear_low_m / resolution_)));
 
+    const double level2_clear_high_m = std::max(
+        0.0,
+        (stair_layer_cfg_.stair_level2_clear_perp_high_dist_m >= 0.0)
+            ? stair_layer_cfg_.stair_level2_clear_perp_high_dist_m
+            : stair_layer_cfg_.stair_level2_clear_perp_dist_m);
+    const double level2_clear_low_m = std::max(
+        0.0,
+        (stair_layer_cfg_.stair_level2_clear_perp_low_dist_m >= 0.0)
+            ? stair_layer_cfg_.stair_level2_clear_perp_low_dist_m
+            : stair_layer_cfg_.stair_level2_clear_perp_dist_m);
+    const int level2_clear_high_steps =
+        std::max(0, static_cast<int>(std::ceil(level2_clear_high_m / resolution_)));
+    const int level2_clear_low_steps =
+        std::max(0, static_cast<int>(std::ceil(level2_clear_low_m / resolution_)));
+
     auto add_clear_sample = [&](double wx, double wy, double nx, double ny, int stair_id) {
         int global_idx = -1;
         if (worldToGlobalIndex(wx, wy, global_idx)) {
@@ -639,7 +667,8 @@ void LayeredMapManager::rebuildStairLayerCache() {
 
     auto process_stair_type = [&](const std::vector<std::pair<int, int>>& black_cells,
                                   uint8_t gray_class,
-                                  bool build_oneway_forbidden) {
+                                  bool build_oneway_forbidden,
+                                  int cl_high_steps, int cl_low_steps) {
         for (size_t i = 0; i < black_cells.size(); ++i) {
             int bx = black_cells[i].first;
             int by = black_cells[i].second;
@@ -706,12 +735,12 @@ void LayeredMapManager::rebuildStairLayerCache() {
             }
 
             // 2) 沿法向扩展清除（高侧 +n，低侧 -n），距离可调
-            for (int s = 1; s <= clear_high_steps; ++s) {
+            for (int s = 1; s <= cl_high_steps; ++s) {
                 const double wx = bwx + nx * (s * resolution_);
                 const double wy = bwy + ny * (s * resolution_);
                 add_clear_sample(wx, wy, nx, ny, stair_id);
             }
-            for (int s = 1; s <= clear_low_steps; ++s) {
+            for (int s = 1; s <= cl_low_steps; ++s) {
                 const double wx = gwx - nx * (s * resolution_);
                 const double wy = gwy - ny * (s * resolution_);
                 add_clear_sample(wx, wy, nx, ny, stair_id);
@@ -755,10 +784,10 @@ void LayeredMapManager::rebuildStairLayerCache() {
         }
     };
 
-    process_stair_type(bidir_black_cells, 2, false);
-    process_stair_type(level2_black_cells, 6, false);
+    process_stair_type(bidir_black_cells, 2, false, clear_high_steps, clear_low_steps);
+    process_stair_type(level2_black_cells, 6, false, level2_clear_high_steps, level2_clear_low_steps);
     if (stair_layer_cfg_.enable_oneway_stair_down) {
-        process_stair_type(oneway_black_cells, 4, true);
+        process_stair_type(oneway_black_cells, 4, true, clear_high_steps, clear_low_steps);
     }
 
     for (int idx : clear_idx_set) {

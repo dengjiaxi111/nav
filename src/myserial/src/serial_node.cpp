@@ -302,6 +302,10 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
 
     chassis_odom_pub_->publish(chassis_odom_speed_);
 
+    // ------------------ LegLength --------------------
+    leg_length_msg_.leg_length = msg.leg_length;
+    leg_length_pub_->publish(leg_length_msg_);
+
     // ----------------- 自瞄发送的敌人位置信息 -----------------
     enemypose_.enemy_num    = msg._enemy_id;
 

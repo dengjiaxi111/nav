@@ -48,7 +48,7 @@ nav_server:
     # 注意: 禁用静态层时，必须启用动态层，否则无障碍物信息
     
     # 动态层: 来自rog_map的局部障碍物
-    enable_dynamic_layer: false   # 启用动态层融合
+    enable_dynamic_layer: true    # 启用动态层融合
     dynamic_layer_topic: "/rog_map/map_2d"  # 局部障碍物地图话题 (odom坐标系)
     # 说明: 动态层会自动从odom坐标系投影到map坐标系，并与静态地图融合
 
@@ -68,9 +68,9 @@ nav_server:
     special_terrain:
       enable_stair_layer: true
       # stair_mask_yaml: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"   # 由 navigation.launch.py 注入
-      stair_clear_perp_dist_m: 0.15 # 台阶边沿清理距离(米)，清除台阶边沿一定宽度内的障碍物标记，防止过于靠近边沿导致误判无法通过
-      stair_clear_perp_high_dist_m: -1.0  # 高侧法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
-      stair_clear_perp_low_dist_m: -1.0   # 低侧反法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
+      stair_clear_perp_dist_m: 0.35 # 台阶边沿清理距离(米)，清除台阶边沿一定宽度内的障碍物标记，防止过于靠近边沿导致误判无法通过
+      stair_clear_perp_high_dist_m: 0.33  # 高侧法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
+      stair_clear_perp_low_dist_m: 0.36   # 低侧反法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
       # 双向台阶像素范围（高侧=black，低侧=gray）除距离(米), <0 表示回退到 stair_clear_perp_dist_m
       # 双向台阶像素范围（高侧=black，低侧=gray）
       black_min: 1
@@ -78,6 +78,9 @@ nav_server:
       gray_min: 100
       gray_max: 140
       # 二级台阶像素范围（高侧=black，低侧=gray），清除逻辑复用双向台阶
+      stair_level2_clear_perp_dist_m: 0.35 # 二级台阶边沿清理距离(米)
+      stair_level2_clear_perp_high_dist_m: 1.00 # 二级台阶高侧法向扩展清除距离(米)
+      stair_level2_clear_perp_low_dist_m: 0.20 # 二级台阶低侧反法向扩展清除距离(米)
       stair_level2_black_min: 71
       stair_level2_black_max: 90
       stair_level2_gray_min: 221
@@ -133,7 +136,7 @@ nav_server:
       stair_mode_omega_slew_rate_rad_s2: 50.0  # stair_mode=1 时角速度斜坡限幅 (rad/s^2)
 
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
-      stair_contact_distance_m: 1.00              # 接触判定阈值(米)
+      stair_contact_distance_m: 1.10              # 接触判定阈值(米)
       stair_commit_success_dist_m: 0.10          # 越过台阶中心线后的成功法向距离阈值(米)
       stair_level2_commit_success_dist_m: 0.8   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
       stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
@@ -145,12 +148,12 @@ nav_server:
 
       # [提交段控制] COMMIT_ASCENT
       enable_stair_fixed_velocity_strategy: true
-      stair_raise_leg_distance_m: 0.90           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
+      stair_raise_leg_distance_m: 0.80           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
       stair_fixed_velocity_trigger_distance_m: 0.9 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
       stair_fixed_linear_vel: 1.35
-      stair_level2_raise_leg_distance_m: 0.3    # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3 抬腿
+      stair_level2_raise_leg_distance_m: 0.8   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3 抬腿
       stair_level2_fixed_velocity_trigger_distance_m: 0.9 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
-      stair_level2_fixed_linear_vel: 1.7        # 二级台阶：固定速度线速度(m/s)
+      stair_level2_fixed_linear_vel: 1.45        # 二级台阶：固定速度线速度(m/s)
       stair_fixed_heading_kp: 2.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
       stair_fixed_max_angular_vel: 100.0
       stair_fixed_heading_deadband: 0.05    # 固定速度航向死区(rad)，小于此值不进行航向调整，防止过近时的过度修正和震荡
@@ -173,30 +176,30 @@ nav_server:
 
       # [飞坡动作状态机参数]（与台阶独立，初值对齐台阶）
       # [候选检测窗口] 何时识别“即将上台阶”
-      fly_slope_mode_trigger_distance_m: 3.0         # PRE_ALIGN 触发窗口：候选地形距离小于该值进入预对准
+      fly_slope_mode_trigger_distance_m: 2.8         # PRE_ALIGN 触发窗口：候选地形距离小于该值进入预对准
       fly_slope_mode_lookahead_dist_m: 2.0             # 前向沿路径扫描飞坡候选的最大距离(米)
       fly_slope_mode_sample_step_m: 0.05               # 候选扫描采样步长(米)，越小检测越细
-      fly_slope_mode_entry_heading_error_max_rad: 0.1  # PRE_ALIGN -> COMMIT 的航向误差阈值(rad)
+      fly_slope_mode_entry_heading_error_max_rad: 0.05  # PRE_ALIGN -> COMMIT 的航向误差阈值(rad)
 
       # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       fly_slope_mode_release_grace_cycles: 2           # mode=2 释放保护周期数（抑制短时抖动）
       fly_slope_mode_min_hold_sec: 0.3                 # mode=2 最小保持时长(秒)
-      fly_slope_mode_reassert_block_sec: 0.3           # 发送过 mode=2 后的重发保护时间窗(秒)，窗口内禁止再次发送 mode=2
+      fly_slope_mode_reassert_block_sec: 2.0          # 发送过 mode=2 后的重发保护时间窗(秒)，窗口内禁止再次发送 mode=2
       fly_slope_mode_force_release_distance_m: 3.0    # mode=2 强制释放距离阈值(米)，超出则回0
       fly_slope_mode_max_assert_sec: 8.0               # mode=2 最大持续时长(秒)，超时强制回0
       fly_slope_mode_omega_limit_rad_s: 100.0          # mode=2 角速度绝对值限幅(rad/s)
       fly_slope_mode_omega_slew_rate_rad_s2: 50.0      # mode=2 角速度斜率限幅(rad/s^2)
 
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
-      fly_slope_pre_align_lateral_error_max_m: 0.03    # PRE_ALIGN 对齐监控阈值(米)，飞坡 COMMIT 不再以此作为硬门槛
+      fly_slope_pre_align_lateral_error_max_m: 0.02    # PRE_ALIGN 对齐监控阈值(米)，飞坡 COMMIT 不再以此作为硬门槛
       fly_slope_pre_align_return_max_linear_vel: 0.50  # PRE_ALIGN 飞坡垂直段跟踪线速度上限(m/s)
-      fly_slope_pre_align_return_max_angular_vel: 6.0  # PRE_ALIGN 飞坡垂直段跟踪角速度上限(rad/s)
+      fly_slope_pre_align_return_max_angular_vel: 3.0  # PRE_ALIGN 飞坡垂直段跟踪角速度上限(rad/s)
       enable_fly_slope_pre_align_turn_in_place: true   # PRE_ALIGN 中若航向误差过大，先原地粗对齐
       fly_slope_pre_align_heading_kp: 3.0              # PRE_ALIGN 飞坡垂直段航向对齐角速度增益
       fly_slope_pre_align_lateral_kp: 1.0              # PRE_ALIGN 飞坡垂直段有符号横向误差修正增益
       fly_slope_pre_align_turn_in_place_error_rad: 0.5 # PRE_ALIGN 触发原地粗对齐的航向误差阈值(rad)
-      fly_slope_pre_align_max_angular_vel: 6.0         # PRE_ALIGN 原地对齐角速度上限(rad/s)
-      fly_slope_contact_distance_m: 2.5              # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
+      fly_slope_pre_align_max_angular_vel: 3.0         # PRE_ALIGN 原地对齐角速度上限(rad/s)
+      fly_slope_contact_distance_m: 2.2              # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
       fly_slope_commit_success_dist_m: 1.0           # COMMIT/VERIFY 成功判定法向距离阈值(米)
       fly_slope_verify_timeout_sec: 1.2                # VERIFY_SUCCESS 最大等待时长(秒)
 
@@ -207,15 +210,15 @@ nav_server:
 
       # [提交段控制] COMMIT_ASCENT
       enable_fly_slope_fixed_velocity_strategy: true   # COMMIT 段启用固定速度策略
-      fly_slope_raise_leg_distance_m: 2.3           # COMMIT 内触发 mode=2（抬腿）距离阈值(米)
-      fly_slope_fixed_velocity_trigger_distance_m: 2.4 # COMMIT 内固定速度真正生效距离阈值(米)
-      fly_slope_fixed_linear_vel: 1.85                  # COMMIT 固定线速度(m/s)
+      fly_slope_raise_leg_distance_m: 1.8           # COMMIT 内触发 mode=2（抬腿）距离阈值(米)
+      fly_slope_fixed_velocity_trigger_distance_m: 1.9 # COMMIT 内固定速度真正生效距离阈值(米)
+      fly_slope_fixed_linear_vel: 1.7                  # COMMIT 固定线速度(m/s)
       fly_slope_fixed_heading_kp: 3.0                  # COMMIT 航向控制增益
       fly_slope_fixed_max_angular_vel: 100.0           # COMMIT 角速度上限(rad/s)
       fly_slope_fixed_heading_deadband: 0.05           # COMMIT 航向死区(rad)
 
       # [失败退让与重试] FAIL_RETRY_BACKOFF
-      fly_slope_backoff_distance_m: 2.7                # FAIL_RETRY_BACKOFF 法向退让距离(米)
+      fly_slope_backoff_distance_m: 2.5                # FAIL_RETRY_BACKOFF 法向退让距离(米)
       fly_slope_backoff_tangent_search_half_width_m: 0.30  # FAIL_RETRY_BACKOFF 切向局部搜索半宽(米)
       fly_slope_backoff_linear_vel: 1.3                # FAIL_RETRY_BACKOFF 退让线速度(m/s)
       fly_slope_backoff_heading_kp: 2.0                # FAIL_RETRY_BACKOFF 航向控制增益
@@ -283,13 +286,13 @@ nav_server:
       prune_distance: 1.0            # 剪枝保留距离(米), 保留当前位置前方此距离内的点
       publish_astar_raw_path: true   # 发布原始A*路径到 /plan_astar_raw（平滑前）
       allow_raw_fallback_on_smooth_fail: false  # 平滑后验证失败时是否回退原始A*（建议关闭）
-      stair_constraint_mode: "hard"  # 台阶约束模式: "soft"=现有软约束A*; "hard"=强制经过台阶 pre/post 垂直点
+      stair_constraint_mode: "soft"  # 台阶约束模式: "soft"=现有软约束A*; "hard"=强制经过台阶 pre/post 垂直点
       stair_hard_dist_delta_m: 0.2   # 仅 hard 模式生效: pre/post 距离相对 stair_align_*_pre/post_dist_m 的统一偏移量(米)
                 # 例如 -0.1 且 stair_align_up_pre_dist_m=1.0 时，硬约束 pre 点距离变为 0.9m
       # 飞坡硬约束（与台阶 hard 同级）
       # - soft: 仅使用 A* fly_slope 形态代价（软约束）
       # - hard: 强制经过飞坡中心法向 pre/post 约束点（结构性约束）
-      fly_slope_constraint_mode: "hard"  # 飞坡约束模式
+      fly_slope_constraint_mode: "soft"  # 飞坡约束模式
       fly_slope_hard_dist_delta_m: 0.1    # 仅 hard 生效: 对 astar_fly_slope_*_pre/post_dist_m 的统一偏移量(米)
       # 例如 -0.1 且 astar_fly_slope_up_pre_dist_m=1.0 时，硬约束 pre 点距离变为 0.9m
       hard_constraint_compare_log_once: false  # 开启后每次plan请求最多打印一次：旧三段估计 vs 新分段A*估计
@@ -350,9 +353,9 @@ nav_server:
       # 下方 Q/R/ESDF/contouring 参数已接入运行时注入，修改 YAML 可直接生效
       # === 运动约束 ===
       max_linear_vel: 2.5        # 最大线速度 (m/s) 
-      max_angular_vel: 3.5       # 最大角速度 (rad/s)
-      max_linear_accel: 5.0      # 最大线加速度 (m/s²)
-      max_linear_decel: 6.0     # 最大线减速度 (m/s²)
+      max_angular_vel: 7.5       # 最大角速度 (rad/s)
+      max_linear_accel: 6.0      # 最大线加速度 (m/s²)
+      max_linear_decel: 3.0     # 最大线减速度 (m/s²)
       max_angular_accel: 7.0     # 最大角加速度 (rad/s²) 
       allow_reverse: false       # 倒车
       
@@ -384,18 +387,18 @@ nav_server:
       horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
-      pivot_turn_heading_thresh: 3.00  # 航向误差>该值时原地转向 (rad)
+      pivot_turn_heading_thresh: 2.00  # 航向误差>该值时原地转向 (rad)
       pivot_turn_startup_only: false  # true=仅新路径起步阶段生效, false=控制过程中任意时刻生效
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
       chassis_odom_topic: "/Odometry" # 需为 nav_msgs/msg/Odometry，避免与 /ChassisOdom 多类型冲突
       # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
       vel_lag_tau: 0.60 #0.25           # 线速度一阶滞后时间常数(s)
-      omega_lag_tau: 0.26        # 角速度一阶滞后时间常数(s)
+      omega_lag_tau: 0.20        # 角速度一阶滞后时间常数(s)
 
       # === 代价权重（运行时生效） ===
-      Q_position: 30.0           # 位置(x,y)跟踪权重
-      Q_orientation: 5.0         # 航向角(theta)跟踪权重
+      Q_position: 25.0           # 位置(x,y)跟踪权重
+      Q_orientation: 8.0         # 航向角(theta)跟踪权重
       Q_velocity: 5.0            # 线速度跟踪权重
       Q_omega: 5.0               # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
       R_linear: 0.01             # 线加速度平滑权重
@@ -422,21 +425,21 @@ nav_server:
       max_recovery: 3
       
       # 后退恢复：用于从局部卡住、控制失败等状态中先退开一点，再重新规划
-      backup_dist: 0.3              # 后退目标距离(m)，达到该位移后认为后退动作完成
-      backup_vel: -0.5              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
-      backup_timeout: 2.0           # 后退动作最大执行时间(s)，超时则该恢复动作失败
+      backup_dist: 0.8              # 后退目标距离(m)，达到该位移后认为后退动作完成
+      backup_vel: -1.5              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
+      backup_timeout: 5.0           # 后退动作最大执行时间(s)，超时则该恢复动作失败
       
       # 恢复动作进展检测：防止底盘卡住后一直发送恢复速度
       min_progress: 0.02            # 后退恢复的最小有效位移(m)，超过该值才刷新进展时间
-      progress_timeout: 1.0         # 后退时允许无有效进展的最长时间(s)，超过则判定失败
+      progress_timeout: 3.0         # 后退时允许无有效进展的最长时间(s)，超过则判定失败
       
       # 后退安全检查：执行后退前沿 base_link 后方采样 costmap，避免盲退撞障碍
-      enable_safety_check: true     # 是否启用后退轨迹安全检查
+      enable_safety_check: false     # 是否启用后退轨迹安全检查
       safety_check_distance: 0.5    # 后退方向安全检查距离(m)，建议 >= backup_dist
       
       # 旋转恢复：后退不可行或失败后，原地旋转以改变姿态/刷新局部观测
       spin_angle: 3.14              # 旋转目标角度(rad)，3.14 约等于原地转半圈
-      spin_vel: 0.5                 # 旋转角速度(rad/s)
+      spin_vel: -3.5                 # 旋转角速度(rad/s)
       spin_timeout: 5.0             # 旋转动作最大执行时间(s)，超时则该恢复动作失败
       spin_min_progress: 0.03       # 旋转恢复的最小有效角度进展(rad)
       spin_progress_timeout: 1.5    # 旋转时允许无有效进展的最长时间(s)，超过则判定失败
@@ -451,7 +454,7 @@ nav_server:
       search_radius: 1.0              # BFS 最大搜索半径 (m)
       
       # 控制参数
-      rotation_speed: 1.0             # 旋转角速度 (rad/s)
+      rotation_speed: 2.0             # 旋转角速度 (rad/s)
       forward_speed: 0.5             # 前进线速度 (m/s)
       yaw_tolerance: 0.1              # 角度对齐容差 (rad, ~6度)
       position_tolerance: 0.1        # 到达位置容差 (m)

@@ -183,6 +183,7 @@ namespace rm
          */
         // 13B
         float _base_yaw = 0; // 大小yaw偏角
+        float leg_length =0;
         uint8_t _enemy_id = 0;
         float _enemy_x = 0;
         float _enemy_y = 0; 
@@ -331,6 +332,9 @@ namespace rm
             cout << "[目标位置]" << endl;
             cout << "  Target Pos: (" << _target_position_x
                     << ", " << _target_position_y << ")" << endl;
+            
+            cout << "[腿长信息]" << endl;
+            cout << "  Leg Length: " << leg_length << endl;
 
             cout << "==========================================================" << endl;
         }
@@ -389,6 +393,9 @@ namespace rm
             oss << "[目标位置]" << std::endl;
             oss << "  Target Pos: (" << _target_position_x << ", " << _target_position_y << ")" 
                 << std::endl;
+
+            oss << "[腿长信息]" << std::endl;
+            oss << "  Leg Length: " << leg_length << std::endl;
 
             oss << "==========================================================" << std::endl;
 

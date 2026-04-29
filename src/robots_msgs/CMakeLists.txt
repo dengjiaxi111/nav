@@ -23,6 +23,7 @@ rosidl_generate_interfaces(
   "msg/slave_computer/ModeCmd.msg"
   "msg/slave_computer/MyPath.msg"
   "msg/slave_computer/ChassisOdom.msg"
+  "msg/slave_computer/LegLength.msg"
   # 决策系统消息
   DEPENDENCIES
   std_msgs

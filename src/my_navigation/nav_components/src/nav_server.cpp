@@ -189,6 +189,9 @@ public:
         declare_parameter("special_terrain.black_max", 40);
         declare_parameter("special_terrain.gray_min", 90);
         declare_parameter("special_terrain.gray_max", 170);
+        declare_parameter("special_terrain.stair_level2_clear_perp_dist_m", -1.0);
+        declare_parameter("special_terrain.stair_level2_clear_perp_high_dist_m", -1.0);
+        declare_parameter("special_terrain.stair_level2_clear_perp_low_dist_m", -1.0);
         declare_parameter("special_terrain.stair_level2_black_min", -1);
         declare_parameter("special_terrain.stair_level2_black_max", -1);
         declare_parameter("special_terrain.stair_level2_gray_min", -1);
@@ -267,6 +270,12 @@ public:
         stair_layer_cfg.black_max = get_parameter("special_terrain.black_max").as_int();
         stair_layer_cfg.gray_min = get_parameter("special_terrain.gray_min").as_int();
         stair_layer_cfg.gray_max = get_parameter("special_terrain.gray_max").as_int();
+        stair_layer_cfg.stair_level2_clear_perp_dist_m =
+            get_parameter("special_terrain.stair_level2_clear_perp_dist_m").as_double();
+        stair_layer_cfg.stair_level2_clear_perp_high_dist_m =
+            get_parameter("special_terrain.stair_level2_clear_perp_high_dist_m").as_double();
+        stair_layer_cfg.stair_level2_clear_perp_low_dist_m =
+            get_parameter("special_terrain.stair_level2_clear_perp_low_dist_m").as_double();
         stair_layer_cfg.stair_level2_black_min =
             get_parameter("special_terrain.stair_level2_black_min").as_int();
         stair_layer_cfg.stair_level2_black_max =
