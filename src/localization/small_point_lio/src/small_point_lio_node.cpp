@@ -56,12 +56,12 @@ namespace small_point_lio {
                         lidar_frame, "base_link", tf2::TimePointZero);
 
                     // 缓存 base_link → lidar 变换，然后求逆得到 lidar → base_link
-                    Eigen::Isometry3f T_base_to_lidar = Eigen::Isometry3f::Identity();
-                    T_base_to_lidar.translation() << 
+                    T_base_to_lidar_ = Eigen::Isometry3f::Identity();
+                    T_base_to_lidar_.translation() <<
                             static_cast<float>(transform.transform.translation.x),
                             static_cast<float>(transform.transform.translation.y),
                             static_cast<float>(transform.transform.translation.z);
-                    T_base_to_lidar.linear() = Eigen::Quaternionf(
+                    T_base_to_lidar_.linear() = Eigen::Quaternionf(
                             static_cast<float>(transform.transform.rotation.w),
                             static_cast<float>(transform.transform.rotation.x),
                             static_cast<float>(transform.transform.rotation.y),
@@ -69,7 +69,7 @@ namespace small_point_lio {
                             .toRotationMatrix();
 
                     // lidar → base_link（用于点云变换）
-                    T_lidar_to_base_ = T_base_to_lidar.inverse();
+                    T_lidar_to_base_ = T_base_to_lidar_.inverse();
 
                     // 缓存 tf2::Transform 用于 TF 广播
                     tf2::fromMsg(transform.transform, tf_base_link_to_lidar_);
@@ -80,6 +80,7 @@ namespace small_point_lio {
                     retry_count++;
                     if (retry_count >= 10) {
                         // 连续10次失败，默认两坐标系重合（单位变换）
+                        T_base_to_lidar_ = Eigen::Isometry3f::Identity();
                         T_lidar_to_base_ = Eigen::Isometry3f::Identity();
                         tf_base_link_to_lidar_.setIdentity();
 
@@ -170,7 +171,7 @@ namespace small_point_lio {
             //          (相似变换，考虑外参的旋转中心)
             // ============================================================
             
-            // LIO输出的位姿（lidar_odom → lidar）
+            // LIO输出的位姿（内部 odom -> lidar/IMU body）
             Eigen::Vector3f pos_lidar_odom = odometry.position.cast<float>();
             Eigen::Quaternionf q_lidar_odom(odometry.orientation.cast<float>());
             
@@ -181,24 +182,20 @@ namespace small_point_lio {
                 // ============================================================
                 // 模式1：重力对齐模式
                 // ============================================================
-                
-                // 外参的旋转部分：q_base_to_lidar（注意方向！）
-                // T_lidar_to_base_ 是 lidar → base，所以它的旋转的逆是 base → lidar
-                Eigen::Quaternionf q_lidar_to_base(T_lidar_to_base_.rotation());
-                Eigen::Quaternionf q_base_to_lidar = q_lidar_to_base.inverse();
-                
-                // Step 1: 计算 lidar 在水平 odom 系下的位姿
-                Eigen::Vector3f pos_lidar_in_odom = q_gravity_align_ * pos_lidar_odom;
-                Eigen::Quaternionf q_lidar_in_odom = q_gravity_align_ * q_lidar_odom;
-                
-                // Step 2: 计算 base_link 在 odom 系下的姿态
-                // q_base_in_odom = q_lidar_in_odom * q_base_to_lidar
-                q_base_in_odom = q_lidar_in_odom * q_base_to_lidar;
-                
-                // Step 3: 计算 base_link 的位置
-                // pos_base = pos_lidar + q_lidar * translation_lidar_to_base
-                Eigen::Vector3f translation_lidar_to_base = T_lidar_to_base_.translation();
-                pos_base_in_odom = pos_lidar_in_odom + q_lidar_in_odom * translation_lidar_to_base;
+
+                // 使用完整 SE(3) 链乘，避免手动拆分旋转和平移时把外参方向用反。
+                // lookupTransform(lidar_frame, "base_link") 缓存的是 T_lidar_base，
+                // 因此 T_odom_base = T_align * T_lio_odom_lidar * T_lidar_base。
+                Eigen::Isometry3f T_align = Eigen::Isometry3f::Identity();
+                T_align.linear() = q_gravity_align_.toRotationMatrix();
+
+                Eigen::Isometry3f T_lio_odom_lidar = Eigen::Isometry3f::Identity();
+                T_lio_odom_lidar.translation() = pos_lidar_odom;
+                T_lio_odom_lidar.linear() = q_lidar_odom.normalized().toRotationMatrix();
+
+                Eigen::Isometry3f T_odom_base = T_align * T_lio_odom_lidar * T_base_to_lidar_;
+                pos_base_in_odom = T_odom_base.translation();
+                q_base_in_odom = Eigen::Quaternionf(T_odom_base.rotation()).normalized();
                 
             } else {
                 // ============================================================

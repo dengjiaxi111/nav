@@ -43,6 +43,7 @@ namespace small_point_lio {
 
         // 缓存的静态外参变换（只在启动时计算一次）
         bool extrinsic_valid_{false};
+        Eigen::Isometry3f T_base_to_lidar_{Eigen::Isometry3f::Identity()};  // base_link -> lidar_frame
         Eigen::Isometry3f T_lidar_to_base_{Eigen::Isometry3f::Identity()};  // 点云变换用
         tf2::Transform tf_base_link_to_lidar_;  // TF 广播用
         rclcpp::TimerBase::SharedPtr extrinsic_init_timer_;  // 外参初始化定时器
