@@ -10,6 +10,7 @@
 #include <vector>
 #include <mutex>
 #include <array>
+#include <limits>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 // 前向声明 acados solver (使用正确的类型名称)
@@ -108,6 +109,7 @@ private:
      */
     double computeLocalMaxCurvature(int start_idx, int num_points) const;
     double computeLocalMaxCurvatureByDistance(int start_idx, double window_dist_m) const;
+    double computeGoalApproachSpeedLimit(double path_remaining_dist) const;
     
     // ========== 状态变量 ==========
     rclcpp::Node* node_;
@@ -117,6 +119,7 @@ private:
     double xy_tolerance_ = 0.1;
     double yaw_tolerance_ = 0.1;
     int nearest_idx_ = 0;  // 最近路径点索引
+    double path_remaining_dist_ = std::numeric_limits<double>::infinity();
     
     // NMPC 状态
     std::vector<double> last_state_;   // 上一次状态 [x,y,theta,v,omega,v_cmd,omega_cmd]
@@ -191,6 +194,10 @@ private:
 
     // 终点减速与起步对齐（参考轨迹整形）
         double goal_crawl_speed = 0.15;          // 终点前爬行速度下限 (m/s)
+        bool enable_goal_speed_limit = true;     // 是否启用沿路径剩余距离的终点限速
+        double goal_slowdown_dist = 0.6;         // 沿路径剩余距离小于该值时启用终点限速
+        double goal_min_moving_speed = 0.12;     // 终点减速区内最小可动速度
+        double goal_max_slow_speed = 0.5;        // 刚进入终点减速区时的速度上限
         double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
         bool pivot_turn_startup_only = true;      // true=仅起步阶段原地转向, false=控制全程生效
 

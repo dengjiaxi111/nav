@@ -46,6 +46,10 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.desired_velocity", params_.desired_velocity);
     node_->declare_parameter("nmpc.use_omega_ref_from_path", params_.use_omega_ref_from_path);
     node_->declare_parameter("nmpc.goal_crawl_speed", params_.goal_crawl_speed);
+    node_->declare_parameter("nmpc.enable_goal_speed_limit", params_.enable_goal_speed_limit);
+    node_->declare_parameter("nmpc.goal_slowdown_dist", params_.goal_slowdown_dist);
+    node_->declare_parameter("nmpc.goal_min_moving_speed", params_.goal_min_moving_speed);
+    node_->declare_parameter("nmpc.goal_max_slow_speed", params_.goal_max_slow_speed);
     node_->declare_parameter("nmpc.pivot_turn_heading_thresh", params_.pivot_turn_heading_thresh);
     node_->declare_parameter("nmpc.pivot_turn_startup_only", params_.pivot_turn_startup_only);
     node_->declare_parameter("nmpc.speed_profile.enable", params_.speed_profile_enable);
@@ -101,6 +105,13 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.use_omega_ref_from_path =
         node_->get_parameter("nmpc.use_omega_ref_from_path").as_bool();
     params_.goal_crawl_speed = node_->get_parameter("nmpc.goal_crawl_speed").as_double();
+    params_.enable_goal_speed_limit =
+        node_->get_parameter("nmpc.enable_goal_speed_limit").as_bool();
+    params_.goal_slowdown_dist = node_->get_parameter("nmpc.goal_slowdown_dist").as_double();
+    params_.goal_min_moving_speed =
+        node_->get_parameter("nmpc.goal_min_moving_speed").as_double();
+    params_.goal_max_slow_speed =
+        node_->get_parameter("nmpc.goal_max_slow_speed").as_double();
     params_.pivot_turn_heading_thresh =
         node_->get_parameter("nmpc.pivot_turn_heading_thresh").as_double();
     params_.pivot_turn_startup_only =
@@ -118,6 +129,10 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.odom_feedback_alpha = node_->get_parameter("nmpc.odom_feedback_alpha").as_double();
     params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
     params_.goal_crawl_speed = std::max(0.0, params_.goal_crawl_speed);
+    params_.goal_slowdown_dist = std::max(xy_tolerance_, params_.goal_slowdown_dist);
+    params_.goal_min_moving_speed = std::max(0.0, params_.goal_min_moving_speed);
+    params_.goal_max_slow_speed =
+        std::max(params_.goal_min_moving_speed, params_.goal_max_slow_speed);
     params_.pivot_turn_heading_thresh = std::clamp(params_.pivot_turn_heading_thresh, 0.0, M_PI);
     params_.speed_profile_v_cruise = std::max(0.0, params_.speed_profile_v_cruise);
     params_.speed_profile_v_min = std::max(0.0, params_.speed_profile_v_min);
@@ -253,6 +268,7 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
         pivot_turn_active_ = false;
         pivot_turn_heading_error_ = 0.0;
         startup_pivot_phase_active_ = false;
+        path_remaining_dist_ = std::numeric_limits<double>::infinity();
         return;
     }
     
@@ -436,6 +452,10 @@ nav_core::ControlResult NMPC::computeVelocity(
     }
     v_cmd = std::clamp(v_cmd, -params_.max_linear_vel, params_.max_linear_vel);
     omega_cmd = std::clamp(omega_cmd, -params_.max_angular_vel, params_.max_angular_vel);
+    const double goal_v_limit = computeGoalApproachSpeedLimit(path_remaining_dist_);
+    if (std::isfinite(goal_v_limit)) {
+        v_cmd = std::min(v_cmd, goal_v_limit);
+    }
     if (pivot_turn_active_) {
         if (std::abs(v_cmd) > 1e-4) {
             RCLCPP_INFO_THROTTLE(
@@ -537,6 +557,7 @@ void NMPC::reset() {
     odom_received_ = false;
     chassis_odom_received_ = false;
     predicted_stage1_valid_ = false;
+    path_remaining_dist_ = std::numeric_limits<double>::infinity();
     startup_pivot_phase_active_ = false;
     
     // 重置 solver
@@ -604,6 +625,18 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
                 changed = true;
             } else if (name == "nmpc.goal_crawl_speed") {
                 params_.goal_crawl_speed = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.enable_goal_speed_limit") {
+                params_.enable_goal_speed_limit = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.goal_slowdown_dist") {
+                params_.goal_slowdown_dist = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.goal_min_moving_speed") {
+                params_.goal_min_moving_speed = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.goal_max_slow_speed") {
+                params_.goal_max_slow_speed = p.as_double();
                 changed = true;
             } else if (name == "nmpc.pivot_turn_heading_thresh") {
                 params_.pivot_turn_heading_thresh = p.as_double();
@@ -703,6 +736,10 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
     params_.max_angular_accel = std::max(0.0, params_.max_angular_accel);
     params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
     params_.goal_crawl_speed = std::max(0.0, params_.goal_crawl_speed);
+    params_.goal_slowdown_dist = std::max(xy_tolerance_, params_.goal_slowdown_dist);
+    params_.goal_min_moving_speed = std::max(0.0, params_.goal_min_moving_speed);
+    params_.goal_max_slow_speed =
+        std::max(params_.goal_min_moving_speed, params_.goal_max_slow_speed);
     params_.pivot_turn_heading_thresh = std::clamp(params_.pivot_turn_heading_thresh, 0.0, M_PI);
     params_.speed_profile_v_cruise = std::max(0.0, params_.speed_profile_v_cruise);
     params_.speed_profile_v_min = std::max(0.0, params_.speed_profile_v_min);
@@ -800,6 +837,31 @@ int NMPC::solveNMPC(
     return status;
 }
 
+double NMPC::computeGoalApproachSpeedLimit(double path_remaining_dist) const {
+    if (!params_.enable_goal_speed_limit) {
+        return std::numeric_limits<double>::infinity();
+    }
+    if (!std::isfinite(path_remaining_dist)) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    const double stop_dist = xy_tolerance_;
+    const double slowdown_dist = std::max(stop_dist, params_.goal_slowdown_dist);
+    if (path_remaining_dist >= slowdown_dist) {
+        return std::numeric_limits<double>::infinity();
+    }
+    if (path_remaining_dist <= stop_dist) {
+        return 0.0;
+    }
+
+    const double ratio =
+        (path_remaining_dist - stop_dist) / std::max(1e-3, slowdown_dist - stop_dist);
+    const double v_min = std::min(params_.goal_min_moving_speed, params_.goal_max_slow_speed);
+    const double v_limit = v_min + std::clamp(ratio, 0.0, 1.0) *
+        (params_.goal_max_slow_speed - v_min);
+    return std::clamp(v_limit, 0.0, params_.max_linear_vel);
+}
+
 std::vector<std::vector<double>> NMPC::extractLocalReference(
     const geometry_msgs::msg::Pose& current_pose,
     double horizon_length)
@@ -820,19 +882,21 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     // 沿路径前向采样 N+1 个点 (在 odom 坐标系下)
     double dt = T_horizon_ / N_horizon_;
     
-    // 计算到终点的总距离（用于渐进减速）
-    double total_dist_to_goal = 0.0;
+    // 计算路径后缀距离，用沿路径剩余距离做终点减速与限速。
+    std::vector<double> suffix_dist(global_path_.poses.size(), 0.0);
+    for (int k = static_cast<int>(global_path_.poses.size()) - 2; k >= 0; --k) {
+        const auto& p1 = global_path_.poses[k].pose.position;
+        const auto& p2 = global_path_.poses[k + 1].pose.position;
+        suffix_dist[k] = suffix_dist[k + 1] + std::hypot(p2.x - p1.x, p2.y - p1.y);
+    }
+    path_remaining_dist_ = suffix_dist[std::clamp(
+        nearest_idx_, 0, static_cast<int>(global_path_.poses.size()) - 1)];
     const auto& goal_pos = global_path_.poses.back().pose.position;
     const double dist_to_goal_now = std::hypot(
         goal_pos.x - current_pose.position.x,
         goal_pos.y - current_pose.position.y);
     const double terminal_ref_v =
         (dist_to_goal_now > xy_tolerance_) ? params_.goal_crawl_speed : 0.0;
-    for (size_t k = pruned_start_idx; k < global_path_.poses.size() - 1; ++k) {
-        auto& p1 = global_path_.poses[k].pose.position;
-        auto& p2 = global_path_.poses[k + 1].pose.position;
-        total_dist_to_goal += std::hypot(p2.x - p1.x, p2.y - p1.y);
-    }
 
     const double base_cruise_v = params_.speed_profile_enable
         ? params_.speed_profile_v_cruise
@@ -896,7 +960,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 double theta = theta1 + ratio * theta_diff;
                 
                 // 终点平滑刹车：显式 S_brake + sqrt 刹车曲线
-                double remaining_dist = std::max(0.0, total_dist_to_goal - dist);
+                double remaining_dist = std::max(0.0, suffix_dist[idx] - ratio * seg_dist);
                 double desired_v = base_cruise_v;
                 bool remaining_dist_stop = false;
                 bool pivot_turn_stop = false;
@@ -917,6 +981,10 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     remaining_dist_stop = true;
                 }
 
+                const double goal_v_limit = computeGoalApproachSpeedLimit(remaining_dist);
+                if (std::isfinite(goal_v_limit)) {
+                    desired_v = std::min(desired_v, goal_v_limit);
+                }
 
                 // 大角度场景：按参数选择仅起步阶段或控制全程优先原地转向对齐
                 double d_theta = theta - robot_theta_now;
@@ -948,6 +1016,7 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                 }
 
                 if (params_.speed_profile_enable && !pivot_turn_stop &&
+                    !std::isfinite(goal_v_limit) &&
                     remaining_dist > s_brake) {
                     desired_v = std::max(params_.speed_profile_v_min, desired_v);
                 }

@@ -373,7 +373,7 @@ nav_server:
       #   故推荐 horizon_length = desired_velocity * T_horizon_solver (= 1.5 * 1.5 = 2.25m)
       # 速度一致性补丁（代码中已实施）：desired_v = min(desired_v, step_dist/dt)，
       #   确保速度参考不超过位置间距隐含的速度上限，消除代价函数内耗
-      horizon_length: 2.25     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
+      horizon_length: 1.35     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
       desired_velocity: 2.5      # 期望巡航速度 (m/s)
       speed_profile:
         enable: true
@@ -395,6 +395,10 @@ nav_server:
       horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
+      enable_goal_speed_limit: true # 是否启用沿路径剩余距离的终点限速
+      goal_slowdown_dist: 0.65    # 沿路径剩余距离小于该值时启用终点限速(m)
+      goal_min_moving_speed: 0.12 # 终点减速区内最小可动速度(m/s)，需大于底盘死区
+      goal_max_slow_speed: 0.50   # 刚进入终点减速区时的速度上限(m/s)
       pivot_turn_heading_thresh: 2.00  # 航向误差>该值时原地转向 (rad)
       pivot_turn_startup_only: false  # true=仅新路径起步阶段生效, false=控制过程中任意时刻生效
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
