@@ -54,6 +54,7 @@ set(NAV_SERVER_SOURCES
   src/pure_pursuit.cpp
   src/backup_recovery.cpp
   src/spin_recovery.cpp
+  src/arc_backup_recovery.cpp
   src/recovery_manager.cpp
   src/layered_map_manager.cpp
     src/stair_controller.cpp

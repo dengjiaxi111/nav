@@ -4,16 +4,25 @@
 #pragma once
 #include <nav_core/recovery_base.hpp>
 #include <chrono>
+#include <string>
 
 namespace nav_components {
 
 class SpinRecovery : public nav_core::RecoveryBase {
 public:
     void initialize(rclcpp::Node* node, nav_core::VelPublisher vel_pub) override;
+    void initializeConfigured(rclcpp::Node* node,
+                              nav_core::VelPublisher vel_pub,
+                              double spin_angle,
+                              double spin_vel,
+                              double timeout_s,
+                              double min_progress,
+                              double progress_timeout_s,
+                              const std::string& name);
     void start(const geometry_msgs::msg::PoseStamped& current_pose) override;
     nav_core::RecoveryStatus update(const geometry_msgs::msg::PoseStamped& current_pose) override;
     void cancel() override;
-    const char* name() const override { return "spin"; }
+    const char* name() const override { return name_.c_str(); }
 
 private:
     double getYaw(const geometry_msgs::msg::Quaternion& q);
@@ -34,6 +43,7 @@ private:
     double last_progress_rotated_ = 0.0;
     std::chrono::steady_clock::time_point start_time_;
     std::chrono::steady_clock::time_point last_progress_time_;
+    std::string name_ = "spin";
 };
 
 }  // namespace nav_components

@@ -429,8 +429,8 @@ nav_server:
       max_recovery: 3
       
       # 后退恢复：用于从局部卡住、控制失败等状态中先退开一点，再重新规划
-      backup_dist: 0.8              # 后退目标距离(m)，达到该位移后认为后退动作完成
-      backup_vel: -1.5              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
+      backup_dist: 0.5              # 后退目标距离(m)，达到该位移后认为后退动作完成
+      backup_vel: -1.6              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
       backup_timeout: 5.0           # 后退动作最大执行时间(s)，超时则该恢复动作失败
       
       # 恢复动作进展检测：防止底盘卡住后一直发送恢复速度
@@ -438,15 +438,30 @@ nav_server:
       progress_timeout: 3.0         # 后退时允许无有效进展的最长时间(s)，超过则判定失败
       
       # 后退安全检查：执行后退前沿 base_link 后方采样 costmap，避免盲退撞障碍
-      enable_safety_check: false     # 是否启用后退轨迹安全检查
+      enable_safety_check: true      # 是否启用后退轨迹安全检查
+      backup_allow_unsafe: false     # true 时即使后方安全检查失败也继续后退，仅建议人工调试/特殊场地使用
       safety_check_distance: 0.5    # 后退方向安全检查距离(m)，建议 >= backup_dist
       
-      # 旋转恢复：后退不可行或失败后，原地旋转以改变姿态/刷新局部观测
-      spin_angle: 3.14              # 旋转目标角度(rad)，3.14 约等于原地转半圈
-      spin_vel: -3.5                 # 旋转角速度(rad/s)
+      # 旋转恢复：后退不可行或失败后，按 spin_sequence 配置的小角度序列依次尝试
+      spin_sequence: [0.785398, -1.570796, 3.141593]  # 旋转角度序列(rad)，正数左转、负数右转；默认 +45deg -> -90deg -> +180deg
+      spin_angle: 3.14              # 兼容保留参数；当前 NavServer 使用 spin_sequence 注册多个旋转动作
+      spin_vel: -3.5                # 旋转角速度基准值(rad/s)，序列会按角度正负自动设置方向
       spin_timeout: 5.0             # 旋转动作最大执行时间(s)，超时则该恢复动作失败
       spin_min_progress: 0.03       # 旋转恢复的最小有效角度进展(rad)
       spin_progress_timeout: 1.5    # 旋转时允许无有效进展的最长时间(s)，超过则判定失败
+      
+      # 弧线后退恢复：在直退和旋转都失败后执行，适合从墙角/局部卡滞中斜向退开
+      arc_backup_dist: 0.25         # 弧线后退目标位移(m)，达到该位移后认为动作完成
+      arc_backup_vel: -0.15         # 弧线后退线速度(m/s)，应为负值
+      arc_backup_angular_vel: 0.4   # 兼容保留参数；未配置左右角速度时作为默认角速度幅值
+      arc_backup_left_angular_vel: 0.4   # 左弧线后退角速度(rad/s)
+      arc_backup_right_angular_vel: -0.4 # 右弧线后退角速度(rad/s)
+      arc_backup_timeout: 2.0       # 弧线后退最大执行时间(s)，超时则该恢复动作失败
+      arc_backup_min_progress: 0.02 # 弧线后退的最小有效位移(m)
+      arc_backup_progress_timeout: 1.0  # 弧线后退允许无有效进展的最长时间(s)
+      arc_backup_enable_safety_check: true  # 是否启用弧线轨迹安全检查
+      arc_backup_allow_unsafe: false        # true 时即使弧线安全检查失败也继续执行，仅建议人工调试使用
+      arc_backup_safety_check_duration: 1.5 # 弧线轨迹前向预测检查时长(s)
     
     # 脱困系统 (ESCAPING 状态)
     escape:

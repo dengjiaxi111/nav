@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <vector>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/buffer.h>
@@ -25,6 +26,7 @@
 #include "nav_components/nmpc.hpp"
 #include "nav_components/backup_recovery.hpp"
 #include "nav_components/spin_recovery.hpp"
+#include "nav_components/arc_backup_recovery.hpp"
 #include "nav_components/recovery_manager.hpp"
 #include "nav_components/layered_map_manager.hpp"
 #include "nav_components/stair_controller.hpp"
@@ -45,6 +47,10 @@ public:
         declare_parameter("controller_timeout", 10.0);
         declare_parameter("controller_progress_threshold", 0.15);
         declare_parameter("recovery.max_recovery", 3);
+        declare_parameter<std::vector<double>>(
+            "recovery.spin_sequence", {M_PI / 4.0, -M_PI / 2.0, M_PI});
+        declare_parameter("recovery.arc_backup_left_angular_vel", 0.4);
+        declare_parameter("recovery.arc_backup_right_angular_vel", -0.4);
         declare_parameter("decision_bridge.goal_dedup_tolerance", 0.05);
         
         control_rate_ = get_parameter("control_rate").as_double();
@@ -851,9 +857,143 @@ private:
             });
         recovery_mgr_.addRecovery(backup);
         
-        auto spin = std::make_shared<nav_components::SpinRecovery>();
-        spin->initialize(this, vel_pub);
-        recovery_mgr_.addRecovery(spin);
+        auto spin_seed = std::make_shared<nav_components::SpinRecovery>();
+        spin_seed->initialize(this, vel_pub);
+        const std::vector<double> spin_sequence =
+            get_parameter("recovery.spin_sequence").as_double_array();
+        const double spin_vel_abs = std::abs(get_parameter("recovery.spin_vel").as_double());
+        const double spin_timeout = get_parameter("recovery.spin_timeout").as_double();
+        const double spin_min_progress = get_parameter("recovery.spin_min_progress").as_double();
+        const double spin_progress_timeout =
+            get_parameter("recovery.spin_progress_timeout").as_double();
+        for (size_t i = 0; i < spin_sequence.size(); ++i) {
+            const double signed_angle = spin_sequence[i];
+            if (std::abs(signed_angle) < 1e-6) {
+                RCLCPP_WARN(get_logger(),
+                            "recovery.spin_sequence[%zu] 接近 0，跳过该旋转恢复动作",
+                            i);
+                continue;
+            }
+
+            auto spin = (i == 0) ? spin_seed : std::make_shared<nav_components::SpinRecovery>();
+            const double spin_vel = std::copysign(spin_vel_abs, signed_angle);
+            spin->initializeConfigured(this,
+                                       vel_pub,
+                                       std::abs(signed_angle),
+                                       spin_vel,
+                                       spin_timeout,
+                                       spin_min_progress,
+                                       spin_progress_timeout,
+                                       "spin_sequence_" + std::to_string(i + 1));
+            recovery_mgr_.addRecovery(spin);
+        }
+
+        nav_components::ArcBackupRecovery::SafetyChecker arc_safety_checker =
+            [this](const geometry_msgs::msg::PoseStamped& pose,
+                   double linear_vel,
+                   double angular_vel,
+                   double duration_s,
+                   std::string* reason) -> bool {
+            auto costmap = map_manager_ ? map_manager_->getCostmap() : nullptr;
+            if (!costmap) {
+                if (reason) {
+                    *reason = "costmap 不可用";
+                }
+                return false;
+            }
+
+            tf2::Quaternion q;
+            tf2::fromMsg(pose.pose.orientation, q);
+            double roll, pitch, yaw;
+            tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+            const double resolution = costmap->info.resolution;
+            const double origin_x = costmap->info.origin.position.x;
+            const double origin_y = costmap->info.origin.position.y;
+            const int width = static_cast<int>(costmap->info.width);
+            const int height = static_cast<int>(costmap->info.height);
+            const double dt = 0.1;
+            const double horizon = std::max(0.0, duration_s);
+            double x = pose.pose.position.x;
+            double y = pose.pose.position.y;
+            double theta = yaw;
+
+            for (double t = 0.0; t <= horizon + 1e-6; t += dt) {
+                x += linear_vel * std::cos(theta) * dt;
+                y += linear_vel * std::sin(theta) * dt;
+                theta += angular_vel * dt;
+
+                const int mx = static_cast<int>((x - origin_x) / resolution);
+                const int my = static_cast<int>((y - origin_y) / resolution);
+                if (mx < 0 || mx >= width || my < 0 || my >= height) {
+                    if (reason) {
+                        *reason = "弧线后退轨迹越出 costmap";
+                    }
+                    return false;
+                }
+
+                const int idx = my * width + mx;
+                const int8_t cost = costmap->data[idx];
+                if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
+                    if (reason) {
+                        *reason = "弧线后退轨迹存在障碍/未知区域";
+                    }
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        auto arc_backup_left = std::make_shared<nav_components::ArcBackupRecovery>();
+        arc_backup_left->initialize(this, vel_pub);
+        const double arc_dist = get_parameter("recovery.arc_backup_dist").as_double();
+        const double arc_linear_vel = get_parameter("recovery.arc_backup_vel").as_double();
+        const double arc_left_angular_vel =
+            get_parameter("recovery.arc_backup_left_angular_vel").as_double();
+        const double arc_right_angular_vel =
+            get_parameter("recovery.arc_backup_right_angular_vel").as_double();
+        const double arc_timeout = get_parameter("recovery.arc_backup_timeout").as_double();
+        const double arc_min_progress =
+            get_parameter("recovery.arc_backup_min_progress").as_double();
+        const double arc_progress_timeout =
+            get_parameter("recovery.arc_backup_progress_timeout").as_double();
+        const double arc_safety_duration =
+            get_parameter("recovery.arc_backup_safety_check_duration").as_double();
+        const bool arc_enable_safety =
+            get_parameter("recovery.arc_backup_enable_safety_check").as_bool();
+        const bool arc_allow_unsafe =
+            get_parameter("recovery.arc_backup_allow_unsafe").as_bool();
+        arc_backup_left->initializeConfigured(this,
+                                             vel_pub,
+                                             arc_dist,
+                                             arc_linear_vel,
+                                             arc_left_angular_vel,
+                                             arc_timeout,
+                                             arc_min_progress,
+                                             arc_progress_timeout,
+                                             arc_safety_duration,
+                                             arc_enable_safety,
+                                             arc_allow_unsafe,
+                                             "arc_backup_left");
+        arc_backup_left->setSafetyChecker(arc_safety_checker);
+        recovery_mgr_.addRecovery(arc_backup_left);
+
+        auto arc_backup_right = std::make_shared<nav_components::ArcBackupRecovery>();
+        arc_backup_right->initializeConfigured(this,
+                                              vel_pub,
+                                              arc_dist,
+                                              arc_linear_vel,
+                                              arc_right_angular_vel,
+                                              arc_timeout,
+                                              arc_min_progress,
+                                              arc_progress_timeout,
+                                              arc_safety_duration,
+                                              arc_enable_safety,
+                                              arc_allow_unsafe,
+                                              "arc_backup_right");
+        arc_backup_right->setSafetyChecker(arc_safety_checker);
+        recovery_mgr_.addRecovery(arc_backup_right);
     }
     
     rclcpp_action::GoalResponse handleGoal(

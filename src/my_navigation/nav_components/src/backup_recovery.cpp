@@ -16,6 +16,7 @@ void BackupRecovery::initialize(rclcpp::Node* node, nav_core::VelPublisher vel_p
     progress_timeout_s_ = node_->declare_parameter("recovery.progress_timeout", 1.0);
     safety_check_distance_ = node_->declare_parameter("recovery.safety_check_distance", 0.5);
     enable_safety_check_ = node_->declare_parameter("recovery.enable_safety_check", true);
+    allow_unsafe_ = node_->declare_parameter("recovery.backup_allow_unsafe", false);
 }
 
 void BackupRecovery::setSafetyChecker(SafetyChecker checker) {
@@ -80,7 +81,7 @@ nav_core::RecoveryStatus BackupRecovery::update(const geometry_msgs::msg::PoseSt
         return status_;
     }
 
-    if (enable_safety_check_ && safety_checker_) {
+    if (enable_safety_check_ && !allow_unsafe_ && safety_checker_) {
         std::string reason;
         if (!safety_checker_(current_pose, safety_check_distance_, &reason)) {
             geometry_msgs::msg::Twist stop;

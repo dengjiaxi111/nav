@@ -35,6 +35,7 @@ private:
     double progress_timeout_s_ = 1.0;
     double safety_check_distance_ = 0.5;
     bool enable_safety_check_ = true;
+    bool allow_unsafe_ = false;
 
     std::chrono::steady_clock::time_point start_time_;
     std::chrono::steady_clock::time_point last_progress_time_;

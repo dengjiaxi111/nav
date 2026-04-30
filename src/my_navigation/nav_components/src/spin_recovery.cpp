@@ -27,6 +27,24 @@ void SpinRecovery::initialize(rclcpp::Node* node, nav_core::VelPublisher vel_pub
     progress_timeout_s_ = node_->declare_parameter("recovery.spin_progress_timeout", 1.5);
 }
 
+void SpinRecovery::initializeConfigured(rclcpp::Node* node,
+                                        nav_core::VelPublisher vel_pub,
+                                        double spin_angle,
+                                        double spin_vel,
+                                        double timeout_s,
+                                        double min_progress,
+                                        double progress_timeout_s,
+                                        const std::string& name) {
+    node_ = node;
+    vel_pub_ = vel_pub;
+    spin_angle_ = std::abs(spin_angle);
+    spin_vel_ = spin_vel;
+    timeout_s_ = timeout_s;
+    min_progress_ = min_progress;
+    progress_timeout_s_ = progress_timeout_s;
+    name_ = name;
+}
+
 void SpinRecovery::start(const geometry_msgs::msg::PoseStamped& current_pose) {
     start_yaw_ = getYaw(current_pose.pose.orientation);
     last_yaw_ = start_yaw_;
@@ -36,8 +54,8 @@ void SpinRecovery::start(const geometry_msgs::msg::PoseStamped& current_pose) {
     last_progress_time_ = start_time_;
     status_ = nav_core::RecoveryStatus::RUNNING;
     RCLCPP_INFO(node_->get_logger(),
-                "开始旋转恢复: angle=%.2frad vel=%.2frad/s timeout=%.1fs",
-                spin_angle_, spin_vel_, timeout_s_);
+                "开始旋转恢复[%s]: angle=%.2frad vel=%.2frad/s timeout=%.1fs",
+                name_.c_str(), spin_angle_, spin_vel_, timeout_s_);
 }
 
 nav_core::RecoveryStatus SpinRecovery::update(const geometry_msgs::msg::PoseStamped& current_pose) {
@@ -81,7 +99,7 @@ nav_core::RecoveryStatus SpinRecovery::update(const geometry_msgs::msg::PoseStam
         geometry_msgs::msg::Twist stop;
         vel_pub_(stop);
         status_ = nav_core::RecoveryStatus::SUCCEEDED;
-        RCLCPP_INFO(node_->get_logger(), "旋转恢复完成");
+        RCLCPP_INFO(node_->get_logger(), "旋转恢复完成[%s]", name_.c_str());
         return status_;
     }
     
