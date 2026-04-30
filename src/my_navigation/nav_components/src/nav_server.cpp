@@ -232,6 +232,10 @@ public:
         declare_parameter("special_terrain.stair_fixed_heading_kp", 1.8);
         declare_parameter("special_terrain.stair_fixed_max_angular_vel", 0.8);
         declare_parameter("special_terrain.stair_fixed_heading_deadband", 0.05);
+        declare_parameter("special_terrain.backoff_strategy", "normal_tangent");
+        declare_parameter("special_terrain.backoff_heading_release_error_rad", 0.25);
+        declare_parameter("special_terrain.backoff_tangent_correction_kp", 0.6);
+        declare_parameter("special_terrain.backoff_max_tangent_correction_ratio", 0.35);
         
         enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
         enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();

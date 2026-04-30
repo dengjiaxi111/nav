@@ -138,7 +138,7 @@ nav_server:
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
       stair_contact_distance_m: 1.10              # 接触判定阈值(米)
       stair_commit_success_dist_m: 0.10          # 越过台阶中心线后的成功法向距离阈值(米)
-      stair_level2_commit_success_dist_m: 0.8   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
+      stair_level2_commit_success_dist_m: 0.4   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
       stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
 
       # [失败判据] A + B(弧长进展超时)
@@ -165,6 +165,10 @@ nav_server:
       stair_backoff_heading_kp: 2.0              # 退让航向控制增益
       stair_backoff_max_angular_vel: 6.0         # 退让角速度上限(rad/s)
       stair_backoff_pos_tolerance_m: 0.08        # 退让完成判定容差(米)
+      backoff_strategy: normal_tangent           # normal_tangent: -normal为主+切向弱纠偏; target_point: 锁定目标点跟踪
+      backoff_heading_release_error_rad: 0.25    # 航向误差大于该值时只转不走(rad)
+      backoff_tangent_correction_kp: 0.6         # normal_tangent策略下的切向纠偏增益
+      backoff_max_tangent_correction_ratio: 0.35 # normal_tangent策略下切向分量占比上限
       stair_retry_max_attempts: 3                # 单次任务最大重试次数（阶段B）
       stair_request_recovery_on_max_attempts: true  # 超过最大重试后请求恢复，否则请求重规划
 

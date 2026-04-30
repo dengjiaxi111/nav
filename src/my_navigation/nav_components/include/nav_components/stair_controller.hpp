@@ -44,6 +44,11 @@ private:
         COOLDOWN_BLOCKED = 5,
     };
 
+    enum class BackoffStrategy : uint8_t {
+        NORMAL_WITH_TANGENT_CORRECTION = 0,
+        TARGET_POINT_TRACKING = 1,
+    };
+
     struct TerrainCandidateInfo {
         bool valid{false};
         TerrainType terrain_type{TerrainType::NONE};
@@ -202,6 +207,10 @@ private:
     double stair_backoff_pos_tolerance_m_{0.08};
     int stair_retry_max_attempts_{3};
     bool stair_request_recovery_on_max_attempts_{true};
+    BackoffStrategy backoff_strategy_{BackoffStrategy::NORMAL_WITH_TANGENT_CORRECTION};
+    double backoff_heading_release_error_rad_{0.25};
+    double backoff_tangent_correction_kp_{0.6};
+    double backoff_max_tangent_correction_ratio_{0.35};
 
     // 阶段C：同台阶重试与冷却
     bool enable_stair_cooldown_{true};
@@ -229,6 +238,9 @@ private:
     std::chrono::steady_clock::time_point commit_progress_start_time_{};
     int cooldown_stair_id_{-1};
     bool cooldown_replan_pending_{false};
+    bool backoff_target_initialized_{false};
+    Eigen::Vector2d backoff_target_point_{Eigen::Vector2d::Zero()};
+    Eigen::Vector2d backoff_target_centerline_point_{Eigen::Vector2d::Zero()};
     std::string last_transition_reason_{"init"};
     std::unordered_map<int, int> stair_fail_count_by_id_;
     std::unordered_map<int, std::chrono::steady_clock::time_point> stair_cooldown_until_by_id_;

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <sstream>
+#include <string>
 
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -61,6 +62,10 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_backoff_pos_tolerance_m", 0.08);
     declare_if_needed("special_terrain.stair_retry_max_attempts", 3);
     declare_if_needed("special_terrain.stair_request_recovery_on_max_attempts", true);
+    declare_if_needed("special_terrain.backoff_strategy", std::string("normal_tangent"));
+    declare_if_needed("special_terrain.backoff_heading_release_error_rad", 0.25);
+    declare_if_needed("special_terrain.backoff_tangent_correction_kp", 0.6);
+    declare_if_needed("special_terrain.backoff_max_tangent_correction_ratio", 0.35);
     declare_if_needed("special_terrain.enable_stair_cooldown", true);
     declare_if_needed("special_terrain.stair_cooldown_fail_threshold", 3);
     declare_if_needed("special_terrain.stair_cooldown_duration_sec", 30.0);
@@ -187,6 +192,28 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_retry_max_attempts").as_int();
     stair_request_recovery_on_max_attempts_ =
         node_->get_parameter("special_terrain.stair_request_recovery_on_max_attempts").as_bool();
+    const std::string backoff_strategy =
+        node_->get_parameter("special_terrain.backoff_strategy").as_string();
+    if (backoff_strategy == "target_point" || backoff_strategy == "target_point_tracking") {
+        backoff_strategy_ = BackoffStrategy::TARGET_POINT_TRACKING;
+    } else {
+        if (backoff_strategy != "normal_tangent" &&
+            backoff_strategy != "normal_with_tangent_correction") {
+            RCLCPP_WARN(node_->get_logger(),
+                        "special_terrain.backoff_strategy='%s' 未识别，回退为 normal_tangent",
+                        backoff_strategy.c_str());
+        }
+        backoff_strategy_ = BackoffStrategy::NORMAL_WITH_TANGENT_CORRECTION;
+    }
+    backoff_heading_release_error_rad_ = std::max(
+        0.0,
+        node_->get_parameter("special_terrain.backoff_heading_release_error_rad").as_double());
+    backoff_tangent_correction_kp_ = std::max(
+        0.0,
+        node_->get_parameter("special_terrain.backoff_tangent_correction_kp").as_double());
+    backoff_max_tangent_correction_ratio_ = std::clamp(
+        node_->get_parameter("special_terrain.backoff_max_tangent_correction_ratio").as_double(),
+        0.0, 1.0);
     enable_stair_cooldown_ =
         node_->get_parameter("special_terrain.enable_stair_cooldown").as_bool();
     stair_cooldown_fail_threshold_ =
@@ -325,7 +352,7 @@ void StairController::initialize(rclcpp::Node* node) {
     }
     if (enable_stair_fsm_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, failA_miss=%d, backoff=%.2fm, retry_max=%d, cooldown(en=%d,th=%d,dur=%.1fs)",
+                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, failA_miss=%d, backoff=%.2fm, retry_max=%d, backoff_strategy=%s, heading_release=%.2frad, tangent_kp=%.2f, tangent_ratio=%.2f, cooldown(en=%d,th=%d,dur=%.1fs)",
                     stair_contact_distance_m_,
                     stair_commit_success_dist_m_,
                     stair_level2_commit_success_dist_m_,
@@ -335,6 +362,12 @@ void StairController::initialize(rclcpp::Node* node) {
                     stair_fail_a_precontact_miss_cycles_,
                     stair_backoff_distance_m_,
                     stair_retry_max_attempts_,
+                    backoff_strategy_ == BackoffStrategy::TARGET_POINT_TRACKING
+                        ? "target_point"
+                        : "normal_tangent",
+                    backoff_heading_release_error_rad_,
+                    backoff_tangent_correction_kp_,
+                    backoff_max_tangent_correction_ratio_,
                     enable_stair_cooldown_,
                     stair_cooldown_fail_threshold_,
                     stair_cooldown_duration_sec_);
@@ -787,6 +820,20 @@ nav_core::TerrainControlDecision StairController::update(
             const Eigen::Vector2d centerline_point = active_feature_.center + s_clamped * t;
             const double signed_dist = (robot_pos - centerline_point).dot(n);
             const double target_signed = -backoff_distance(active_terrain_type_);
+            if (!backoff_target_initialized_) {
+                backoff_target_centerline_point_ = centerline_point;
+                backoff_target_point_ = backoff_target_centerline_point_ + target_signed * n;
+                backoff_target_initialized_ = true;
+                RCLCPP_INFO(node_->get_logger(),
+                            "backoff target locked: type=%s id=%d target=(%.2f,%.2f), centerline=(%.2f,%.2f), signed=%.2f",
+                            terrainTypeName(active_terrain_type_),
+                            active_feature_.feature_id,
+                            backoff_target_point_.x(),
+                            backoff_target_point_.y(),
+                            backoff_target_centerline_point_.x(),
+                            backoff_target_centerline_point_.y(),
+                            target_signed);
+            }
 
             if (signed_dist <= target_signed + backoff_pos_tol(active_terrain_type_)) {
                 bool should_enter_cooldown = false;
@@ -819,7 +866,26 @@ nav_core::TerrainControlDecision StairController::update(
                 break;
             }
 
-            const Eigen::Vector2d backoff_dir = -n;
+            Eigen::Vector2d backoff_dir = -n;
+            if (backoff_strategy_ == BackoffStrategy::TARGET_POINT_TRACKING) {
+                const Eigen::Vector2d target_vec = backoff_target_point_ - robot_pos;
+                if (target_vec.norm() > 1e-6) {
+                    backoff_dir = target_vec.normalized();
+                }
+            } else {
+                const double tangent_error =
+                    (robot_pos - backoff_target_centerline_point_).dot(t);
+                const double tangent_component = std::clamp(
+                    -backoff_tangent_correction_kp_ * tangent_error,
+                    -backoff_max_tangent_correction_ratio_,
+                    backoff_max_tangent_correction_ratio_);
+                backoff_dir = -n + tangent_component * t;
+                if (backoff_dir.norm() > 1e-6) {
+                    backoff_dir.normalize();
+                } else {
+                    backoff_dir = -n;
+                }
+            }
             const double heading_ref = std::atan2(backoff_dir.y(), backoff_dir.x());
             tf2::Quaternion q;
             tf2::fromMsg(context.current_pose.pose.orientation, q);
@@ -827,11 +893,17 @@ nav_core::TerrainControlDecision StairController::update(
             tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
             const double heading_err_backoff = normalizeAngle(heading_ref - yaw);
+            out_cmd = geometry_msgs::msg::Twist();
             out_cmd.angular.z = std::clamp(
                 backoff_heading_kp(active_terrain_type_) * heading_err_backoff,
                 -backoff_wz_max(active_terrain_type_),
                 backoff_wz_max(active_terrain_type_));
-            out_cmd.linear.x = backoff_linear_vel(active_terrain_type_) * std::max(0.0, std::cos(heading_err_backoff));
+            out_cmd.linear.x = 0.0;
+            out_cmd.linear.y = 0.0;
+            if (std::abs(heading_err_backoff) <= backoff_heading_release_error_rad_) {
+                out_cmd.linear.x = backoff_linear_vel(active_terrain_type_) *
+                    std::max(0.0, std::cos(heading_err_backoff));
+            }
             decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
             break;
         }
@@ -913,6 +985,13 @@ void StairController::transitionFsmState(StairFsmState new_state, const char* re
 
     fsm_state_ = new_state;
     fsm_state_enter_time_ = std::chrono::steady_clock::now();
+    if (new_state == StairFsmState::FAIL_RETRY_BACKOFF) {
+        backoff_target_initialized_ = false;
+    } else {
+        backoff_target_initialized_ = false;
+        backoff_target_point_.setZero();
+        backoff_target_centerline_point_.setZero();
+    }
 }
 
 const char* StairController::terrainTypeName(TerrainType terrain_type) {
