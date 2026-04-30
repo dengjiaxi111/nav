@@ -49,6 +49,10 @@
 #include <rog_map/rog_map.h>
 #include <super_utils/color_msg_utils.hpp>
 
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 namespace rog_map {
     using namespace super_utils;
 
@@ -65,6 +69,7 @@ namespace rog_map {
         bool lidar_ext_valid_{false};
         Eigen::Isometry3d T_base_to_lidar_{Eigen::Isometry3d::Identity()};
 
+        std::mutex map_access_mutex_;
 
         const double getSystemWalltimeNow() override {
             return nh_->get_clock()->now().seconds();
@@ -104,6 +109,29 @@ namespace rog_map {
             return (T_world_base * T_base_to_lidar_).translation();
         }
 
+        bool lookupBasePoseAtStamp(const builtin_interfaces::msg::Time& stamp, Pose& pose) {
+            try {
+                auto tf = tf_buffer_->lookupTransform(
+                    "odom", "base_link", rclcpp::Time(stamp),
+                    rclcpp::Duration::from_seconds(0.02));
+
+                pose = std::make_pair(
+                    Vec3f(tf.transform.translation.x,
+                          tf.transform.translation.y,
+                          tf.transform.translation.z),
+                    Quatf(tf.transform.rotation.w,
+                          tf.transform.rotation.x,
+                          tf.transform.rotation.y,
+                          tf.transform.rotation.z));
+                return true;
+            } catch (const tf2::TransformException& ex) {
+                RCLCPP_WARN_THROTTLE(
+                    nh_->get_logger(), *nh_->get_clock(), 1000,
+                    "[ROG-Map] Failed to lookup odom->base_link at cloud stamp: %s", ex.what());
+                return false;
+            }
+        }
+
         struct VisualizeMap {
             rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
                 occ_pub, unknown_pub, esdf_neg_pub, esdf_occ_pub,
@@ -114,18 +142,20 @@ namespace rog_map {
         } vm_;
 
         struct ROSCallback {
-            rclcpp::CallbackGroup::SharedPtr odom_me_cbk_group, cloud_me_cbk_group, update_cbk_group;
+            rclcpp::CallbackGroup::SharedPtr odom_me_cbk_group, cloud_me_cbk_group;
             rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub;
             rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub;
             int unfinished_frame_cnt{0};
             Pose pc_pose;
             PointCloud pc;
-            rclcpp::TimerBase::SharedPtr update_timer;
-            mutex updete_lock;
+            std::mutex update_lock;
+            std::condition_variable update_cv;
+            std::thread update_thread;
+            bool worker_running{false};
         } rc_;
     
-        // TODO：此处订阅的是odom而非TF,所以写入的位姿是lidar系的，但是我们最好使用base_link系的位姿
         void odomCallback(const nav_msgs::msg::Odometry::SharedPtr odom_msg) {
+            std::lock_guard<std::mutex> map_lock(map_access_mutex_);
             updateRobotState(std::make_pair(Vec3f(odom_msg->pose.pose.position.x,
                                                   odom_msg->pose.pose.position.y,
                                                   odom_msg->pose.pose.position.z),
@@ -150,69 +180,70 @@ namespace rog_map {
         }
 
         void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud_msg) {
-            if (!robot_state_.rcv) {
-                std::cout << YELLOW << " -- [ROS] No odom received, skip cloud callback." << RESET << std::endl;
+            Pose cloud_pose;
+            if (!lookupBasePoseAtStamp(cloud_msg->header.stamp, cloud_pose)) {
                 return;
             }
-            double cbk_t = nh_->get_clock()->now().seconds();
-            if (cbk_t - robot_state_.rcv_time > cfg_.odom_timeout) {
-                std::cout << YELLOW << " -- [ROS] Odom timeout, skip cloud callback." << RESET << std::endl;
-                return;
-            }
+
             PointCloud temp_pc;
             pcl::fromROSMsg(*cloud_msg, temp_pc);
-            rc_.updete_lock.lock();
-            rc_.pc = temp_pc;
-            rc_.pc_pose = std::make_pair(robot_state_.p, robot_state_.q);
-            rc_.unfinished_frame_cnt++;
-            map_empty_ = false;
-            rc_.updete_lock.unlock();
+            {
+                std::lock_guard<std::mutex> lock(rc_.update_lock);
+                rc_.pc = std::move(temp_pc);
+                rc_.pc_pose = cloud_pose;
+                // Keep only the newest frame. If the worker is busy, older pending work is overwritten.
+                rc_.unfinished_frame_cnt = 1;
+            }
+            {
+                std::lock_guard<std::mutex> map_lock(map_access_mutex_);
+                map_empty_ = false;
+            }
+            rc_.update_cv.notify_one();
         }
 
-        void updateCallback() {
-            // Try to cache lidar extrinsic on first call
-            tryInitLidarExtrinsic();
-            
-            if (map_empty_) {
-                static double last_print_t = nh_->get_clock()->now().seconds();
-                double cur_t = nh_->get_clock()->now().seconds();
-                if (cfg_.ros_callback_en && (cur_t - last_print_t > 1.0)) {
-                    std::cout << YELLOW << " -- [ROG WARN] No point cloud input, check the topic name." << RESET <<
-                        std::endl;
-                    last_print_t = cur_t;
+        void updateWorkerLoop() {
+            while (true) {
+                PointCloud temp_pc;
+                Pose temp_pose;
+
+                {
+                    std::unique_lock<std::mutex> lock(rc_.update_lock);
+                    rc_.update_cv.wait(lock, [this]() {
+                        return !rc_.worker_running || rc_.unfinished_frame_cnt > 0;
+                    });
+
+                    if (!rc_.worker_running && rc_.unfinished_frame_cnt == 0) {
+                        break;
+                    }
+
+                    temp_pc = std::move(rc_.pc);
+                    temp_pose = rc_.pc_pose;
+                    rc_.unfinished_frame_cnt = 0;
                 }
-                return;
-            }
-            if (rc_.unfinished_frame_cnt == 0) {
-                return;
-            }
 
-            if (rc_.unfinished_frame_cnt > 1) {
-                std::cout << YELLOW <<
-                    " -- [ROG WARN] Unfinished frame cnt > 1, the map may not work in real-time" << RESET
-                    << std::endl;
+                processPointCloudFrame(temp_pc, temp_pose);
             }
-            static PointCloud temp_pc;
-            static Pose temp_pose;
+        }
 
-            rc_.updete_lock.lock();
-            temp_pc = rc_.pc;
-            temp_pose = rc_.pc_pose;
-            rc_.unfinished_frame_cnt = 0;
-            rc_.updete_lock.unlock();
+        void processPointCloudFrame(const PointCloud& temp_pc, const Pose& temp_pose) {
+            // Try to cache lidar extrinsic on first frame. If unavailable, raycasting falls back to base pose.
+            tryInitLidarExtrinsic();
 
             // Compute lidar position from robot pose using cached extrinsic
             Vec3f lidar_pos = computeLidarPosition(temp_pose);
-            
+
             // Performance monitoring: measure pure map update time
             auto t_update_start = std::chrono::high_resolution_clock::now();
-            
-            // Use new interface: separate robot center and lidar center
-            updateProbMap(temp_pc, temp_pose, lidar_pos);
+
+            {
+                std::lock_guard<std::mutex> map_lock(map_access_mutex_);
+                // Use new interface: separate robot center and lidar center
+                updateProbMap(temp_pc, temp_pose, lidar_pos);
+            }
 
             auto t_update_end = std::chrono::high_resolution_clock::now();
             double update_ms = std::chrono::duration<double, std::milli>(t_update_end - t_update_start).count();
-            
+
             // Log statistics every 50 frames
             static int update_count = 0;
             static double update_sum = 0.0, update_max = 0.0, update_min = 1e6;
@@ -220,10 +251,10 @@ namespace rog_map {
             update_max = std::max(update_max, update_ms);
             update_min = std::min(update_min, update_ms);
             update_count++;
-            
+
             if (update_count % 5000 == 0) {
                 double update_avg = update_sum / update_count;
-                std::cout << YELLOW << "[ROG-Map Update Perf] frames=" << update_count 
+                std::cout << YELLOW << "[ROG-Map Update Perf] frames=" << update_count
                           << " avg=" << update_avg << "ms"
                           << " min=" << update_min << "ms"
                           << " max=" << update_max << "ms" << RESET << std::endl;
@@ -232,22 +263,52 @@ namespace rog_map {
             writeTimeConsumingToLog(time_log_file_);
         }
 
+        void stopUpdateWorker() {
+            {
+                std::lock_guard<std::mutex> lock(rc_.update_lock);
+                rc_.worker_running = false;
+            }
+            rc_.update_cv.notify_one();
+            if (rc_.update_thread.joinable()) {
+                rc_.update_thread.join();
+            }
+        }
+
+        void updateCallback() {
+            PointCloud temp_pc;
+            Pose temp_pose;
+
+            {
+                std::lock_guard<std::mutex> lock(rc_.update_lock);
+                if (rc_.unfinished_frame_cnt == 0) {
+                    return;
+                }
+                temp_pc = std::move(rc_.pc);
+                temp_pose = rc_.pc_pose;
+                rc_.unfinished_frame_cnt = 0;
+            }
+
+            processPointCloudFrame(temp_pc, temp_pose);
+        }
+
         void vizCallback() {
             if (!cfg_.visualization_en) {
                 return;
             }
+            std::lock_guard<std::mutex> map_lock(map_access_mutex_);
+
             if (map_empty_) {
                 return;
             }
-            
+
             // Performance monitoring: measure visualization callback time
             auto t_viz_start = std::chrono::high_resolution_clock::now();
-            
+
             // Track actual callback interval
             static auto last_viz_time = t_viz_start;
             double interval_ms = std::chrono::duration<double, std::milli>(t_viz_start - last_viz_time).count();
             last_viz_time = t_viz_start;
-            
+
             static double interval_sum = 0.0, interval_max = 0.0, interval_min = 1e6;
             static int interval_count = 0;
             if (interval_count > 0) {  // Skip first measurement
@@ -417,6 +478,20 @@ namespace rog_map {
             vm_.mkr_arr_pub->publish(mkr_arr);
         }
 
+    public:
+        void boxSearchThreadSafe(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt,
+                                 vec_E<Vec3f>& out_points) {
+            std::lock_guard<std::mutex> map_lock(map_access_mutex_);
+            boxSearch(box_min, box_max, gt, out_points);
+        }
+
+        void boxSearchInflateThreadSafe(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt,
+                                        vec_E<Vec3f>& out_points) {
+            std::lock_guard<std::mutex> map_lock(map_access_mutex_);
+            boxSearchInflate(box_min, box_max, gt, out_points);
+        }
+
+    private:
         void vecEVec3fToPC2(const vec_E<Vec3f>& points, sensor_msgs::msg::PointCloud2& cloud) {
             // 设置header信息
             pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
@@ -489,13 +564,16 @@ namespace rog_map {
                 so.callback_group = rc_.cloud_me_cbk_group;
                 rc_.cloud_sub = nh_->create_subscription<sensor_msgs::msg::PointCloud2>(
                     cfg_.cloud_topic, qos, std::bind(&ROGMapROS::cloudCallback, this, std::placeholders::_1), so);
-                rc_.update_cbk_group = nh_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-                rc_.update_timer = nh_->create_wall_timer(
-                    std::chrono::milliseconds(1), // 0.001秒，即1毫秒
-                    std::bind(&ROGMapROS::updateCallback, this),
-                    rc_.update_cbk_group
-                );
+                {
+                    std::lock_guard<std::mutex> lock(rc_.update_lock);
+                    rc_.worker_running = true;
+                }
+                rc_.update_thread = std::thread(&ROGMapROS::updateWorkerLoop, this);
             }
+        }
+
+        ~ROGMapROS() {
+            stopUpdateWorker();
         }
 
     private:

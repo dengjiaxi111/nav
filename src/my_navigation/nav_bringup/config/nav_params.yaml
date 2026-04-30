@@ -166,7 +166,11 @@ nav_server:
       stair_backoff_max_angular_vel: 6.0         # 退让角速度上限(rad/s)
       stair_backoff_pos_tolerance_m: 0.08        # 退让完成判定容差(米)
       backoff_strategy: normal_tangent           # normal_tangent: -normal为主+切向弱纠偏; target_point: 锁定目标点跟踪
-      backoff_heading_release_error_rad: 0.25    # 航向误差大于该值时只转不走(rad)
+      backoff_initial_turn_error_rad: 0.60       # 进入退让时初始航向误差大于该值，先执行一次原地预转向(rad)
+      backoff_initial_turn_done_error_rad: 0.25  # 原地预转向完成阈值(rad)
+      backoff_initial_turn_timeout_sec: 1.50     # 原地预转向最长持续时间，超时后本轮退让不再只转不走
+      backoff_min_linear_scale_after_turn: 0.35  # 预转向后边走边修正的最小线速度比例
+      backoff_total_timeout_sec: 4.0             # FAIL_RETRY_BACKOFF 总超时，超时请求恢复
       backoff_tangent_correction_kp: 0.6         # normal_tangent策略下的切向纠偏增益
       backoff_max_tangent_correction_ratio: 0.35 # normal_tangent策略下切向分量占比上限
       stair_retry_max_attempts: 3                # 单次任务最大重试次数（阶段B）

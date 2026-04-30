@@ -208,7 +208,11 @@ private:
     int stair_retry_max_attempts_{3};
     bool stair_request_recovery_on_max_attempts_{true};
     BackoffStrategy backoff_strategy_{BackoffStrategy::NORMAL_WITH_TANGENT_CORRECTION};
-    double backoff_heading_release_error_rad_{0.25};
+    double backoff_initial_turn_error_rad_{0.60};
+    double backoff_initial_turn_done_error_rad_{0.25};
+    double backoff_initial_turn_timeout_sec_{1.50};
+    double backoff_min_linear_scale_after_turn_{0.35};
+    double backoff_total_timeout_sec_{4.0};
     double backoff_tangent_correction_kp_{0.6};
     double backoff_max_tangent_correction_ratio_{0.35};
 
@@ -241,6 +245,10 @@ private:
     bool backoff_target_initialized_{false};
     Eigen::Vector2d backoff_target_point_{Eigen::Vector2d::Zero()};
     Eigen::Vector2d backoff_target_centerline_point_{Eigen::Vector2d::Zero()};
+    bool backoff_initial_turn_active_{false};
+    bool backoff_initial_turn_completed_{false};
+    double backoff_initial_heading_ref_{0.0};
+    std::chrono::steady_clock::time_point backoff_initial_turn_start_time_{};
     std::string last_transition_reason_{"init"};
     std::unordered_map<int, int> stair_fail_count_by_id_;
     std::unordered_map<int, std::chrono::steady_clock::time_point> stair_cooldown_until_by_id_;

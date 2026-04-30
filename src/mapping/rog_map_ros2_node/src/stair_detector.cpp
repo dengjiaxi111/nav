@@ -229,7 +229,7 @@ void StairDetector::updateTimerCallback() {
     
     // 台阶检测使用原始占据点云（不需要膨胀）
     rog_map::vec_E<Eigen::Vector3d> occ_points;
-    rog_map_ptr_->boxSearch(box_min, box_max, rog_map::OCCUPIED, occ_points);
+    rog_map_ptr_->boxSearchThreadSafe(box_min, box_max, rog_map::OCCUPIED, occ_points);
     
     if (occ_points.empty()) {
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,
@@ -1960,4 +1960,3 @@ rcl_interfaces::msg::SetParametersResult StairDetector::parametersCallback(
 }
 
 } // namespace stair_detector
-

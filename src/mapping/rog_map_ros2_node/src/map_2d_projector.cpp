@@ -43,6 +43,10 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.obstacle_height_min = this->declare_parameter<double>("obstacle_height_min", 0.25);
     cfg_.high_occupancy_thresh = this->declare_parameter<double>("high_occupancy_thresh", 0.5);
     cfg_.keep_step_cells = this->declare_parameter<bool>("keep_step_cells", false);
+    cfg_.enable_obstacle_support_filter = this->declare_parameter<bool>("enable_obstacle_support_filter", true);
+    cfg_.obstacle_support_radius_cells = this->declare_parameter<int>("obstacle_support_radius_cells", 1);
+    cfg_.obstacle_min_support_count = this->declare_parameter<int>("obstacle_min_support_count", 2);
+    cfg_.obstacle_support_max_height = this->declare_parameter<double>("obstacle_support_max_height", 0.25);
     
     cfg_.normal_z_slope_thresh = this->declare_parameter<double>("normal_z_slope_thresh", 0.866);
     cfg_.normal_z_wall_thresh = this->declare_parameter<double>("normal_z_wall_thresh", 0.5);
@@ -109,6 +113,11 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
                 cfg_.slope_height_max, cfg_.step_height_min, cfg_.step_height_max, cfg_.obstacle_height_min);
     RCLCPP_INFO(this->get_logger(), "  Keep step cells: %s",
                 cfg_.keep_step_cells ? "ENABLED" : "DISABLED");
+    RCLCPP_INFO(this->get_logger(), "  Obstacle support filter: %s (radius=%d, min_count=%d, max_height=%.2f)",
+                cfg_.enable_obstacle_support_filter ? "ENABLED" : "DISABLED",
+                cfg_.obstacle_support_radius_cells,
+                cfg_.obstacle_min_support_count,
+                cfg_.obstacle_support_max_height);
     RCLCPP_INFO(this->get_logger(), "  Dynamic leg length: %s (frame: %s)",
                 cfg_.enable_dynamic_leg_length ? "ENABLED" : "DISABLED", cfg_.wheel_frame.c_str());
     RCLCPP_INFO(this->get_logger(), "  Direct ROG-Map access: %s", rog_map_ptr_ ? "ENABLED" : "PENDING");
@@ -162,7 +171,7 @@ void Map2DProjector::updateTimerCallback() {
     );
     
     rog_map::vec_E<Eigen::Vector3d> inf_occ_points;
-    rog_map_ptr_->boxSearchInflate(box_min, box_max, rog_map::OCCUPIED, inf_occ_points);
+    rog_map_ptr_->boxSearchInflateThreadSafe(box_min, box_max, rog_map::OCCUPIED, inf_occ_points);
     
     // 检查数据有效性
     if (inf_occ_points.empty()) {
@@ -557,6 +566,39 @@ int8_t Map2DProjector::classifyColumn(const ColumnMetrics& metrics, float robot_
     #undef DEBUG_CLASSIFY
 }
 
+bool Map2DProjector::needsObstacleSupport(const ColumnMetrics& metrics) const {
+    if (!cfg_.enable_obstacle_support_filter) {
+        return false;
+    }
+    if (cfg_.obstacle_support_radius_cells <= 0 || cfg_.obstacle_min_support_count <= 1) {
+        return false;
+    }
+    return metrics.height_diff <= cfg_.obstacle_support_max_height;
+}
+
+bool Map2DProjector::hasObstacleSupport(
+    int64_t key,
+    const std::unordered_set<int64_t>& obstacle_candidates) const {
+    int ix, iy;
+    gridKeyToXY(key, ix, iy);
+
+    int support_count = 0;
+    const int radius = cfg_.obstacle_support_radius_cells;
+    for (int dx = -radius; dx <= radius; ++dx) {
+        for (int dy = -radius; dy <= radius; ++dy) {
+            const int64_t neighbor_key = gridIndexToKey(ix + dx, iy + dy);
+            if (obstacle_candidates.find(neighbor_key) != obstacle_candidates.end()) {
+                ++support_count;
+                if (support_count >= cfg_.obstacle_min_support_count) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 void Map2DProjector::update2DMap(
     const std::unordered_map<int64_t, ColumnMetrics>& columns,
     const Vec3f& robot_pos) {
@@ -589,6 +631,18 @@ void Map2DProjector::update2DMap(
     int obstacle_count = 0;
     int free_count = 0;
     int step_count = 0;
+    int unsupported_obstacle_count = 0;
+
+    struct ClassifiedCell {
+        int64_t key;
+        int index;
+        int8_t value;
+        const ColumnMetrics* metrics;
+    };
+
+    std::vector<ClassifiedCell> classified_cells;
+    classified_cells.reserve(columns.size());
+    std::unordered_set<int64_t> obstacle_candidates;
     
     for (const auto& [key, col] : columns) {
         Vec2f pos = gridKeyToPos(key);
@@ -609,11 +663,26 @@ void Map2DProjector::update2DMap(
         // 计算1D索引 (row-major)
         int index = iy * map_2d_->info.width + ix;
         
-        // 分类并设置占据值
+        // 先分类，暂不立即确认障碍物
         int8_t value = classifyColumn(col, robot_pos.z());
-        map_2d_->data[index] = value;
+        classified_cells.push_back({key, index, value, &col});
+        if (value == cfg_.obstacle_value) {
+            obstacle_candidates.insert(key);
+        }
+    }
+
+    // 二次确认障碍物：低矮/薄层 obstacle 需要邻域中有足够同类候选支持
+    for (const auto& cell : classified_cells) {
+        int8_t value = cell.value;
+        if (value == cfg_.obstacle_value && needsObstacleSupport(*cell.metrics) &&
+            !hasObstacleSupport(cell.key, obstacle_candidates)) {
+            value = cfg_.free_value;
+            ++unsupported_obstacle_count;
+        }
+
+        map_2d_->data[cell.index] = value;
         if (value == cfg_.step_value) {
-            step_cells_.insert(key);
+            step_cells_.insert(cell.key);
         }
         
         // 统计
@@ -627,8 +696,9 @@ void Map2DProjector::update2DMap(
     update_count++;
     if (update_count % 100 == 0) {
         RCLCPP_INFO(this->get_logger(),
-            "[Map2D] %zu columns: %d obs, %d step, %d free | leg=%.3f",
-            columns.size(), obstacle_count, step_count, free_count, current_leg_length_);
+            "[Map2D] %zu columns: %d obs, %d step, %d free, %d unsupported_obs_filtered | leg=%.3f",
+            columns.size(), obstacle_count, step_count, free_count,
+            unsupported_obstacle_count, current_leg_length_);
     }
 }
 

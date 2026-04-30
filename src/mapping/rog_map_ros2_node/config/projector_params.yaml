@@ -29,6 +29,10 @@
     projector.obstacle_height_min: 0.25     # [m] 障碍物高度下限
     projector.high_occupancy_thresh: 0.85    # 占据率阈值（高占据柱体更偏向障碍判断）
     projector.keep_step_cells: false        # 是否将台阶栅格保留为 STEP；false 时按 FREE 输出
+    projector.enable_obstacle_support_filter: true  # 是否启用 obstacle 邻域支持过滤
+    projector.obstacle_support_radius_cells: 1      # 邻域半径，1 表示 3x3
+    projector.obstacle_min_support_count: 2         # 包含自身在内的最小 obstacle 候选数量
+    projector.obstacle_support_max_height: 0.25     # [m] 仅对低矮/薄层 obstacle 候选启用过滤
 
     # === 法向量/PCA判别参数 ===
     projector.normal_z_slope_thresh: 0.65   # |nz| 阈值，越大越接近水平地面/缓坡

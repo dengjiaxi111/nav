@@ -101,6 +101,12 @@ struct ProjectorConfig {
     float obstacle_height_min = 0.25f;   // 障碍物最小高度差
     float high_occupancy_thresh = 0.5f;  // 高占据率阈值（跳过法向量分析）
     bool keep_step_cells = false;        // 是否将台阶保留为STEP，否则按FREE处理
+
+    // === 障碍邻域支持过滤 ===
+    bool enable_obstacle_support_filter = true;  // 抑制孤立稀疏障碍候选
+    int obstacle_support_radius_cells = 1;       // 邻域半径，1 表示 3x3
+    int obstacle_min_support_count = 2;          // 包含自身在内的最小候选数量
+    float obstacle_support_max_height = 0.25f;   // 仅过滤低矮/薄层障碍候选
     
     // === 法向量分析参数 ===
     float normal_z_slope_thresh = 0.866f;   // cos(30°)，|nz|大于此值为可通行坡面
@@ -235,6 +241,9 @@ private:
     void update2DMap(
         const std::unordered_map<int64_t, ColumnMetrics>& columns,
         const Vec3f& robot_pos);
+
+    bool needsObstacleSupport(const ColumnMetrics& metrics) const;
+    bool hasObstacleSupport(int64_t key, const std::unordered_set<int64_t>& obstacle_candidates) const;
     
     void initializeMap();
     void publishMap();
@@ -244,6 +253,10 @@ private:
     inline int64_t xyToGridKey(float x, float y) const {
         int ix = static_cast<int>(std::floor(x / cfg_.resolution));
         int iy = static_cast<int>(std::floor(y / cfg_.resolution));
+        return (static_cast<int64_t>(ix) << 32) | (static_cast<int64_t>(iy) & 0xFFFFFFFF);
+    }
+
+    inline int64_t gridIndexToKey(int ix, int iy) const {
         return (static_cast<int64_t>(ix) << 32) | (static_cast<int64_t>(iy) & 0xFFFFFFFF);
     }
     

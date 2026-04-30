@@ -239,7 +239,11 @@ public:
         declare_parameter("special_terrain.stair_fixed_max_angular_vel", 0.8);
         declare_parameter("special_terrain.stair_fixed_heading_deadband", 0.05);
         declare_parameter("special_terrain.backoff_strategy", "normal_tangent");
-        declare_parameter("special_terrain.backoff_heading_release_error_rad", 0.25);
+        declare_parameter("special_terrain.backoff_initial_turn_error_rad", 0.60);
+        declare_parameter("special_terrain.backoff_initial_turn_done_error_rad", 0.25);
+        declare_parameter("special_terrain.backoff_initial_turn_timeout_sec", 1.50);
+        declare_parameter("special_terrain.backoff_min_linear_scale_after_turn", 0.35);
+        declare_parameter("special_terrain.backoff_total_timeout_sec", 4.0);
         declare_parameter("special_terrain.backoff_tangent_correction_kp", 0.6);
         declare_parameter("special_terrain.backoff_max_tangent_correction_ratio", 0.35);
         
