@@ -28,6 +28,7 @@ find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 find_package(rog_map REQUIRED)
 find_package(robots_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # 生成自定义消息
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -55,6 +56,7 @@ target_compile_definitions(rog_map_node PRIVATE
 
 target_link_libraries(rog_map_node
   ${PCL_LIBRARIES}
+  yaml-cpp
 )
 
 ament_target_dependencies(rog_map_node
@@ -127,6 +129,7 @@ ament_target_dependencies(map_2d_projector_component
 
 target_link_libraries(map_2d_projector_component
   ${PCL_LIBRARIES}
+  yaml-cpp
 )
 
 rclcpp_components_register_node(map_2d_projector_component
