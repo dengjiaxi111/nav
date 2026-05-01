@@ -34,6 +34,7 @@ private:
         STAIR = 1,
         FLY_SLOPE = 2,
         STAIR_LEVEL2 = 3,
+        STAIR_LEVEL2_DOWN = 4,
     };
 
     enum class StairFsmState : uint8_t {
@@ -246,6 +247,7 @@ private:
     std::chrono::steady_clock::time_point stair_mode_last_mode1_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_last_mode2_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_last_mode3_publish_time_{};
+    std::chrono::steady_clock::time_point stair_mode_last_mode4_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_enter_time_{};
     bool stair_mode_omega_limiter_initialized_{false};
     double last_stair_mode_limited_omega_{0.0};

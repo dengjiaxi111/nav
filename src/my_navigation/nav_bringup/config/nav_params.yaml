@@ -116,7 +116,7 @@ nav_server:
       # 总开关：false 时退化为旧逻辑（仅 stair_mode 检测/透传）
       enable_stair_fsm: true
 
-    # [兼容输出] stair_mode: 0=正常, 1=准备/执行跨阶（给外部低层/嵌入式）
+    # [兼容输出] stair_mode: 0=正常, 1=一级台阶, 2=飞坡, 3=上二级台阶, 4=下二级台阶
       enable_stair_mode_detection: true
       enable_fly_slope_mode_detection: true
 
@@ -157,7 +157,7 @@ nav_server:
       stair_raise_leg_distance_m: 0.80           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
       stair_fixed_velocity_trigger_distance_m: 0.9 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
       stair_fixed_linear_vel: 1.35
-      stair_level2_raise_leg_distance_m: 0.8   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3 抬腿
+      stair_level2_raise_leg_distance_m: 0.8   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3/4 抬腿
       stair_level2_fixed_velocity_trigger_distance_m: 0.9 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
       stair_level2_fixed_linear_vel: 1.45        # 二级台阶：固定速度线速度(m/s)
       stair_fixed_heading_kp: 2.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
@@ -382,7 +382,7 @@ nav_server:
       horizon_length: 1.35     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
       desired_velocity: 2.5      # 期望巡航速度 (m/s)
       speed_profile:
-        enable: true
+        enable: false
         v_cruise: 2.5              # 解耦后的巡航参考速度 (m/s)
         v_min: 0.30                # 非终点工况最低参考速度 (m/s)
         max_lateral_accel: 3.5   # 横向加速度上限，用于曲率限速 (m/s^2)
@@ -401,7 +401,7 @@ nav_server:
       horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
-      enable_goal_speed_limit: true # 是否启用沿路径剩余距离的终点限速
+      enable_goal_speed_limit: false # 是否启用沿路径剩余距离的终点限速
       goal_slowdown_dist: 0.65    # 沿路径剩余距离小于该值时启用终点限速(m)
       goal_min_moving_speed: 0.12 # 终点减速区内最小可动速度(m/s)，需大于底盘死区
       goal_max_slow_speed: 0.50   # 刚进入终点减速区时的速度上限(m/s)
