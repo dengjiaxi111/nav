@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <queue>
 
 namespace map_2d_projector {
 
@@ -56,6 +57,13 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.normal_z_wall_thresh = this->declare_parameter<double>("normal_z_wall_thresh", 0.5);
     cfg_.normal_min_points = this->declare_parameter<int>("normal_min_points", 5);
     cfg_.planarity_thresh = this->declare_parameter<double>("planarity_thresh", 0.7);
+    cfg_.enable_slope_region_filter = this->declare_parameter<bool>("enable_slope_region_filter", true);
+    cfg_.slope_region_neighbor_radius = this->declare_parameter<int>("slope_region_neighbor_radius", 2);
+    cfg_.slope_region_min_points = this->declare_parameter<int>("slope_region_min_points", 12);
+    cfg_.slope_region_min_cells = this->declare_parameter<int>("slope_region_min_cells", 12);
+    cfg_.slope_region_max_angle_deg = this->declare_parameter<double>("slope_region_max_angle_deg", 40.0);
+    cfg_.slope_region_planarity_thresh = this->declare_parameter<double>("slope_region_planarity_thresh", 0.65);
+    cfg_.slope_region_neighbor_dz_margin = this->declare_parameter<double>("slope_region_neighbor_dz_margin", 0.03);
 
     cfg_.map_range_x = this->declare_parameter<double>("map_range_x", 10.0);
     cfg_.map_range_y = this->declare_parameter<double>("map_range_y", 10.0);
@@ -128,6 +136,13 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
                 cfg_.obstacle_support_radius_cells,
                 cfg_.obstacle_min_support_count,
                 cfg_.obstacle_support_max_height);
+    RCLCPP_INFO(this->get_logger(), "  Slope region filter: %s (radius=%d, min_pts=%d, min_cells=%d, max_angle=%.1f, planarity=%.2f)",
+                cfg_.enable_slope_region_filter ? "ENABLED" : "DISABLED",
+                cfg_.slope_region_neighbor_radius,
+                cfg_.slope_region_min_points,
+                cfg_.slope_region_min_cells,
+                cfg_.slope_region_max_angle_deg,
+                cfg_.slope_region_planarity_thresh);
     RCLCPP_INFO(this->get_logger(), "  Dynamic leg length TF: %s (frame: %s)",
                 cfg_.enable_dynamic_leg_length ? "ENABLED" : "DISABLED", cfg_.wheel_frame.c_str());
     RCLCPP_INFO(this->get_logger(), "  Direct leg length topic: %s (topic: %s, offset=%.3f)",
@@ -211,6 +226,9 @@ void Map2DProjector::updateTimerCallback() {
     
     // Step 2: 法向量估计（仅低占据率柱体，跳过高占据率障碍物）
     normalEstimation(columns);
+
+    // Step 3: 邻域PCA + 连通域识别，将连续坡面预标记为FREE
+    slopeRegionEstimation(columns);
     
     // Step 6: 写入2D地图
     update2DMap(columns, robot_position_);
@@ -446,6 +464,211 @@ void Map2DProjector::normalEstimation(std::unordered_map<int64_t, ColumnMetrics>
         }
         
         col.normal_valid = true;
+    }
+}
+
+void Map2DProjector::slopeRegionEstimation(std::unordered_map<int64_t, ColumnMetrics>& columns) {
+    if (!cfg_.enable_slope_region_filter || columns.empty()) {
+        return;
+    }
+
+    const int pca_radius = std::max(1, cfg_.slope_region_neighbor_radius);
+    const int min_points = std::max(3, cfg_.slope_region_min_points);
+    const int min_region_cells = std::max(1, cfg_.slope_region_min_cells);
+    const float pi = std::acos(-1.0f);
+    const float max_angle_rad = cfg_.slope_region_max_angle_deg * pi / 180.0f;
+    const float min_normal_z = std::cos(max_angle_rad);
+    const float max_slope_tan = std::tan(max_angle_rad);
+
+    auto collect_neighbor_points = [&](int64_t key, std::vector<Vec3f>& points) {
+        int ix, iy;
+        gridKeyToXY(key, ix, iy);
+        for (int dx = -pca_radius; dx <= pca_radius; ++dx) {
+            for (int dy = -pca_radius; dy <= pca_radius; ++dy) {
+                const int64_t neighbor_key = gridIndexToKey(ix + dx, iy + dy);
+                auto it = column_points_cache_.find(neighbor_key);
+                if (it == column_points_cache_.end()) {
+                    continue;
+                }
+                points.insert(points.end(), it->second.begin(), it->second.end());
+            }
+        }
+    };
+
+    auto fit_plane_pca = [&](const std::vector<Vec3f>& points,
+                             Vec3f& normal,
+                             float& normal_z_abs,
+                             float& planarity) {
+        if (static_cast<int>(points.size()) < min_points) {
+            return false;
+        }
+
+        Vec3f centroid = Vec3f::Zero();
+        for (const auto& p : points) {
+            centroid += p;
+        }
+        centroid /= static_cast<float>(points.size());
+
+        Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+        for (const auto& p : points) {
+            const Vec3f d = p - centroid;
+            cov += d * d.transpose();
+        }
+        cov /= static_cast<float>(points.size());
+
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(cov);
+        if (solver.info() != Eigen::Success) {
+            return false;
+        }
+
+        const Vec3f eigenvalues = solver.eigenvalues();
+        normal = solver.eigenvectors().col(0);
+        if (normal.z() < 0.0f) {
+            normal = -normal;
+        }
+
+        normal_z_abs = std::abs(normal.z());
+        if (eigenvalues(1) > 1e-6f) {
+            planarity = 1.0f - eigenvalues(0) / eigenvalues(1);
+        } else {
+            planarity = 0.0f;
+        }
+
+        return true;
+    };
+
+    auto is_height_continuous = [&](int64_t a, int64_t b) {
+        auto ita = columns.find(a);
+        auto itb = columns.find(b);
+        if (ita == columns.end() || itb == columns.end()) {
+            return false;
+        }
+
+        int ax, ay, bx, by;
+        gridKeyToXY(a, ax, ay);
+        gridKeyToXY(b, bx, by);
+        const int dx = ax - bx;
+        const int dy = ay - by;
+        const float dist = cfg_.resolution * std::sqrt(static_cast<float>(dx * dx + dy * dy));
+        const float allowed_dz = dist * max_slope_tan + cfg_.slope_region_neighbor_dz_margin;
+        return std::abs(ita->second.median_z - itb->second.median_z) <= allowed_dz;
+    };
+
+    auto has_local_height_continuity = [&](int64_t key) {
+        int ix, iy;
+        gridKeyToXY(key, ix, iy);
+
+        int checked_neighbors = 0;
+        int continuous_neighbors = 0;
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                if (dx == 0 && dy == 0) {
+                    continue;
+                }
+
+                const int64_t neighbor_key = gridIndexToKey(ix + dx, iy + dy);
+                if (columns.find(neighbor_key) == columns.end()) {
+                    continue;
+                }
+
+                ++checked_neighbors;
+                if (is_height_continuous(key, neighbor_key)) {
+                    ++continuous_neighbors;
+                }
+            }
+        }
+
+        return checked_neighbors == 0 || continuous_neighbors >= std::min(2, checked_neighbors);
+    };
+
+    std::unordered_set<int64_t> candidates;
+    std::vector<Vec3f> neighbor_points;
+    for (const auto& [key, col] : columns) {
+        if (col.point_count <= 0 || col.min_z > robot_position_.z() + cfg_.z_max_relative) {
+            continue;
+        }
+
+        neighbor_points.clear();
+        collect_neighbor_points(key, neighbor_points);
+
+        Vec3f normal{0.0f, 0.0f, 1.0f};
+        float normal_z_abs = 0.0f;
+        float planarity = 0.0f;
+        if (!fit_plane_pca(neighbor_points, normal, normal_z_abs, planarity)) {
+            continue;
+        }
+        if (normal_z_abs < min_normal_z || planarity < cfg_.slope_region_planarity_thresh) {
+            continue;
+        }
+        if (!has_local_height_continuity(key)) {
+            continue;
+        }
+
+        candidates.insert(key);
+    }
+
+    std::unordered_set<int64_t> visited;
+    int accepted_regions = 0;
+    int accepted_cells = 0;
+    std::vector<int64_t> region;
+    std::queue<int64_t> queue;
+
+    for (int64_t seed : candidates) {
+        if (visited.find(seed) != visited.end()) {
+            continue;
+        }
+
+        region.clear();
+        visited.insert(seed);
+        queue.push(seed);
+
+        while (!queue.empty()) {
+            const int64_t key = queue.front();
+            queue.pop();
+            region.push_back(key);
+
+            int ix, iy;
+            gridKeyToXY(key, ix, iy);
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    if (dx == 0 && dy == 0) {
+                        continue;
+                    }
+
+                    const int64_t neighbor_key = gridIndexToKey(ix + dx, iy + dy);
+                    if (candidates.find(neighbor_key) == candidates.end() ||
+                        visited.find(neighbor_key) != visited.end()) {
+                        continue;
+                    }
+                    if (!is_height_continuous(key, neighbor_key)) {
+                        continue;
+                    }
+
+                    visited.insert(neighbor_key);
+                    queue.push(neighbor_key);
+                }
+            }
+        }
+
+        if (static_cast<int>(region.size()) < min_region_cells) {
+            continue;
+        }
+
+        ++accepted_regions;
+        accepted_cells += static_cast<int>(region.size());
+        for (int64_t key : region) {
+            auto it = columns.find(key);
+            if (it != columns.end()) {
+                it->second.cell_type = CellType::FREE;
+            }
+        }
+    }
+
+    if (cfg_.enable_debug_log && accepted_cells > 0) {
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 500,
+            "[SlopeRegion] candidates=%zu accepted_regions=%d accepted_cells=%d",
+            candidates.size(), accepted_regions, accepted_cells);
     }
 }
 

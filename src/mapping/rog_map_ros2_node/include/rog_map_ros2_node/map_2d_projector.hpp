@@ -117,6 +117,15 @@ struct ProjectorConfig {
     float normal_z_wall_thresh = 0.5f;      // cos(60°)，|nz|小于此值为垂直障碍
     int normal_min_points = 5;              // 法向量估计最小点数
     float planarity_thresh = 0.7f;          // 平面性阈值，大于此值认为是平面
+
+    // === 邻域/连通坡面识别参数 ===
+    bool enable_slope_region_filter = true; // 是否启用邻域平面拟合坡面过滤
+    int slope_region_neighbor_radius = 2;   // 邻域PCA半径，2 表示 5x5
+    int slope_region_min_points = 12;       // 邻域PCA最少点数
+    int slope_region_min_cells = 12;        // 连通坡面最少栅格数
+    float slope_region_max_angle_deg = 40.0f;       // 最大可通行坡角
+    float slope_region_planarity_thresh = 0.65f;    // 邻域平面性阈值
+    float slope_region_neighbor_dz_margin = 0.03f;  // 相邻栅格高度连续余量
     
     // === 地图范围参数 ===
     float map_range_x = 10.0f;           // X方向范围
@@ -237,6 +246,11 @@ private:
      * 高占据率柱体直接跳过（避免人/车等动态物体误判）
      */
     void normalEstimation(std::unordered_map<int64_t, ColumnMetrics>& columns);
+
+    /**
+     * @brief 邻域PCA + 连通域坡面识别，将连续斜平面预标记为FREE
+     */
+    void slopeRegionEstimation(std::unordered_map<int64_t, ColumnMetrics>& columns);
     
     /**
      * @brief 根据高程特征判定可通行性

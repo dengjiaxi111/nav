@@ -58,6 +58,9 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
         "slope_height_max", "step_height_min", "step_height_max", "obstacle_height_min",
         "high_occupancy_thresh", "keep_step_cells", "normal_z_slope_thresh", "normal_z_wall_thresh",
         "normal_min_points", "planarity_thresh",
+        "enable_slope_region_filter", "slope_region_neighbor_radius", "slope_region_min_points",
+        "slope_region_min_cells", "slope_region_max_angle_deg", "slope_region_planarity_thresh",
+        "slope_region_neighbor_dz_margin",
         "map_range_x", "map_range_y", "resolution", "z_min_relative", "z_max_relative",
         "publish_rate", "frame_id", "topic_name",
         "enable_debug_log", "enable_step_debug_viz", "step_debug_topic"
