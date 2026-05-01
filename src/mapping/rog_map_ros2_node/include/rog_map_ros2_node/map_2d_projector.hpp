@@ -135,6 +135,14 @@ struct ProjectorConfig {
     // === 高度范围（相对于机器人） ===
     float z_min_relative = -0.5f;        // 相对最低高度
     float z_max_relative = 2.0f;         // 相对最高高度
+
+    // === Mask 清除层 ===
+    bool enable_clear_mask_layer = false;      // 是否启用 PGM mask 清障层
+    std::string clear_mask_yaml_path;          // YAML 路径，推荐使用
+    float clear_mask_resolution = 0.05f;       // mask 分辨率
+    float clear_mask_origin_x = 0.0f;          // mask 左下角世界坐标 x
+    float clear_mask_origin_y = 0.0f;          // mask 左下角世界坐标 y
+    int clear_mask_black_threshold = 10;       // 像素值 <= 该阈值视为黑色清除区
     
     // === 占据值映射 ===
     int8_t obstacle_value = 100;
@@ -219,6 +227,14 @@ private:
     
     // 点云z值缓存（用于法向量计算）
     std::unordered_map<int64_t, std::vector<Vec3f>> column_points_cache_;
+
+    struct ClearMask {
+        int width = 0;
+        int height = 0;
+        int max_value = 255;
+        std::vector<unsigned char> pixels;
+        bool loaded = false;
+    } clear_mask_;
     
     // === 核心方法 ===
     
@@ -266,6 +282,9 @@ private:
 
     bool needsObstacleSupport(const ColumnMetrics& metrics) const;
     bool hasObstacleSupport(int64_t key, const std::unordered_set<int64_t>& obstacle_candidates) const;
+    bool loadClearMaskYaml(const std::string& path);
+    bool loadClearMaskPGM(const std::string& path);
+    bool isClearMaskMarked(float world_x, float world_y) const;
     
     void initializeMap();
     void publishMap();

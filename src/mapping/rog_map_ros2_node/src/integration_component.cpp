@@ -62,6 +62,8 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
         "slope_region_min_cells", "slope_region_max_angle_deg", "slope_region_planarity_thresh",
         "slope_region_neighbor_dz_margin",
         "map_range_x", "map_range_y", "resolution", "z_min_relative", "z_max_relative",
+        "enable_clear_mask_layer", "clear_mask_yaml_path", "clear_mask_resolution",
+        "clear_mask_origin_x", "clear_mask_origin_y", "clear_mask_black_threshold",
         "publish_rate", "frame_id", "topic_name",
         "enable_debug_log", "enable_step_debug_viz", "step_debug_topic"
     };

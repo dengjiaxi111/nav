@@ -13,8 +13,13 @@
 #include <rog_map_ros/rog_map_ros2.hpp>  // 包含 ROGMapROS 定义
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <limits>
 #include <queue>
+#include <yaml-cpp/yaml.h>
 
 namespace map_2d_projector {
 
@@ -70,6 +75,12 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.resolution = this->declare_parameter<double>("resolution", 0.05);
     cfg_.z_min_relative = this->declare_parameter<double>("z_min_relative", -0.5);
     cfg_.z_max_relative = this->declare_parameter<double>("z_max_relative", 2.0);
+    cfg_.enable_clear_mask_layer = this->declare_parameter<bool>("enable_clear_mask_layer", false);
+    cfg_.clear_mask_yaml_path = this->declare_parameter<std::string>("clear_mask_yaml_path", "");
+    cfg_.clear_mask_resolution = this->declare_parameter<double>("clear_mask_resolution", cfg_.resolution);
+    cfg_.clear_mask_origin_x = this->declare_parameter<double>("clear_mask_origin_x", 0.0);
+    cfg_.clear_mask_origin_y = this->declare_parameter<double>("clear_mask_origin_y", 0.0);
+    cfg_.clear_mask_black_threshold = this->declare_parameter<int>("clear_mask_black_threshold", 10);
 
     cfg_.obstacle_value = this->declare_parameter<int>("obstacle_value", 100);
     cfg_.step_value = this->declare_parameter<int>("step_value", 50);
@@ -150,6 +161,17 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
                 cfg_.leg_length_topic.c_str(),
                 cfg_.leg_length_offset);
     RCLCPP_INFO(this->get_logger(), "  Direct ROG-Map access: %s", rog_map_ptr_ ? "ENABLED" : "PENDING");
+
+    if (cfg_.enable_clear_mask_layer) {
+        if (loadClearMaskYaml(cfg_.clear_mask_yaml_path)) {
+            RCLCPP_INFO(this->get_logger(),
+                "  Clear mask layer: ENABLED (%dx%d, res=%.3f, origin=[%.3f, %.3f])",
+                clear_mask_.width, clear_mask_.height, cfg_.clear_mask_resolution,
+                cfg_.clear_mask_origin_x, cfg_.clear_mask_origin_y);
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "  Clear mask layer requested but PGM failed to load");
+        }
+    }
 }
 
 void Map2DProjector::initializeMap() {
@@ -199,11 +221,11 @@ void Map2DProjector::updateTimerCallback() {
         robot_position_.z() + cfg_.z_max_relative
     );
     
-    rog_map::vec_E<Eigen::Vector3d> inf_occ_points;
-    rog_map_ptr_->boxSearchInflateThreadSafe(box_min, box_max, rog_map::OCCUPIED, inf_occ_points);
+    rog_map::vec_E<Eigen::Vector3d> occ_points;
+    rog_map_ptr_->boxSearchThreadSafe(box_min, box_max, rog_map::OCCUPIED, occ_points);
     
     // 检查数据有效性
-    if (inf_occ_points.empty()) {
+    if (occ_points.empty()) {
         RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
             "No occupied points in ROG-Map query range");
         return;
@@ -211,8 +233,8 @@ void Map2DProjector::updateTimerCallback() {
     
     // 转换为 PCL 点云格式（直接使用 Eigen::Vector3f）
     pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
-    pcl_cloud.reserve(inf_occ_points.size());
-    for (const auto& pt : inf_occ_points) {
+    pcl_cloud.reserve(occ_points.size());
+    for (const auto& pt : occ_points) {
         pcl_cloud.push_back(pcl::PointXYZ(pt.x(), pt.y(), pt.z()));
     }
     
@@ -858,6 +880,158 @@ bool Map2DProjector::hasObstacleSupport(
     return false;
 }
 
+bool Map2DProjector::loadClearMaskYaml(const std::string& path) {
+    if (path.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "clear_mask_yaml_path is empty");
+        return false;
+    }
+
+    YAML::Node config;
+    try {
+        config = YAML::LoadFile(path);
+    } catch (const std::exception& ex) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to load clear mask YAML %s: %s",
+                     path.c_str(), ex.what());
+        return false;
+    }
+
+    if (!config["image"]) {
+        RCLCPP_ERROR(this->get_logger(), "clear mask YAML missing required key: image");
+        return false;
+    }
+
+    cfg_.clear_mask_resolution = config["resolution"].as<float>(cfg_.clear_mask_resolution);
+    if (config["origin"] && config["origin"].IsSequence() && config["origin"].size() >= 2) {
+        cfg_.clear_mask_origin_x = config["origin"][0].as<float>();
+        cfg_.clear_mask_origin_y = config["origin"][1].as<float>();
+    }
+
+    std::filesystem::path image_path(config["image"].as<std::string>());
+    if (image_path.is_relative()) {
+        image_path = std::filesystem::path(path).parent_path() / image_path;
+    }
+
+    return loadClearMaskPGM(image_path.string());
+}
+
+bool Map2DProjector::loadClearMaskPGM(const std::string& path) {
+    clear_mask_ = ClearMask{};
+    if (path.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "clear mask YAML image path is empty");
+        return false;
+    }
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to open clear mask PGM: %s", path.c_str());
+        return false;
+    }
+
+    auto read_token = [&file](std::string& token) {
+        token.clear();
+        char ch = 0;
+        while (file.get(ch)) {
+            if (std::isspace(static_cast<unsigned char>(ch))) {
+                continue;
+            }
+            if (ch == '#') {
+                file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                continue;
+            }
+            token.push_back(ch);
+            break;
+        }
+        if (token.empty()) {
+            return false;
+        }
+        while (file.get(ch)) {
+            if (std::isspace(static_cast<unsigned char>(ch))) {
+                break;
+            }
+            if (ch == '#') {
+                file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                break;
+            }
+            token.push_back(ch);
+        }
+        return true;
+    };
+
+    std::string magic;
+    std::string width_token;
+    std::string height_token;
+    std::string max_value_token;
+    if (!read_token(magic) || !read_token(width_token) || !read_token(height_token) ||
+        !read_token(max_value_token)) {
+        RCLCPP_ERROR(this->get_logger(), "Invalid PGM header: %s", path.c_str());
+        return false;
+    }
+
+    if (magic != "P5" && magic != "P2") {
+        RCLCPP_ERROR(this->get_logger(), "Unsupported clear mask PGM format %s, expected P5 or P2",
+                     magic.c_str());
+        return false;
+    }
+
+    clear_mask_.width = std::stoi(width_token);
+    clear_mask_.height = std::stoi(height_token);
+    clear_mask_.max_value = std::stoi(max_value_token);
+    if (clear_mask_.width <= 0 || clear_mask_.height <= 0 ||
+        clear_mask_.max_value <= 0 || clear_mask_.max_value > 255) {
+        RCLCPP_ERROR(this->get_logger(), "Invalid clear mask PGM metadata: w=%d h=%d max=%d",
+                     clear_mask_.width, clear_mask_.height, clear_mask_.max_value);
+        return false;
+    }
+
+    const size_t pixel_count = static_cast<size_t>(clear_mask_.width) *
+                               static_cast<size_t>(clear_mask_.height);
+    clear_mask_.pixels.resize(pixel_count);
+
+    if (magic == "P5") {
+        file.read(reinterpret_cast<char*>(clear_mask_.pixels.data()),
+                  static_cast<std::streamsize>(pixel_count));
+        if (file.gcount() != static_cast<std::streamsize>(pixel_count)) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to read clear mask PGM pixels: %s", path.c_str());
+            clear_mask_ = ClearMask{};
+            return false;
+        }
+    } else {
+        std::string pixel_token;
+        for (size_t i = 0; i < pixel_count; ++i) {
+            if (!read_token(pixel_token)) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to read clear mask PGM ASCII pixel %zu", i);
+                clear_mask_ = ClearMask{};
+                return false;
+            }
+            const int value = std::clamp(std::stoi(pixel_token), 0, clear_mask_.max_value);
+            clear_mask_.pixels[i] = static_cast<unsigned char>(value);
+        }
+    }
+
+    clear_mask_.loaded = true;
+    return true;
+}
+
+bool Map2DProjector::isClearMaskMarked(float world_x, float world_y) const {
+    if (!cfg_.enable_clear_mask_layer || !clear_mask_.loaded || cfg_.clear_mask_resolution <= 0.0f) {
+        return false;
+    }
+
+    const int mx = static_cast<int>(
+        std::floor((world_x - cfg_.clear_mask_origin_x) / cfg_.clear_mask_resolution));
+    const int my = static_cast<int>(
+        std::floor((world_y - cfg_.clear_mask_origin_y) / cfg_.clear_mask_resolution));
+    if (mx < 0 || mx >= clear_mask_.width || my < 0 || my >= clear_mask_.height) {
+        return false;
+    }
+
+    // PGM row 0 is the top row, while map/world y grows upward from the origin.
+    const int pgm_y = clear_mask_.height - 1 - my;
+    const size_t index = static_cast<size_t>(pgm_y) * static_cast<size_t>(clear_mask_.width) +
+                         static_cast<size_t>(mx);
+    return clear_mask_.pixels[index] <= cfg_.clear_mask_black_threshold;
+}
+
 void Map2DProjector::update2DMap(
     const std::unordered_map<int64_t, ColumnMetrics>& columns,
     const Vec3f& robot_pos) {
@@ -891,10 +1065,12 @@ void Map2DProjector::update2DMap(
     int free_count = 0;
     int step_count = 0;
     int unsupported_obstacle_count = 0;
+    int clear_mask_count = 0;
 
     struct ClassifiedCell {
         int64_t key;
         int index;
+        Vec2f pos;
         int8_t value;
         const ColumnMetrics* metrics;
     };
@@ -924,7 +1100,7 @@ void Map2DProjector::update2DMap(
         
         // 先分类，暂不立即确认障碍物
         int8_t value = classifyColumn(col, robot_pos.z());
-        classified_cells.push_back({key, index, value, &col});
+        classified_cells.push_back({key, index, pos, value, &col});
         if (value == cfg_.obstacle_value) {
             obstacle_candidates.insert(key);
         }
@@ -937,6 +1113,10 @@ void Map2DProjector::update2DMap(
             !hasObstacleSupport(cell.key, obstacle_candidates)) {
             value = cfg_.free_value;
             ++unsupported_obstacle_count;
+        }
+        if (value == cfg_.obstacle_value && isClearMaskMarked(cell.pos.x(), cell.pos.y())) {
+            value = cfg_.free_value;
+            ++clear_mask_count;
         }
 
         map_2d_->data[cell.index] = value;
@@ -955,9 +1135,9 @@ void Map2DProjector::update2DMap(
     update_count++;
     if (update_count % 100 == 0) {
         RCLCPP_INFO(this->get_logger(),
-            "[Map2D] %zu columns: %d obs, %d step, %d free, %d unsupported_obs_filtered | leg=%.3f",
+            "[Map2D] %zu columns: %d obs, %d step, %d free, %d unsupported_obs_filtered, %d mask_cleared | leg=%.3f",
             columns.size(), obstacle_count, step_count, free_count,
-            unsupported_obstacle_count, current_leg_length_);
+            unsupported_obstacle_count, clear_mask_count, current_leg_length_);
     }
 }
 
