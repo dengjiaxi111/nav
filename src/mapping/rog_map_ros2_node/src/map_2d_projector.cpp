@@ -13,6 +13,7 @@
 #include <rog_map_ros/rog_map_ros2.hpp>  // 包含 ROGMapROS 定义
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace map_2d_projector {
 
@@ -36,6 +37,9 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
     cfg_.wheel_frame = this->declare_parameter<std::string>("wheel_frame", "wheel_link");
     cfg_.leg_length_min = this->declare_parameter<double>("leg_length_min", 0.08);
     cfg_.leg_length_max = this->declare_parameter<double>("leg_length_max", 0.25);
+    cfg_.enable_leg_length_topic = this->declare_parameter<bool>("enable_leg_length_topic", false);
+    cfg_.leg_length_topic = this->declare_parameter<std::string>("leg_length_topic", "LegLength");
+    cfg_.leg_length_offset = this->declare_parameter<double>("leg_length_offset", 0.0);
     
     cfg_.slope_height_max = this->declare_parameter<double>("slope_height_max", 0.08);
     cfg_.step_height_min = this->declare_parameter<double>("step_height_min", 0.12);
@@ -99,6 +103,12 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
         step_debug_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
             cfg_.step_debug_topic, qos);
     }
+
+    if (cfg_.enable_leg_length_topic) {
+        leg_length_sub_ = this->create_subscription<robots_msgs::msg::LegLength>(
+            cfg_.leg_length_topic, 10,
+            std::bind(&Map2DProjector::legLengthCallback, this, std::placeholders::_1));
+    }
     
     // 定时更新器（直接调用 boxSearchInflate）
     int update_period_ms = static_cast<int>(1000.0 / cfg_.publish_rate);
@@ -118,8 +128,12 @@ Map2DProjector::Map2DProjector(const rclcpp::NodeOptions& options,
                 cfg_.obstacle_support_radius_cells,
                 cfg_.obstacle_min_support_count,
                 cfg_.obstacle_support_max_height);
-    RCLCPP_INFO(this->get_logger(), "  Dynamic leg length: %s (frame: %s)",
+    RCLCPP_INFO(this->get_logger(), "  Dynamic leg length TF: %s (frame: %s)",
                 cfg_.enable_dynamic_leg_length ? "ENABLED" : "DISABLED", cfg_.wheel_frame.c_str());
+    RCLCPP_INFO(this->get_logger(), "  Direct leg length topic: %s (topic: %s, offset=%.3f)",
+                cfg_.enable_leg_length_topic ? "ENABLED" : "DISABLED",
+                cfg_.leg_length_topic.c_str(),
+                cfg_.leg_length_offset);
     RCLCPP_INFO(this->get_logger(), "  Direct ROG-Map access: %s", rog_map_ptr_ ? "ENABLED" : "PENDING");
 }
 
@@ -245,6 +259,20 @@ bool Map2DProjector::getRobotPose(geometry_msgs::msg::Pose& robot_pose) {
 }
 
 void Map2DProjector::updateDynamicLegLength() {
+    if (cfg_.enable_leg_length_topic) {
+        if (!has_leg_length_msg_) {
+            current_leg_length_ = cfg_.base_to_ground_default;
+            current_base_to_ground_ = cfg_.base_to_ground_default;
+            return;
+        }
+
+        float leg_length = std::clamp(
+            latest_leg_length_msg_, cfg_.leg_length_min, cfg_.leg_length_max);
+        current_leg_length_ = leg_length;
+        current_base_to_ground_ = std::max(0.0f, leg_length + cfg_.leg_length_offset);
+        return;
+    }
+
     if (!cfg_.enable_dynamic_leg_length) {
         current_base_to_ground_ = cfg_.base_to_ground_default;
         return;
@@ -272,6 +300,14 @@ void Map2DProjector::updateDynamicLegLength() {
             ex.what(), cfg_.base_to_ground_default);
         current_base_to_ground_ = cfg_.base_to_ground_default;
     }
+}
+
+void Map2DProjector::legLengthCallback(const robots_msgs::msg::LegLength::SharedPtr msg) {
+    if (!msg) {
+        return;
+    }
+    latest_leg_length_msg_ = msg->leg_length;
+    has_leg_length_msg_ = true;
 }
 
 void Map2DProjector::elevationAnalysis(

@@ -142,7 +142,13 @@ nav_server:
       stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
 
       # [失败判据] A + B(弧长进展超时)
-      stair_fail_a_precontact_miss_cycles: 3     # 判据A: 接触前 虚拟腿长 连续为0的周期数阈值
+      leg_length_topic: "LegLength"              # 腿长反馈话题，来自 myserial
+      leg_length_timeout_sec: 0.50               # 抬腿命令发出后，允许腿长达到阈值的最长时间
+      leg_length_stale_timeout_sec: 0.20         # 腿长反馈超过该时间未更新时，按“已满足”处理
+      stair_leg_ready_threshold_m: 0.18          # 一级台阶抬腿到位阈值
+      stair_level2_leg_ready_threshold_m: 0.22   # 二级台阶抬腿到位阈值
+      fly_slope_leg_ready_threshold_m: 0.16      # 飞坡抬腿到位阈值
+      stair_fail_a_precontact_miss_cycles: 3     # 兼容旧参数，当前判据A已改为腿长超时
       stair_progress_timeout_sec: 1.2            # COMMIT_ASCENT 进展超时(秒)
       stair_progress_min_arc_m: 0.18             # 进展判据B所需最小弧长增量(米)
 

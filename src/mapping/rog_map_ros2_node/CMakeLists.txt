@@ -27,6 +27,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 find_package(rog_map REQUIRED)
+find_package(robots_msgs REQUIRED)
 
 # 生成自定义消息
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -67,6 +68,7 @@ ament_target_dependencies(rog_map_node
   tf2_geometry_msgs
   pcl_conversions
   rog_map
+  robots_msgs
 )
 
 # ROG-Map Component (可组合节点，支持进程内零拷贝)
@@ -120,6 +122,7 @@ ament_target_dependencies(map_2d_projector_component
   tf2_geometry_msgs
   pcl_conversions
   rog_map
+  robots_msgs
 )
 
 target_link_libraries(map_2d_projector_component

@@ -21,6 +21,9 @@
     projector.wheel_frame: "wheel_link"          # 动态腿长查询的轮子坐标系
     projector.leg_length_min: 0.08               # [m] 动态腿长最小夹紧值
     projector.leg_length_max: 0.25               # [m] 动态腿长最大夹紧值
+    projector.enable_leg_length_topic: false     # 是否直接订阅腿长，使用 base_to_ground = leg_length + offset
+    projector.leg_length_topic: "LegLength"      # 腿长反馈话题，来自 myserial
+    projector.leg_length_offset: 0.00            # [m] 结构偏置；开启直接腿长时叠加到 leg_length
 
     # === 柱状高程分类阈值 ===
     projector.slope_height_max: 0.55       # [m] 高度差低于该值倾向视作可通行坡/平面

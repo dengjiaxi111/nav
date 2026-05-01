@@ -9,6 +9,7 @@
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <robots_msgs/msg/leg_length.hpp>
 
 #include "nav_components/layered_map_manager.hpp"
 #include "nav_core/special_terrain_controller.hpp"
@@ -111,6 +112,11 @@ private:
     void publishStairMode(uint8_t mode, bool force_publish, bool bypass_hold = false);
     void updateStairModeDetection(const nav_core::TerrainControlContext& context);
     void applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd, double control_rate_hz);
+    void legLengthCallback(const robots_msgs::msg::LegLength::SharedPtr msg);
+    double legReadyThreshold(TerrainType terrain_type) const;
+    bool isLegLengthReady(TerrainType terrain_type,
+                          const std::chrono::steady_clock::time_point& now) const;
+    void resetLegRaiseMonitor();
 
     rclcpp::Node* node_{nullptr};
     std::shared_ptr<LayeredMapManager> map_manager_;
@@ -118,6 +124,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr stair_fsm_state_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr stair_transition_debug_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_cooldown_marker_pub_;
+    rclcpp::Subscription<robots_msgs::msg::LegLength>::SharedPtr leg_length_sub_;
 
     bool enable_stair_mode_detection_{true};
     bool enable_fly_slope_mode_detection_{true};
@@ -141,6 +148,12 @@ private:
     double stair_fixed_heading_kp_{1.8};
     double stair_fixed_max_angular_vel_{0.8};
     double stair_fixed_heading_deadband_{0.05};
+    std::string leg_length_topic_{"LegLength"};
+    double leg_length_timeout_sec_{0.50};
+    double leg_length_stale_timeout_sec_{0.20};
+    double stair_leg_ready_threshold_m_{0.18};
+    double stair_level2_leg_ready_threshold_m_{0.22};
+    double fly_slope_leg_ready_threshold_m_{0.16};
 
     // 飞坡参数（与台阶参数一一对应，默认初值一致）
     double fly_slope_mode_trigger_distance_m_{1.0};
@@ -223,6 +236,11 @@ private:
 
     uint8_t stair_mode_current_{0};
     int virtual_leg_length_{1}; // 预留的虚拟腿长信号(1表示长腿，满足条件不触发失败，0表示短腿会触发失败)
+    double current_leg_length_m_{0.0};
+    bool has_leg_length_{false};
+    std::chrono::steady_clock::time_point last_leg_length_time_{};
+    bool leg_raise_monitor_active_{false};
+    std::chrono::steady_clock::time_point leg_raise_command_time_{};
     int stair_mode_release_counter_{0};
     std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
     std::chrono::steady_clock::time_point stair_mode_last_mode1_publish_time_{};

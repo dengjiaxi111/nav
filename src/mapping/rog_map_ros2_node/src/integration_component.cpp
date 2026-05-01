@@ -54,6 +54,7 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
         "robot_height", "robot_width", "base_to_ground_default",
         "ground_tolerance",
         "enable_dynamic_leg_length", "wheel_frame", "leg_length_min", "leg_length_max",
+        "enable_leg_length_topic", "leg_length_topic", "leg_length_offset",
         "slope_height_max", "step_height_min", "step_height_max", "obstacle_height_min",
         "high_occupancy_thresh", "keep_step_cells", "normal_z_slope_thresh", "normal_z_wall_thresh",
         "normal_min_points", "planarity_thresh",

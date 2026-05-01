@@ -15,10 +15,11 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(nav_interfaces REQUIRED)
 find_package(nav_core REQUIRED)
+find_package(robots_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 set(DEPS
-    rclcpp rclcpp_action geometry_msgs nav_msgs std_msgs visualization_msgs tf2 tf2_ros tf2_geometry_msgs nav_interfaces nav_core
+    rclcpp rclcpp_action geometry_msgs nav_msgs std_msgs visualization_msgs tf2 tf2_ros tf2_geometry_msgs nav_interfaces nav_core robots_msgs
 )
 
 # 头文件目录

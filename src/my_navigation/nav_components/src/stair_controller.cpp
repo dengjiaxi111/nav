@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -47,6 +48,12 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_fixed_heading_kp", 1.8);
     declare_if_needed("special_terrain.stair_fixed_max_angular_vel", 0.8);
     declare_if_needed("special_terrain.stair_fixed_heading_deadband", 0.05);
+    declare_if_needed("special_terrain.leg_length_topic", std::string("LegLength"));
+    declare_if_needed("special_terrain.leg_length_timeout_sec", 0.5);
+    declare_if_needed("special_terrain.leg_length_stale_timeout_sec", 0.2);
+    declare_if_needed("special_terrain.stair_leg_ready_threshold_m", 0.18);
+    declare_if_needed("special_terrain.stair_level2_leg_ready_threshold_m", 0.22);
+    declare_if_needed("special_terrain.fly_slope_leg_ready_threshold_m", 0.16);
     declare_if_needed("special_terrain.stair_contact_distance_m", 0.25);
     declare_if_needed("special_terrain.stair_commit_success_dist_m", 0.18);
     declare_if_needed("special_terrain.stair_level2_commit_success_dist_m", 0.18);
@@ -166,6 +173,18 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_fixed_max_angular_vel").as_double();
     stair_fixed_heading_deadband_ =
         node_->get_parameter("special_terrain.stair_fixed_heading_deadband").as_double();
+    leg_length_topic_ =
+        node_->get_parameter("special_terrain.leg_length_topic").as_string();
+    leg_length_timeout_sec_ =
+        node_->get_parameter("special_terrain.leg_length_timeout_sec").as_double();
+    leg_length_stale_timeout_sec_ =
+        node_->get_parameter("special_terrain.leg_length_stale_timeout_sec").as_double();
+    stair_leg_ready_threshold_m_ =
+        node_->get_parameter("special_terrain.stair_leg_ready_threshold_m").as_double();
+    stair_level2_leg_ready_threshold_m_ =
+        node_->get_parameter("special_terrain.stair_level2_leg_ready_threshold_m").as_double();
+    fly_slope_leg_ready_threshold_m_ =
+        node_->get_parameter("special_terrain.fly_slope_leg_ready_threshold_m").as_double();
     stair_contact_distance_m_ =
         node_->get_parameter("special_terrain.stair_contact_distance_m").as_double();
     stair_commit_success_dist_m_ =
@@ -339,6 +358,9 @@ void StairController::initialize(rclcpp::Node* node) {
     stair_transition_debug_pub_ = node_->create_publisher<std_msgs::msg::String>("stair_attempt_debug", 10);
     stair_cooldown_marker_pub_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
         "stair/cooldown_markers", rclcpp::QoS(1).transient_local().reliable());
+    leg_length_sub_ = node_->create_subscription<robots_msgs::msg::LegLength>(
+        leg_length_topic_, 10,
+        std::bind(&StairController::legLengthCallback, this, std::placeholders::_1));
 
     if (enable_stair_mode_detection_) {
         RCLCPP_INFO(node_->get_logger(),
@@ -368,14 +390,19 @@ void StairController::initialize(rclcpp::Node* node) {
     }
     if (enable_stair_fsm_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, failA_miss=%d, backoff=%.2fm, retry_max=%d, backoff_strategy=%s, initial_turn(start=%.2frad,done=%.2frad,timeout=%.2fs,min_v=%.2f), total_timeout=%.2fs, tangent_kp=%.2f, tangent_ratio=%.2f, cooldown(en=%d,th=%d,dur=%.1fs)",
+                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, leg(topic=%s,timeout=%.2fs,stale=%.2fs,th=%.2f/%.2f/fly%.2f), backoff=%.2fm, retry_max=%d, backoff_strategy=%s, initial_turn(start=%.2frad,done=%.2frad,timeout=%.2fs,min_v=%.2f), total_timeout=%.2fs, tangent_kp=%.2f, tangent_ratio=%.2f, cooldown(en=%d,th=%d,dur=%.1fs)",
                     stair_contact_distance_m_,
                     stair_commit_success_dist_m_,
                     stair_level2_commit_success_dist_m_,
                     stair_verify_timeout_sec_,
                     stair_progress_timeout_sec_,
                     stair_progress_min_arc_m_,
-                    stair_fail_a_precontact_miss_cycles_,
+                    leg_length_topic_.c_str(),
+                    leg_length_timeout_sec_,
+                    leg_length_stale_timeout_sec_,
+                    stair_leg_ready_threshold_m_,
+                    stair_level2_leg_ready_threshold_m_,
+                    fly_slope_leg_ready_threshold_m_,
                     stair_backoff_distance_m_,
                     stair_retry_max_attempts_,
                     backoff_strategy_ == BackoffStrategy::TARGET_POINT_TRACKING
@@ -427,6 +454,7 @@ void StairController::onNavStateChanged(nav_core::NavState state) {
         precontact_miss_counter_ = 0;
         commit_arc_start_m_ = 0.0;
         commit_progress_start_time_ = std::chrono::steady_clock::time_point{};
+        resetLegRaiseMonitor();
         cooldown_stair_id_ = -1;
         cooldown_replan_pending_ = false;
     }
@@ -491,10 +519,6 @@ nav_core::TerrainControlDecision StairController::update(
     };
     auto verify_timeout = [&](TerrainType tt) {
         return is_fly(tt) ? fly_slope_verify_timeout_sec_ : stair_verify_timeout_sec_;
-    };
-    auto miss_cycles = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_fail_a_precontact_miss_cycles_
-                          : stair_fail_a_precontact_miss_cycles_;
     };
     auto fixed_vel_enable = [&](TerrainType tt) {
         return is_fly(tt) ? enable_fly_slope_fixed_velocity_strategy_
@@ -715,14 +739,24 @@ nav_core::TerrainControlDecision StairController::update(
                 active_feature_ = candidate;
             }
 
-            // 判据A：已触发抬腿且距离未到固定速度区间，若虚拟腿长连续为0(短腿)则判定失败
-            if (do_raise && !do_fix_vel && virtual_leg_length_ == 0) {
-                ++precontact_miss_counter_;
-                if (precontact_miss_counter_ >= std::max(1, miss_cycles(active_terrain_type_))) {
-                    enter_fail_backoff("criterion A: virtual short-leg in commit");
+            // 判据A：发出抬腿命令后，真实腿长需在限定时间内达到阈值。
+            // 腿长话题超时/未收到时按满足处理，避免反馈链路短时异常导致误退。
+            if (do_raise) {
+                if (!leg_raise_monitor_active_) {
+                    leg_raise_monitor_active_ = true;
+                    leg_raise_command_time_ = std::chrono::steady_clock::now();
+                }
+                if (isLegLengthReady(active_terrain_type_, std::chrono::steady_clock::now())) {
+                    resetLegRaiseMonitor();
+                } else {
+                    const double dt = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - leg_raise_command_time_).count();
+                    if (dt > leg_length_timeout_sec_) {
+                        enter_fail_backoff("criterion A: leg length not ready after raise command");
+                    }
                 }
             } else {
-                precontact_miss_counter_ = 0;
+                resetLegRaiseMonitor();
             }
 
             if (fsm_state_ == StairFsmState::COMMIT_ASCENT) {
@@ -1030,6 +1064,46 @@ double StairController::normalizeAngle(double angle) {
     return angle;
 }
 
+void StairController::legLengthCallback(const robots_msgs::msg::LegLength::SharedPtr msg) {
+    if (!msg) {
+        return;
+    }
+    current_leg_length_m_ = msg->leg_length;
+    has_leg_length_ = true;
+    last_leg_length_time_ = std::chrono::steady_clock::now();
+}
+
+double StairController::legReadyThreshold(TerrainType terrain_type) const {
+    if (terrain_type == TerrainType::FLY_SLOPE) {
+        return fly_slope_leg_ready_threshold_m_;
+    }
+    if (terrain_type == TerrainType::STAIR_LEVEL2) {
+        return stair_level2_leg_ready_threshold_m_;
+    }
+    return stair_leg_ready_threshold_m_;
+}
+
+bool StairController::isLegLengthReady(
+    TerrainType terrain_type,
+    const std::chrono::steady_clock::time_point& now) const {
+    if (!has_leg_length_) {
+        return true;
+    }
+
+    const double stale_sec = std::chrono::duration<double>(
+        now - last_leg_length_time_).count();
+    if (stale_sec > leg_length_stale_timeout_sec_) {
+        return true;
+    }
+
+    return current_leg_length_m_ >= legReadyThreshold(terrain_type);
+}
+
+void StairController::resetLegRaiseMonitor() {
+    leg_raise_monitor_active_ = false;
+    leg_raise_command_time_ = std::chrono::steady_clock::time_point{};
+}
+
 void StairController::transitionFsmState(StairFsmState new_state, const char* reason) {
     if (fsm_state_ == new_state) {
         return;
@@ -1054,6 +1128,9 @@ void StairController::transitionFsmState(StairFsmState new_state, const char* re
 
     fsm_state_ = new_state;
     fsm_state_enter_time_ = std::chrono::steady_clock::now();
+    if (new_state != StairFsmState::COMMIT_ASCENT) {
+        resetLegRaiseMonitor();
+    }
     if (new_state == StairFsmState::FAIL_RETRY_BACKOFF) {
         backoff_target_initialized_ = false;
         backoff_initial_turn_active_ = false;

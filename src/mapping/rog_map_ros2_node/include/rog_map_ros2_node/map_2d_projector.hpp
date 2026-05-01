@@ -21,6 +21,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <robots_msgs/msg/leg_length.hpp>
 
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
@@ -93,6 +94,9 @@ struct ProjectorConfig {
     std::string wheel_frame = "wheel_link";  // 轮子坐标系名称
     float leg_length_min = 0.08f;            // 腿长最小值（收腿）
     float leg_length_max = 0.25f;            // 腿长最大值（伸腿）
+    bool enable_leg_length_topic = false;    // 是否直接订阅腿长更新离地高度
+    std::string leg_length_topic = "LegLength";
+    float leg_length_offset = 0.0f;          // 结构偏置: base_to_ground = leg_length + offset
     
     // === 高程分析阈值 ===
     float slope_height_max = 0.08f;      // 坡道最大高度差（H < 8cm → 可通行）
@@ -188,6 +192,8 @@ private:
     Vec3f robot_position_{0, 0, 0};
     float current_leg_length_;          // 当前腿长（动态更新）
     float current_base_to_ground_;      // 当前base_link到地面距离
+    float latest_leg_length_msg_{0.0f};
+    bool has_leg_length_msg_{false};
     
     // TF2
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -196,6 +202,7 @@ private:
     // 发布器和定时器
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr step_debug_pub_;
+    rclcpp::Subscription<robots_msgs::msg::LegLength>::SharedPtr leg_length_sub_;
     rclcpp::TimerBase::SharedPtr update_timer_;  // 改名: publish_timer_ -> update_timer_
     
     // 缓存
@@ -215,6 +222,7 @@ private:
      * @brief 更新动态腿长（通过TF2查询wheel_link）
      */
     void updateDynamicLegLength();
+    void legLengthCallback(const robots_msgs::msg::LegLength::SharedPtr msg);
     
     /**
      * @brief 高程分析：对每个(x,y)柱进行z轴分析（同时缓存点云用于法向量）
