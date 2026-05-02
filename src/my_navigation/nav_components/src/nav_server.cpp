@@ -93,6 +93,7 @@ public:
         declare_parameter("escape.preferred_search_distance", 1.0);
         declare_parameter("escape.preferred_search_half_angle", 0.35);
         declare_parameter("escape.enable_release_maneuver", true);
+        declare_parameter("escape.release_ignore_unknown", false);
         declare_parameter("escape.backup_dist", 0.25);
         declare_parameter("escape.backup_vel", -0.20);
         declare_parameter("escape.backup_timeout", 1.8);
@@ -115,6 +116,7 @@ public:
         escape_preferred_search_distance_ = get_parameter("escape.preferred_search_distance").as_double();
         escape_preferred_search_half_angle_ = get_parameter("escape.preferred_search_half_angle").as_double();
         escape_enable_release_maneuver_ = get_parameter("escape.enable_release_maneuver").as_bool();
+        escape_release_ignore_unknown_ = get_parameter("escape.release_ignore_unknown").as_bool();
         escape_backup_dist_ = get_parameter("escape.backup_dist").as_double();
         escape_backup_vel_ = get_parameter("escape.backup_vel").as_double();
         escape_backup_timeout_ = get_parameter("escape.backup_timeout").as_double();
@@ -1419,6 +1421,9 @@ private:
             }
             return false;
         }
+        auto raw_map = escape_release_ignore_unknown_ && map_manager_
+            ? map_manager_->getFusedMap()
+            : nullptr;
 
         tf2::Quaternion q;
         tf2::fromMsg(current_pose_.pose.orientation, q);
@@ -1451,12 +1456,25 @@ private:
             }
 
             const int idx = my * width + mx;
-            const int8_t cost = costmap->data[idx];
-            if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
-                if (reason) {
-                    *reason = "退让轨迹存在障碍/未知区域";
+            if (raw_map && raw_map->info.width == costmap->info.width &&
+                raw_map->info.height == costmap->info.height &&
+                idx < static_cast<int>(raw_map->data.size())) {
+                const int8_t raw_cost = raw_map->data[idx];
+                if (raw_cost >= escape_trigger_costmap_threshold_) {
+                    if (reason) {
+                        *reason = "退让轨迹存在明确障碍区域";
+                    }
+                    return false;
                 }
-                return false;
+            } else {
+                const int8_t cost = costmap->data[idx];
+                if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
+                    if (reason) {
+                        *reason = (cost < 0) ? "退让轨迹存在未知区域"
+                                             : "退让轨迹存在障碍区域";
+                    }
+                    return false;
+                }
             }
         }
 
@@ -2533,6 +2551,7 @@ private:
     double escape_preferred_search_distance_;  // 定向搜索距离
     double escape_preferred_search_half_angle_;  // 定向搜索半角(rad)
     bool escape_enable_release_maneuver_{true};  // 是否先执行退让释放动作
+    bool escape_release_ignore_unknown_{false};  // release 退让安全检查是否忽略 unknown
     double escape_backup_dist_{0.25};       // 直退释放距离
     double escape_backup_vel_{-0.20};       // 直退释放速度
     double escape_backup_timeout_{1.8};     // 直退超时

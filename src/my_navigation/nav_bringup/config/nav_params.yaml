@@ -489,6 +489,7 @@ nav_server:
 
       # 退让释放动作：车头顶障碍时先低速倒退/弧线倒退，再旋转找安全点
       enable_release_maneuver: true
+      release_ignore_unknown: false   # true 时脱困退让安全检查忽略 unknown，仅拒绝明确障碍；默认 false 更保守
       backup_dist: 0.25               # 直退释放距离(m)
       backup_vel: -0.5               # 直退释放速度(m/s)
       backup_timeout: 1.8             # 直退动作超时(s)
