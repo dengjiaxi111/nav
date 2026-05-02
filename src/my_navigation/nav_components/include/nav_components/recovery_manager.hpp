@@ -16,13 +16,15 @@ public:
     }
     
     // 开始恢复序列
-    void start(nav_core::RecoveryTrigger trigger,
+    bool start(nav_core::RecoveryTrigger trigger,
                const geometry_msgs::msg::PoseStamped& pose) {
         trigger_ = trigger;
         current_idx_ = 0;
         if (!recoveries_.empty()) {
             recoveries_[0]->start(pose);
+            return true;
         }
+        return false;
     }
     
     // 更新当前恢复行为

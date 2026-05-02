@@ -2372,7 +2372,15 @@ private:
                 fsm_.transitionTo(nav_core::NavState::FAILED);
             }
         } else if (status == nav_core::RecoveryStatus::IDLE) {
-            recovery_mgr_.start(fsm_.recoveryTrigger(), current_pose_);
+            if (recovery_mgr_.start(fsm_.recoveryTrigger(), current_pose_)) {
+                fsm_.markRecoveryStarted();
+                RCLCPP_INFO(get_logger(),
+                            "恢复序列已启动: count=%d",
+                            fsm_.recoveryCount());
+            } else {
+                RCLCPP_ERROR(get_logger(), "恢复序列启动失败: 没有可用恢复动作");
+                fsm_.transitionTo(nav_core::NavState::FAILED);
+            }
         }
     }
     

@@ -438,7 +438,7 @@ nav_server:
     
     # 恢复行为
     recovery:
-      # 恢复触发次数上限：同一导航任务中 triggerRecovery() 达到该次数后直接 FAILED
+      # 有效恢复序列次数上限：同一导航任务中实际启动 recovery 序列达到该次数后直接 FAILED
       max_recovery: 3
       
       # 后退恢复：用于从局部卡住、控制失败等状态中先退开一点，再重新规划

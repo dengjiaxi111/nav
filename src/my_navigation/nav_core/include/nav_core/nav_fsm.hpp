@@ -34,8 +34,11 @@ public:
     // 触发恢复
     void triggerRecovery(RecoveryTrigger trigger) {
         trigger_ = trigger;
-        recovery_count_++;
         transitionTo(NavState::RECOVERY);
+    }
+
+    void markRecoveryStarted() {
+        recovery_count_++;
     }
     
     // 重置
