@@ -9,8 +9,12 @@
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/common/transforms.h>
+#include <pcl/segmentation/sac_segmentation.h>
 #include <Eigen/Dense>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include "string.h"
 
 class RemoveGround:public rclcpp::Node
@@ -18,6 +22,13 @@ class RemoveGround:public rclcpp::Node
 private:
     std::string pcd_path_;
     std::string output_path_;
+    std::string leveled_full_output_path_;
+    bool auto_level_;
+    bool require_auto_level_;
+    bool translate_ground_to_zero_;
+    double level_distance_threshold_;
+    int level_max_iterations_;
+    double ground_normal_threshold_;
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud1_;
@@ -33,6 +44,127 @@ private:
     pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor1;
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_;
     pcl::PCDWriter writer;
+
+    bool levelPointCloudWithGroundPlane()
+    {
+        if (!auto_level_) {
+            RCLCPP_INFO(this->get_logger(), "auto_level disabled, keeping original PCD frame");
+            return true;
+        }
+
+        if (!cloud_ || cloud_->empty()) {
+            RCLCPP_ERROR(this->get_logger(), "auto_level failed: input cloud is empty");
+            return false;
+        }
+
+        pcl::SACSegmentation<pcl::PointXYZ> seg;
+        pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+        pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+
+        seg.setOptimizeCoefficients(true);
+        seg.setModelType(pcl::SACMODEL_PLANE);
+        seg.setMethodType(pcl::SAC_RANSAC);
+        seg.setMaxIterations(level_max_iterations_);
+        seg.setDistanceThreshold(level_distance_threshold_);
+        seg.setInputCloud(cloud_);
+        seg.segment(*inliers, *coefficients);
+
+        if (inliers->indices.empty() || coefficients->values.size() < 4) {
+            RCLCPP_ERROR(this->get_logger(), "auto_level failed: no dominant ground plane found");
+            return false;
+        }
+
+        Eigen::Vector3f normal(
+            coefficients->values[0],
+            coefficients->values[1],
+            coefficients->values[2]);
+        const float normal_norm = normal.norm();
+        if (!std::isfinite(normal_norm) || normal_norm < 1e-6f) {
+            RCLCPP_ERROR(this->get_logger(), "auto_level failed: invalid plane normal");
+            return false;
+        }
+
+        normal.normalize();
+        if (normal.z() < 0.0f) {
+            normal = -normal;
+        }
+
+        if (normal.z() < ground_normal_threshold_) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "dominant plane normal z=%.4f is below threshold %.4f; "
+                "please verify it is really the floor",
+                normal.z(), ground_normal_threshold_);
+        }
+
+        Eigen::Quaternionf rotation =
+            Eigen::Quaternionf::FromTwoVectors(normal, Eigen::Vector3f::UnitZ());
+
+        Eigen::Affine3f level_transform = Eigen::Affine3f::Identity();
+        level_transform.rotate(rotation.normalized());
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr leveled(
+            new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::transformPointCloud(*cloud_, *leveled, level_transform);
+
+        double ground_z_sum = 0.0;
+        int ground_z_count = 0;
+        for (const int idx : inliers->indices) {
+            if (idx < 0 || idx >= static_cast<int>(leveled->points.size())) {
+                continue;
+            }
+            const auto& point = leveled->points[static_cast<std::size_t>(idx)];
+            if (std::isfinite(point.z)) {
+                ground_z_sum += point.z;
+                ground_z_count++;
+            }
+        }
+
+        double ground_z = 0.0;
+        if (ground_z_count > 0) {
+            ground_z = ground_z_sum / static_cast<double>(ground_z_count);
+        }
+
+        if (translate_ground_to_zero_) {
+            for (auto& point : leveled->points) {
+                point.z -= static_cast<float>(ground_z);
+            }
+        }
+
+        Eigen::Vector3f aligned_normal = rotation * normal;
+        const double inlier_ratio =
+            static_cast<double>(inliers->indices.size()) /
+            static_cast<double>(std::max<std::size_t>(1, cloud_->points.size()));
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "auto_level: plane normal [%.5f, %.5f, %.5f], inliers=%zu/%zu (%.2f%%)",
+            normal.x(), normal.y(), normal.z(),
+            inliers->indices.size(), cloud_->points.size(), inlier_ratio * 100.0);
+        RCLCPP_INFO(
+            this->get_logger(),
+            "auto_level: aligned normal [%.5f, %.5f, %.5f], ground_z=%.4f%s",
+            aligned_normal.x(), aligned_normal.y(), aligned_normal.z(), ground_z,
+            translate_ground_to_zero_ ? " -> shifted to z=0" : "");
+
+        *cloud_ = *leveled;
+
+        if (!leveled_full_output_path_.empty()) {
+            if (writer.write<pcl::PointXYZ>(leveled_full_output_path_, *cloud_, false) < 0) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "failed to write leveled full PCD: %s",
+                    leveled_full_output_path_.c_str());
+            } else {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "leveled full PCD written: %s",
+                    leveled_full_output_path_.c_str());
+            }
+        }
+
+        return true;
+    }
 
 public:
     RemoveGround(): rclcpp::Node("RemoveGround")
@@ -51,52 +183,38 @@ public:
 
         this->declare_parameter<std::string>("pcd_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/rmul_2025.pcd");
         this->declare_parameter<std::string>("output_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/object.pcd");
+        this->declare_parameter<std::string>("leveled_full_output_path", "");
+        this->declare_parameter<bool>("auto_level", true);
+        this->declare_parameter<bool>("require_auto_level", false);
+        this->declare_parameter<bool>("translate_ground_to_zero", true);
+        this->declare_parameter<double>("level_distance_threshold", 0.08);
+        this->declare_parameter<int>("level_max_iterations", 1000);
+        this->declare_parameter<double>("ground_normal_threshold", 0.70);
         this->get_parameter("pcd_path", pcd_path_);
         this->get_parameter("output_path", output_path_);
+        this->get_parameter("leveled_full_output_path", leveled_full_output_path_);
+        this->get_parameter("auto_level", auto_level_);
+        this->get_parameter("require_auto_level", require_auto_level_);
+        this->get_parameter("translate_ground_to_zero", translate_ground_to_zero_);
+        this->get_parameter("level_distance_threshold", level_distance_threshold_);
+        this->get_parameter("level_max_iterations", level_max_iterations_);
+        this->get_parameter("ground_normal_threshold", ground_normal_threshold_);
         if (pcl::io::loadPCDFile<pcl::PointXYZ>(pcd_path_, *cloud_) == -1) 
         {
             PCL_ERROR("Couldn't read file \n");
             return ;
         }
         RCLCPP_INFO(this->get_logger(), "file read");
-        // 先进行坐标变换，再过滤（参数与 static_transform_publisher 一致）
-        Eigen::Vector3d translation1(0.0, 0.0, 0.0);
-        Eigen::Matrix3d rotation1;
-        rotation1 = Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitX())      // Roll
-            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())             // Pitch
-            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitZ());            // Yaw
-        Eigen::Affine3d transform1 = Eigen::Affine3d::Identity();
-        transform1.translate(translation1);
-        transform1.rotate(rotation1);
-        RCLCPP_INFO(this->get_logger(), "start trans");
-        pcl::transformPointCloud(*cloud_, *cloud2_, transform1);
-        RCLCPP_INFO(this->get_logger(), "end trans");
 
-        Eigen::Vector3d translation2(0.0, 0.0, 0.0);
-        Eigen::Affine3d transform2 = Eigen::Affine3d::Identity();
-        transform2.translate(translation2);
-        Eigen::Matrix3d rotation2;
-        rotation2 = Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX())      // Roll
-            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())             // Pitch
-            * Eigen::AngleAxisd(-1.5708, Eigen::Vector3d::UnitZ());        // Yaw
-        transform2.rotate(rotation2);
-        RCLCPP_INFO(this->get_logger(), "start trans");
-        pcl::transformPointCloud(*cloud2_, *cloud3_, transform2);
-        RCLCPP_INFO(this->get_logger(), "end trans");
+        if (!levelPointCloudWithGroundPlane()) {
+            if (require_auto_level_) {
+                RCLCPP_ERROR(this->get_logger(), "auto_level is required; aborting");
+                return;
+            }
+            RCLCPP_WARN(this->get_logger(), "auto_level failed; continuing with original PCD");
+        }
 
-        Eigen::Vector3d translation3(0.2, 0.0, 0.05);
-        Eigen::Matrix3d rotation3;
-        rotation3 = Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitX())      // Roll
-            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitY())             // Pitch
-            * Eigen::AngleAxisd(0.0, Eigen::Vector3d::UnitZ());            // Yaw
-        Eigen::Affine3d transform3 = Eigen::Affine3d::Identity();
-        transform3.translate(translation3);
-        transform3.rotate(rotation3);
-        RCLCPP_INFO(this->get_logger(), "start trans");
-        pcl::transformPointCloud(*cloud3_, *cloud1_, transform3);
-        RCLCPP_INFO(this->get_logger(), "end trans");
-
-        ne_.setInputCloud(cloud1_); 
+        ne_.setInputCloud(cloud_);
         ne_.setSearchMethod(tree_);
         ne_.setRadiusSearch(0.1);
         ne_.compute(*normals_);
@@ -112,7 +230,7 @@ public:
             j++;
         }
 
-        extract_.setInputCloud(cloud1_); 
+        extract_.setInputCloud(cloud_);
         extract_.setIndices(Indices_);
         extract_.setNegative(false); // 设置提取反操作以删除indices中的点
         extract_.filter(*output_); // 最后得到的就是删除梯度过小的点的点云数据
