@@ -491,6 +491,8 @@ nav_server:
       enable_release_maneuver: true
       release_ignore_unknown: false   # true 时脱困退让安全检查忽略 unknown，仅拒绝明确障碍；默认 false 更保守
       release_initial_occupied_tolerance: 0.25 # 起点在障碍内时，退让开头允许连续占据采样的最大距离(m)
+      release_require_esdf_improvement: true   # 起始占据宽限段要求 ESDF 不变差，避免越退越深
+      release_esdf_regression_tolerance: 0.02  # ESDF 趋势容差(m)，小幅插值/噪声回退不判失败
       backup_dist: 0.25               # 直退释放距离(m)
       backup_vel: -0.5               # 直退释放速度(m/s)
       backup_timeout: 1.8             # 直退动作超时(s)

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <vector>
 #include <rclcpp/rclcpp.hpp>
@@ -96,6 +97,8 @@ public:
         declare_parameter("escape.enable_release_maneuver", true);
         declare_parameter("escape.release_ignore_unknown", false);
         declare_parameter("escape.release_initial_occupied_tolerance", 0.25);
+        declare_parameter("escape.release_require_esdf_improvement", true);
+        declare_parameter("escape.release_esdf_regression_tolerance", 0.02);
         declare_parameter("escape.backup_dist", 0.25);
         declare_parameter("escape.backup_vel", -0.20);
         declare_parameter("escape.backup_timeout", 1.8);
@@ -121,6 +124,10 @@ public:
         escape_release_ignore_unknown_ = get_parameter("escape.release_ignore_unknown").as_bool();
         escape_release_initial_occupied_tolerance_ =
             get_parameter("escape.release_initial_occupied_tolerance").as_double();
+        escape_release_require_esdf_improvement_ =
+            get_parameter("escape.release_require_esdf_improvement").as_bool();
+        escape_release_esdf_regression_tolerance_ =
+            get_parameter("escape.release_esdf_regression_tolerance").as_double();
         escape_backup_dist_ = get_parameter("escape.backup_dist").as_double();
         escape_backup_vel_ = get_parameter("escape.backup_vel").as_double();
         escape_backup_timeout_ = get_parameter("escape.backup_timeout").as_double();
@@ -1447,6 +1454,12 @@ private:
         double y = current_pose_.pose.position.y;
         double theta = yaw;
         bool reached_unblocked_sample = false;
+        double best_esdf_dist = -std::numeric_limits<double>::infinity();
+        if (escape_release_require_esdf_improvement_ && map_manager_ && map_manager_->hasEsdf()) {
+            double gx = 0.0;
+            double gy = 0.0;
+            best_esdf_dist = map_manager_->getEsdfDistanceWithGradient(x, y, &gx, &gy);
+        }
 
         auto set_failure_reason = [&](const char* label,
                                       double sample_t,
@@ -1456,7 +1469,8 @@ private:
                                       int my,
                                       int idx,
                                       int cost,
-                                      int raw_cost) {
+                                      int raw_cost,
+                                      double esdf_dist) {
             if (!reason) {
                 return;
             }
@@ -1470,7 +1484,11 @@ private:
                 << " costmap=" << cost
                 << " raw_fused=" << raw_cost
                 << " threshold=" << escape_trigger_costmap_threshold_
-                << " ignore_unknown=" << (escape_release_ignore_unknown_ ? "true" : "false");
+                << " ignore_unknown=" << (escape_release_ignore_unknown_ ? "true" : "false")
+                << " esdf=" << esdf_dist
+                << " best_esdf=" << best_esdf_dist
+                << " esdf_trend_check="
+                << (escape_release_require_esdf_improvement_ ? "true" : "false");
             *reason = oss.str();
         };
 
@@ -1533,6 +1551,31 @@ private:
             escape_debug_pub_->publish(markers);
         };
 
+        auto occupied_sample_allowed_by_escape_trend = [&](double wx, double wy) {
+            if (!escape_release_require_esdf_improvement_ || !map_manager_ ||
+                !map_manager_->hasEsdf()) {
+                return true;
+            }
+
+            double gx = 0.0;
+            double gy = 0.0;
+            const double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
+            if (esdf_dist + escape_release_esdf_regression_tolerance_ < best_esdf_dist) {
+                return false;
+            }
+            best_esdf_dist = std::max(best_esdf_dist, esdf_dist);
+            return true;
+        };
+
+        auto current_esdf_for_log = [&](double wx, double wy) {
+            if (!map_manager_ || !map_manager_->hasEsdf()) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            double gx = 0.0;
+            double gy = 0.0;
+            return map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
+        };
+
         for (double t = 0.0; t <= horizon + 1e-6; t += dt) {
             x += linear_vel * std::cos(theta) * dt;
             y += linear_vel * std::sin(theta) * dt;
@@ -1550,7 +1593,8 @@ private:
                                    my,
                                    -1,
                                    -999,
-                                   -999);
+                                   -999,
+                                   current_esdf_for_log(x, y));
                 return false;
             }
 
@@ -1565,7 +1609,8 @@ private:
                 const int8_t raw_cost = raw_map->data[idx];
                 if (raw_cost >= escape_trigger_costmap_threshold_) {
                     if (!reached_unblocked_sample &&
-                        dist_from_start <= escape_release_initial_occupied_tolerance_) {
+                        dist_from_start <= escape_release_initial_occupied_tolerance_ &&
+                        occupied_sample_allowed_by_escape_trend(x, y)) {
                         continue;
                     }
                     publish_failure_marker("raw_obstacle",
@@ -1581,14 +1626,23 @@ private:
                                        my,
                                        idx,
                                        static_cast<int>(cost),
-                                       static_cast<int>(raw_cost));
+                                       static_cast<int>(raw_cost),
+                                       current_esdf_for_log(x, y));
                     return false;
                 }
                 reached_unblocked_sample = true;
+                if (escape_release_require_esdf_improvement_ && map_manager_ &&
+                    map_manager_->hasEsdf()) {
+                    double gx = 0.0;
+                    double gy = 0.0;
+                    best_esdf_dist = std::max(
+                        best_esdf_dist, map_manager_->getEsdfDistanceWithGradient(x, y, &gx, &gy));
+                }
             } else {
                 if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
                     if (!reached_unblocked_sample &&
-                        dist_from_start <= escape_release_initial_occupied_tolerance_) {
+                        dist_from_start <= escape_release_initial_occupied_tolerance_ &&
+                        occupied_sample_allowed_by_escape_trend(x, y)) {
                         continue;
                     }
                     publish_failure_marker((cost < 0) ? "unknown" : "costmap_obstacle",
@@ -1605,10 +1659,18 @@ private:
                                        my,
                                        idx,
                                        static_cast<int>(cost),
-                                       -999);
+                                       -999,
+                                       current_esdf_for_log(x, y));
                     return false;
                 }
                 reached_unblocked_sample = true;
+                if (escape_release_require_esdf_improvement_ && map_manager_ &&
+                    map_manager_->hasEsdf()) {
+                    double gx = 0.0;
+                    double gy = 0.0;
+                    best_esdf_dist = std::max(
+                        best_esdf_dist, map_manager_->getEsdfDistanceWithGradient(x, y, &gx, &gy));
+                }
             }
         }
 
@@ -2688,6 +2750,8 @@ private:
     bool escape_enable_release_maneuver_{true};  // 是否先执行退让释放动作
     bool escape_release_ignore_unknown_{false};  // release 退让安全检查是否忽略 unknown
     double escape_release_initial_occupied_tolerance_{0.25};  // 起始占据宽限距离
+    bool escape_release_require_esdf_improvement_{true};  // 起始占据宽限需满足 ESDF 不变差
+    double escape_release_esdf_regression_tolerance_{0.02};  // ESDF 趋势容差
     double escape_backup_dist_{0.25};       // 直退释放距离
     double escape_backup_vel_{-0.20};       // 直退释放速度
     double escape_backup_timeout_{1.8};     // 直退超时
