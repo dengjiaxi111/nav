@@ -95,6 +95,7 @@ public:
         declare_parameter("escape.preferred_search_half_angle", 0.35);
         declare_parameter("escape.enable_release_maneuver", true);
         declare_parameter("escape.release_ignore_unknown", false);
+        declare_parameter("escape.release_initial_occupied_tolerance", 0.25);
         declare_parameter("escape.backup_dist", 0.25);
         declare_parameter("escape.backup_vel", -0.20);
         declare_parameter("escape.backup_timeout", 1.8);
@@ -118,6 +119,8 @@ public:
         escape_preferred_search_half_angle_ = get_parameter("escape.preferred_search_half_angle").as_double();
         escape_enable_release_maneuver_ = get_parameter("escape.enable_release_maneuver").as_bool();
         escape_release_ignore_unknown_ = get_parameter("escape.release_ignore_unknown").as_bool();
+        escape_release_initial_occupied_tolerance_ =
+            get_parameter("escape.release_initial_occupied_tolerance").as_double();
         escape_backup_dist_ = get_parameter("escape.backup_dist").as_double();
         escape_backup_vel_ = get_parameter("escape.backup_vel").as_double();
         escape_backup_timeout_ = get_parameter("escape.backup_timeout").as_double();
@@ -1443,6 +1446,7 @@ private:
         double x = current_pose_.pose.position.x;
         double y = current_pose_.pose.position.y;
         double theta = yaw;
+        bool reached_unblocked_sample = false;
 
         auto set_failure_reason = [&](const char* label,
                                       double sample_t,
@@ -1552,11 +1556,18 @@ private:
 
             const int idx = my * width + mx;
             const int8_t cost = costmap->data[idx];
+            const double dist_from_start =
+                std::hypot(x - current_pose_.pose.position.x,
+                           y - current_pose_.pose.position.y);
             if (raw_map && raw_map->info.width == costmap->info.width &&
                 raw_map->info.height == costmap->info.height &&
                 idx < static_cast<int>(raw_map->data.size())) {
                 const int8_t raw_cost = raw_map->data[idx];
                 if (raw_cost >= escape_trigger_costmap_threshold_) {
+                    if (!reached_unblocked_sample &&
+                        dist_from_start <= escape_release_initial_occupied_tolerance_) {
+                        continue;
+                    }
                     publish_failure_marker("raw_obstacle",
                                            x,
                                            y,
@@ -1573,8 +1584,13 @@ private:
                                        static_cast<int>(raw_cost));
                     return false;
                 }
+                reached_unblocked_sample = true;
             } else {
                 if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
+                    if (!reached_unblocked_sample &&
+                        dist_from_start <= escape_release_initial_occupied_tolerance_) {
+                        continue;
+                    }
                     publish_failure_marker((cost < 0) ? "unknown" : "costmap_obstacle",
                                            x,
                                            y,
@@ -1592,6 +1608,7 @@ private:
                                        -999);
                     return false;
                 }
+                reached_unblocked_sample = true;
             }
         }
 
@@ -2670,6 +2687,7 @@ private:
     double escape_preferred_search_half_angle_;  // 定向搜索半角(rad)
     bool escape_enable_release_maneuver_{true};  // 是否先执行退让释放动作
     bool escape_release_ignore_unknown_{false};  // release 退让安全检查是否忽略 unknown
+    double escape_release_initial_occupied_tolerance_{0.25};  // 起始占据宽限距离
     double escape_backup_dist_{0.25};       // 直退释放距离
     double escape_backup_vel_{-0.20};       // 直退释放速度
     double escape_backup_timeout_{1.8};     // 直退超时
