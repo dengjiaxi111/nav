@@ -4,6 +4,8 @@
 #pragma once
 
 #include <chrono>
+#include <string>
+#include <unordered_set>
 #include <unordered_map>
 
 #include <std_msgs/msg/u_int8.hpp>
@@ -116,6 +118,9 @@ private:
     void triggerStairModePulse(uint8_t mode);
     void updateStairModePulseHold(const std::chrono::steady_clock::time_point& now);
     void resetStairModePulse(bool publish_zero);
+    std::string terrainFeatureKey(TerrainType terrain_type, int feature_id) const;
+    bool isTerrainFeatureConsumed(TerrainType terrain_type, int feature_id) const;
+    void markTerrainFeatureConsumed(TerrainType terrain_type, int feature_id);
     void updateStairModeDetection(const nav_core::TerrainControlContext& context);
     void applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd, double control_rate_hz);
     void legLengthCallback(const robots_msgs::msg::LegLength::SharedPtr msg);
@@ -278,6 +283,7 @@ private:
     std::unordered_map<int, std::chrono::steady_clock::time_point> stair_cooldown_until_by_id_;
     std::unordered_map<int, int> fly_slope_fail_count_by_id_;
     std::unordered_map<int, std::chrono::steady_clock::time_point> fly_slope_cooldown_until_by_id_;
+    std::unordered_set<std::string> consumed_terrain_features_;
 };
 
 }  // namespace nav_components

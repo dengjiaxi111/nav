@@ -454,6 +454,12 @@ void StairController::onNavStateChanged(nav_core::NavState state) {
         resetLegRaiseMonitor();
         cooldown_stair_id_ = -1;
         cooldown_replan_pending_ = false;
+        if (state == nav_core::NavState::IDLE ||
+            state == nav_core::NavState::SUCCEEDED ||
+            state == nav_core::NavState::FAILED ||
+            state == nav_core::NavState::RECOVERY) {
+            consumed_terrain_features_.clear();
+        }
     }
 }
 
@@ -570,6 +576,8 @@ nav_core::TerrainControlDecision StairController::update(
 
     bool candidate_in_cooldown = false;
     double candidate_cooldown_remain_sec = 0.0;
+    const bool candidate_consumed = has_candidate &&
+        isTerrainFeatureConsumed(candidate.terrain_type, candidate.feature_id);
     if (has_candidate && candidate.feature_id >= 0) {
         if (candidate.terrain_type == TerrainType::FLY_SLOPE) {
             candidate_in_cooldown = isFlySlopeInCooldown(
@@ -602,7 +610,8 @@ nav_core::TerrainControlDecision StairController::update(
     switch (fsm_state_) {
         case StairFsmState::NORMAL: {
             updateStairModePulseHold(now_tp);
-            if (has_candidate && candidate.dist_to_feature_m <= trigger_dist(candidate.terrain_type)) {
+            if (has_candidate && !candidate_consumed &&
+                candidate.dist_to_feature_m <= trigger_dist(candidate.terrain_type)) {
                 if (candidate_in_cooldown) {
                     cooldown_stair_id_ = candidate.feature_id;
                     active_terrain_type_ = candidate.terrain_type;
@@ -626,6 +635,12 @@ nav_core::TerrainControlDecision StairController::update(
 
             if (!has_candidate) {
                 transitionFsmState(StairFsmState::NORMAL, "candidate lost in pre-align");
+                decision = nav_core::TerrainControlDecision::PASS_THROUGH;
+                break;
+            }
+
+            if (candidate_consumed) {
+                transitionFsmState(StairFsmState::NORMAL, "candidate already consumed");
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
                 break;
             }
@@ -1846,7 +1861,7 @@ void StairController::publishStairMode(
 }
 
 void StairController::triggerStairModePulse(uint8_t mode) {
-    if (mode == 0 || stair_mode_pulse_sent_in_commit_) {
+    if (mode == 0 || stair_mode_pulse_sent_in_commit_ || stair_mode_pulse_active_) {
         return;
     }
 
@@ -1854,6 +1869,7 @@ void StairController::triggerStairModePulse(uint8_t mode) {
     stair_mode_pulse_active_ = true;
     stair_mode_pulse_mode_ = mode;
     stair_mode_pulse_start_time_ = std::chrono::steady_clock::now();
+    markTerrainFeatureConsumed(active_terrain_type_, active_feature_.feature_id);
     publishStairMode(mode, true, true);
 }
 
@@ -1884,6 +1900,26 @@ void StairController::resetStairModePulse(bool publish_zero) {
     if (publish_zero) {
         publishStairMode(0, true, true);
     }
+}
+
+std::string StairController::terrainFeatureKey(TerrainType terrain_type, int feature_id) const {
+    if (feature_id < 0 || terrain_type == TerrainType::NONE) {
+        return {};
+    }
+    return std::to_string(static_cast<int>(terrain_type)) + ":" + std::to_string(feature_id);
+}
+
+bool StairController::isTerrainFeatureConsumed(TerrainType terrain_type, int feature_id) const {
+    const auto key = terrainFeatureKey(terrain_type, feature_id);
+    return !key.empty() && consumed_terrain_features_.find(key) != consumed_terrain_features_.end();
+}
+
+void StairController::markTerrainFeatureConsumed(TerrainType terrain_type, int feature_id) {
+    const auto key = terrainFeatureKey(terrain_type, feature_id);
+    if (key.empty()) {
+        return;
+    }
+    consumed_terrain_features_.insert(key);
 }
 
 void StairController::updateStairModeDetection(const nav_core::TerrainControlContext& context) {
