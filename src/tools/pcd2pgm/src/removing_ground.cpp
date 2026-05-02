@@ -31,6 +31,7 @@ private:
     int level_max_iterations_;
     int level_candidate_planes_;
     int level_min_plane_inliers_;
+    double level_early_stop_below_first_m_;
     double ground_normal_threshold_;
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
@@ -141,6 +142,18 @@ private:
                         "auto_level candidate %d: normal=[%.5f, %.5f, %.5f], z=%.4f, inliers=%zu",
                         plane_idx, normal.x(), normal.y(), normal.z(),
                         candidate.leveled_z, candidate.inliers);
+
+                    if (plane_idx > 0 && !candidates.empty() &&
+                        level_early_stop_below_first_m_ > 0.0 &&
+                        candidate.leveled_z <
+                            candidates.front().leveled_z - level_early_stop_below_first_m_) {
+                        RCLCPP_INFO(
+                            this->get_logger(),
+                            "auto_level: early stop at candidate %d because z %.4f is %.3fm below first plane z %.4f",
+                            plane_idx, candidate.leveled_z, level_early_stop_below_first_m_,
+                            candidates.front().leveled_z);
+                        break;
+                    }
                 }
             } else {
                 RCLCPP_INFO(
@@ -250,8 +263,9 @@ public:
         this->declare_parameter<bool>("translate_ground_to_zero", true);
         this->declare_parameter<double>("level_distance_threshold", 0.08);
         this->declare_parameter<int>("level_max_iterations", 1000);
-        this->declare_parameter<int>("level_candidate_planes", 6);
+        this->declare_parameter<int>("level_candidate_planes", 4);
         this->declare_parameter<int>("level_min_plane_inliers", 1000);
+        this->declare_parameter<double>("level_early_stop_below_first_m", 0.10);
         this->declare_parameter<double>("ground_normal_threshold", 0.70);
         this->get_parameter("pcd_path", pcd_path_);
         this->get_parameter("output_path", output_path_);
@@ -263,6 +277,7 @@ public:
         this->get_parameter("level_max_iterations", level_max_iterations_);
         this->get_parameter("level_candidate_planes", level_candidate_planes_);
         this->get_parameter("level_min_plane_inliers", level_min_plane_inliers_);
+        this->get_parameter("level_early_stop_below_first_m", level_early_stop_below_first_m_);
         this->get_parameter("ground_normal_threshold", ground_normal_threshold_);
         if (pcl::io::loadPCDFile<pcl::PointXYZ>(pcd_path_, *cloud_) == -1) 
         {
