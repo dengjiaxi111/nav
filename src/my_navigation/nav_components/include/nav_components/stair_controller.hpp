@@ -110,7 +110,12 @@ private:
     void publishCooldownMarkers(const std::chrono::steady_clock::time_point& now);
     void syncRuntimeBlockedUphillStairs(const std::chrono::steady_clock::time_point& now);
 
-    void publishStairMode(uint8_t mode, bool force_publish, bool bypass_hold = false);
+    void publishStairMode(uint8_t mode,
+                          bool force_publish,
+                          bool bypass_hold = false);
+    void triggerStairModePulse(uint8_t mode);
+    void updateStairModePulseHold(const std::chrono::steady_clock::time_point& now);
+    void resetStairModePulse(bool publish_zero);
     void updateStairModeDetection(const nav_core::TerrainControlContext& context);
     void applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd, double control_rate_hz);
     void legLengthCallback(const robots_msgs::msg::LegLength::SharedPtr msg);
@@ -137,7 +142,6 @@ private:
     double stair_mode_entry_heading_error_max_rad_{0.35};
     int stair_mode_release_grace_cycles_{5};
     double stair_mode_min_hold_sec_{0.35};
-    double stair_mode_reassert_block_sec_{0.0};
     double stair_mode_force_release_distance_m_{2.5};
     double stair_mode_max_assert_sec_{6.0};
     double stair_mode_omega_limit_rad_s_{0.20};
@@ -164,7 +168,6 @@ private:
     double fly_slope_mode_entry_heading_error_max_rad_{0.35};
     int fly_slope_mode_release_grace_cycles_{5};
     double fly_slope_mode_min_hold_sec_{0.35};
-    double fly_slope_mode_reassert_block_sec_{0.0};
     double fly_slope_mode_force_release_distance_m_{2.5};
     double fly_slope_mode_max_assert_sec_{6.0};
     double fly_slope_mode_omega_limit_rad_s_{0.20};
@@ -245,13 +248,13 @@ private:
     std::chrono::steady_clock::time_point leg_raise_command_time_{};
     int stair_mode_release_counter_{0};
     std::chrono::steady_clock::time_point stair_mode_last_assert_time_{};
-    std::chrono::steady_clock::time_point stair_mode_last_mode1_publish_time_{};
-    std::chrono::steady_clock::time_point stair_mode_last_mode2_publish_time_{};
-    std::chrono::steady_clock::time_point stair_mode_last_mode3_publish_time_{};
-    std::chrono::steady_clock::time_point stair_mode_last_mode4_publish_time_{};
     std::chrono::steady_clock::time_point stair_mode_enter_time_{};
     bool stair_mode_omega_limiter_initialized_{false};
     double last_stair_mode_limited_omega_{0.0};
+    bool stair_mode_pulse_sent_in_commit_{false};
+    bool stair_mode_pulse_active_{false};
+    uint8_t stair_mode_pulse_mode_{0};
+    std::chrono::steady_clock::time_point stair_mode_pulse_start_time_{};
 
     StairFsmState fsm_state_{StairFsmState::NORMAL};
     std::chrono::steady_clock::time_point fsm_state_enter_time_{};

@@ -34,7 +34,6 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_mode_entry_heading_error_max_rad", 0.35);
     declare_if_needed("special_terrain.stair_mode_release_grace_cycles", 5);
     declare_if_needed("special_terrain.stair_mode_min_hold_sec", 0.35);
-    declare_if_needed("special_terrain.stair_mode_reassert_block_sec", 0.0);
     declare_if_needed("special_terrain.stair_mode_force_release_distance_m", 2.5);
     declare_if_needed("special_terrain.stair_mode_max_assert_sec", 6.0);
     declare_if_needed("special_terrain.stair_mode_omega_limit_rad_s", 0.20);
@@ -88,7 +87,6 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.fly_slope_mode_entry_heading_error_max_rad", 0.35);
     declare_if_needed("special_terrain.fly_slope_mode_release_grace_cycles", 5);
     declare_if_needed("special_terrain.fly_slope_mode_min_hold_sec", 0.35);
-    declare_if_needed("special_terrain.fly_slope_mode_reassert_block_sec", 0.0);
     declare_if_needed("special_terrain.fly_slope_mode_force_release_distance_m", 2.5);
     declare_if_needed("special_terrain.fly_slope_mode_max_assert_sec", 6.0);
     declare_if_needed("special_terrain.fly_slope_mode_omega_limit_rad_s", 0.20);
@@ -146,8 +144,6 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_mode_release_grace_cycles").as_int();
     stair_mode_min_hold_sec_ =
         node_->get_parameter("special_terrain.stair_mode_min_hold_sec").as_double();
-    stair_mode_reassert_block_sec_ =
-        node_->get_parameter("special_terrain.stair_mode_reassert_block_sec").as_double();
     stair_mode_force_release_distance_m_ =
         node_->get_parameter("special_terrain.stair_mode_force_release_distance_m").as_double();
     stair_mode_max_assert_sec_ =
@@ -271,8 +267,6 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.fly_slope_mode_release_grace_cycles").as_int();
     fly_slope_mode_min_hold_sec_ =
         node_->get_parameter("special_terrain.fly_slope_mode_min_hold_sec").as_double();
-    fly_slope_mode_reassert_block_sec_ =
-        node_->get_parameter("special_terrain.fly_slope_mode_reassert_block_sec").as_double();
     fly_slope_mode_force_release_distance_m_ =
         node_->get_parameter("special_terrain.fly_slope_mode_force_release_distance_m").as_double();
     fly_slope_mode_max_assert_sec_ =
@@ -367,14 +361,13 @@ void StairController::initialize(rclcpp::Node* node) {
 
     if (enable_stair_mode_detection_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill(dot>=0), entry_heading_err_max=%.2f rad, grace=%d, min_hold=%.2fs, reassert_block=%.2fs, force_release_dist=%.2fm, max_assert=%.2fs, omega_limit=%.2f rad/s, omega_slew=%.2f rad/s^2",
+                    "stair_mode 检测启用: trigger=%.2fm, lookahead=%.2fm, sample=%.2fm, uphill(dot>=0), entry_heading_err_max=%.2f rad, grace=%d, min_hold=%.2fs, force_release_dist=%.2fm, max_assert=%.2fs, omega_limit=%.2f rad/s, omega_slew=%.2f rad/s^2",
                     stair_mode_trigger_distance_m_,
                     stair_mode_lookahead_dist_m_,
                     stair_mode_sample_step_m_,
                     stair_mode_entry_heading_error_max_rad_,
                     stair_mode_release_grace_cycles_,
                     stair_mode_min_hold_sec_,
-                    stair_mode_reassert_block_sec_,
                     stair_mode_force_release_distance_m_,
                     stair_mode_max_assert_sec_,
                     stair_mode_omega_limit_rad_s_,
@@ -449,7 +442,7 @@ void StairController::setMap(nav_core::MapInterface::Ptr map) {
 
 void StairController::onNavStateChanged(nav_core::NavState state) {
     if (state != nav_core::NavState::CONTROLLING) {
-        publishStairMode(0, true, true);
+        resetStairModePulse(true);
         stair_mode_release_counter_ = 0;
         fsm_state_ = StairFsmState::NORMAL;
         fsm_state_enter_time_ = std::chrono::steady_clock::time_point{};
@@ -474,13 +467,13 @@ nav_core::TerrainControlDecision StairController::update(
     if ((!enable_stair_mode_detection_ && !enable_fly_slope_mode_detection_) ||
         !enable_stair_fsm_) {
         transitionFsmState(StairFsmState::NORMAL, "fsm disabled");
-        publishStairMode(0, true, true);
+        resetStairModePulse(true);
         return nav_core::TerrainControlDecision::PASS_THROUGH;
     }
 
     if (!map_manager_ || context.current_path.poses.size() < 2) {
         transitionFsmState(StairFsmState::NORMAL, "map/path unavailable");
-        publishStairMode(0, true, true);
+        resetStairModePulse(true);
         return nav_core::TerrainControlDecision::PASS_THROUGH;
     }
 
@@ -608,7 +601,7 @@ nav_core::TerrainControlDecision StairController::update(
 
     switch (fsm_state_) {
         case StairFsmState::NORMAL: {
-            publishStairMode(0, true);
+            updateStairModePulseHold(now_tp);
             if (has_candidate && candidate.dist_to_feature_m <= trigger_dist(candidate.terrain_type)) {
                 if (candidate_in_cooldown) {
                     cooldown_stair_id_ = candidate.feature_id;
@@ -629,7 +622,7 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::PRE_ALIGN: {
-            publishStairMode(0, true); // 抬腿动作已推迟到 COMMIT_ASCENT，此处只做预对准不发1
+            updateStairModePulseHold(now_tp);
 
             if (!has_candidate) {
                 transitionFsmState(StairFsmState::NORMAL, "candidate lost in pre-align");
@@ -734,7 +727,10 @@ nav_core::TerrainControlDecision StairController::update(
                 do_raise = true;
                 do_fix_vel = true;
             }
-            publishStairMode(do_raise ? mode_of(active_terrain_type_) : 0, true);
+            if (do_raise && !stair_mode_pulse_sent_in_commit_) {
+                triggerStairModePulse(mode_of(active_terrain_type_));
+            }
+            updateStairModePulseHold(now_tp);
 
             if (has_candidate) {
                 if (candidate_in_cooldown) {
@@ -828,7 +824,7 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::VERIFY_SUCCESS: {
-            publishStairMode(mode_of(active_terrain_type_), true);
+            updateStairModePulseHold(now_tp);
 
             if (has_candidate) {
                 active_feature_ = candidate;
@@ -847,7 +843,6 @@ nav_core::TerrainControlDecision StairController::update(
                 }
                 transitionFsmState(StairFsmState::NORMAL, "verify success");
                 active_terrain_type_ = TerrainType::NONE;
-                publishStairMode(0, true, true);
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
                 break;
             }
@@ -867,7 +862,7 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::FAIL_RETRY_BACKOFF: {
-            publishStairMode(0, true, true);
+            updateStairModePulseHold(now_tp);
 
             const double backoff_dt = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - fsm_state_enter_time_).count();
@@ -1027,7 +1022,7 @@ nav_core::TerrainControlDecision StairController::update(
         }
 
         case StairFsmState::COOLDOWN_BLOCKED: {
-            publishStairMode(0, true, true);
+            updateStairModePulseHold(now_tp);
 
             if (cooldown_stair_id_ < 0) {
                 transitionFsmState(StairFsmState::NORMAL, "cooldown stair invalid");
@@ -1143,6 +1138,9 @@ void StairController::transitionFsmState(StairFsmState new_state, const char* re
 
     fsm_state_ = new_state;
     fsm_state_enter_time_ = std::chrono::steady_clock::now();
+    if (new_state == StairFsmState::COMMIT_ASCENT) {
+        stair_mode_pulse_sent_in_commit_ = false;
+    }
     if (new_state != StairFsmState::COMMIT_ASCENT) {
         resetLegRaiseMonitor();
     }
@@ -1799,7 +1797,10 @@ bool StairController::detectUpcomingStairDistance(
     return false;
 }
 
-void StairController::publishStairMode(uint8_t mode, bool force_publish, bool bypass_hold) {
+void StairController::publishStairMode(
+    uint8_t mode,
+    bool force_publish,
+    bool bypass_hold) {
     if (!stair_mode_pub_) {
         return;
     }
@@ -1807,29 +1808,8 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
     uint8_t effective_mode = mode;
     const auto now_tp = std::chrono::steady_clock::now();
     if (effective_mode == 1 || effective_mode == 3 || effective_mode == 4) {
-        const auto last_publish_time = (effective_mode == 4)
-            ? stair_mode_last_mode4_publish_time_
-            : ((effective_mode == 3)
-                ? stair_mode_last_mode3_publish_time_
-                : stair_mode_last_mode1_publish_time_);
-        if (stair_mode_reassert_block_sec_ > 0.0 &&
-            last_publish_time != std::chrono::steady_clock::time_point{}) {
-            const double elapsed_since_publish = std::chrono::duration<double>(
-                now_tp - last_publish_time).count();
-            if (elapsed_since_publish < stair_mode_reassert_block_sec_) {
-                return;
-            }
-        }
         stair_mode_last_assert_time_ = now_tp;
     } else if (effective_mode == 2) {
-        if (fly_slope_mode_reassert_block_sec_ > 0.0 &&
-            stair_mode_last_mode2_publish_time_ != std::chrono::steady_clock::time_point{}) {
-            const double elapsed_since_mode2_publish = std::chrono::duration<double>(
-                now_tp - stair_mode_last_mode2_publish_time_).count();
-            if (elapsed_since_mode2_publish < fly_slope_mode_reassert_block_sec_) {
-                return;
-            }
-        }
         stair_mode_last_assert_time_ = now_tp;
     } else if (!bypass_hold &&
                (stair_mode_current_ == 1 ||
@@ -1853,15 +1833,6 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
     std_msgs::msg::UInt8 msg;
     msg.data = effective_mode;
     stair_mode_pub_->publish(msg);
-    if (effective_mode == 1) {
-        stair_mode_last_mode1_publish_time_ = now_tp;
-    } else if (effective_mode == 2) {
-        stair_mode_last_mode2_publish_time_ = now_tp;
-    } else if (effective_mode == 3) {
-        stair_mode_last_mode3_publish_time_ = now_tp;
-    } else if (effective_mode == 4) {
-        stair_mode_last_mode4_publish_time_ = now_tp;
-    }
 
     if (effective_mode != stair_mode_current_) {
         RCLCPP_INFO(node_->get_logger(), "stair_mode -> %u", static_cast<unsigned>(effective_mode));
@@ -1871,6 +1842,47 @@ void StairController::publishStairMode(uint8_t mode, bool force_publish, bool by
             stair_mode_enter_time_ = std::chrono::steady_clock::time_point{};
         }
         stair_mode_current_ = effective_mode;
+    }
+}
+
+void StairController::triggerStairModePulse(uint8_t mode) {
+    if (mode == 0 || stair_mode_pulse_sent_in_commit_) {
+        return;
+    }
+
+    stair_mode_pulse_sent_in_commit_ = true;
+    stair_mode_pulse_active_ = true;
+    stair_mode_pulse_mode_ = mode;
+    stair_mode_pulse_start_time_ = std::chrono::steady_clock::now();
+    publishStairMode(mode, true, true);
+}
+
+void StairController::updateStairModePulseHold(
+    const std::chrono::steady_clock::time_point& now) {
+    if (!stair_mode_pulse_active_) {
+        return;
+    }
+
+    const double hold_sec = (stair_mode_pulse_mode_ == 2)
+        ? fly_slope_mode_min_hold_sec_
+        : stair_mode_min_hold_sec_;
+    const double elapsed = std::chrono::duration<double>(
+        now - stair_mode_pulse_start_time_).count();
+    if (elapsed >= std::max(0.0, hold_sec)) {
+        stair_mode_pulse_active_ = false;
+        stair_mode_pulse_mode_ = 0;
+        stair_mode_pulse_start_time_ = std::chrono::steady_clock::time_point{};
+        publishStairMode(0, true, true);
+    }
+}
+
+void StairController::resetStairModePulse(bool publish_zero) {
+    stair_mode_pulse_sent_in_commit_ = false;
+    stair_mode_pulse_active_ = false;
+    stair_mode_pulse_mode_ = 0;
+    stair_mode_pulse_start_time_ = std::chrono::steady_clock::time_point{};
+    if (publish_zero) {
+        publishStairMode(0, true, true);
     }
 }
 

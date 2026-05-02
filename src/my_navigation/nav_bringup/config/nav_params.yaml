@@ -130,7 +130,6 @@ nav_server:
     # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       stair_mode_release_grace_cycles: 2
       stair_mode_min_hold_sec: 0.5  # 抬腿信号最小保持时间(秒)，用于抑制 1->0 瞬时抖动
-      stair_mode_reassert_block_sec: 2.0  # 发送过 mode=1 后的重发保护时间窗(秒)，窗口内禁止再次发送 mode=1
       stair_mode_force_release_distance_m: 2.6  # mode=1 时若检测到台阶距离过远(或无 upcoming)，强制回0
       stair_mode_max_assert_sec: 8.0   # mode=1 最大持续时间(秒)，超时强制回0，便于下次上升沿再次触发
       stair_mode_omega_limit_rad_s: 100.0  # stair_mode=1 时角速度上限 |omega| (rad/s)
@@ -199,7 +198,6 @@ nav_server:
       # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       fly_slope_mode_release_grace_cycles: 2           # mode=2 释放保护周期数（抑制短时抖动）
       fly_slope_mode_min_hold_sec: 0.3                 # mode=2 最小保持时长(秒)
-      fly_slope_mode_reassert_block_sec: 2.0          # 发送过 mode=2 后的重发保护时间窗(秒)，窗口内禁止再次发送 mode=2
       fly_slope_mode_force_release_distance_m: 3.0    # mode=2 强制释放距离阈值(米)，超出则回0
       fly_slope_mode_max_assert_sec: 8.0               # mode=2 最大持续时长(秒)，超时强制回0
       fly_slope_mode_omega_limit_rad_s: 100.0          # mode=2 角速度绝对值限幅(rad/s)
