@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 #include "string.h"
 
 class RemoveGround:public rclcpp::Node
@@ -28,6 +29,8 @@ private:
     bool translate_ground_to_zero_;
     double level_distance_threshold_;
     int level_max_iterations_;
+    int level_candidate_planes_;
+    int level_min_plane_inliers_;
     double ground_normal_threshold_;
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
@@ -57,73 +60,130 @@ private:
             return false;
         }
 
-        pcl::SACSegmentation<pcl::PointXYZ> seg;
-        pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
-        pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+        struct PlaneCandidate {
+            Eigen::Vector3f normal;
+            Eigen::Quaternionf rotation;
+            double leveled_z = 0.0;
+            std::size_t inliers = 0;
+            int plane_index = 0;
+        };
 
-        seg.setOptimizeCoefficients(true);
-        seg.setModelType(pcl::SACMODEL_PLANE);
-        seg.setMethodType(pcl::SAC_RANSAC);
-        seg.setMaxIterations(level_max_iterations_);
-        seg.setDistanceThreshold(level_distance_threshold_);
-        seg.setInputCloud(cloud_);
-        seg.segment(*inliers, *coefficients);
+        std::vector<PlaneCandidate> candidates;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr remaining(
+            new pcl::PointCloud<pcl::PointXYZ>(*cloud_));
 
-        if (inliers->indices.empty() || coefficients->values.size() < 4) {
-            RCLCPP_ERROR(this->get_logger(), "auto_level failed: no dominant ground plane found");
+        for (int plane_idx = 0; plane_idx < level_candidate_planes_; ++plane_idx) {
+            if (remaining->size() < static_cast<std::size_t>(level_min_plane_inliers_)) {
+                break;
+            }
+
+            pcl::SACSegmentation<pcl::PointXYZ> seg;
+            pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+            pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+
+            seg.setOptimizeCoefficients(true);
+            seg.setModelType(pcl::SACMODEL_PLANE);
+            seg.setMethodType(pcl::SAC_RANSAC);
+            seg.setMaxIterations(level_max_iterations_);
+            seg.setDistanceThreshold(level_distance_threshold_);
+            seg.setInputCloud(remaining);
+            seg.segment(*inliers, *coefficients);
+
+            if (inliers->indices.size() < static_cast<std::size_t>(level_min_plane_inliers_) ||
+                coefficients->values.size() < 4) {
+                break;
+            }
+
+            Eigen::Vector3f normal(
+                coefficients->values[0],
+                coefficients->values[1],
+                coefficients->values[2]);
+            const float normal_norm = normal.norm();
+            if (!std::isfinite(normal_norm) || normal_norm < 1e-6f) {
+                break;
+            }
+
+            normal.normalize();
+            if (normal.z() < 0.0f) {
+                normal = -normal;
+            }
+
+            if (normal.z() >= ground_normal_threshold_) {
+                Eigen::Quaternionf rotation =
+                    Eigen::Quaternionf::FromTwoVectors(normal, Eigen::Vector3f::UnitZ());
+
+                double leveled_z_sum = 0.0;
+                int leveled_z_count = 0;
+                for (const int idx : inliers->indices) {
+                    if (idx < 0 || idx >= static_cast<int>(remaining->points.size())) {
+                        continue;
+                    }
+                    const auto& point = remaining->points[static_cast<std::size_t>(idx)];
+                    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+                        continue;
+                    }
+                    Eigen::Vector3f rotated = rotation * point.getVector3fMap();
+                    leveled_z_sum += rotated.z();
+                    leveled_z_count++;
+                }
+
+                if (leveled_z_count > 0) {
+                    PlaneCandidate candidate;
+                    candidate.normal = normal;
+                    candidate.rotation = rotation.normalized();
+                    candidate.leveled_z = leveled_z_sum / static_cast<double>(leveled_z_count);
+                    candidate.inliers = inliers->indices.size();
+                    candidate.plane_index = plane_idx;
+                    candidates.push_back(candidate);
+
+                    RCLCPP_INFO(
+                        this->get_logger(),
+                        "auto_level candidate %d: normal=[%.5f, %.5f, %.5f], z=%.4f, inliers=%zu",
+                        plane_idx, normal.x(), normal.y(), normal.z(),
+                        candidate.leveled_z, candidate.inliers);
+                }
+            } else {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "auto_level candidate %d ignored: normal z %.4f < threshold %.4f",
+                    plane_idx, normal.z(), ground_normal_threshold_);
+            }
+
+            pcl::ExtractIndices<pcl::PointXYZ> remove_plane;
+            remove_plane.setInputCloud(remaining);
+            remove_plane.setIndices(inliers);
+            remove_plane.setNegative(true);
+            pcl::PointCloud<pcl::PointXYZ>::Ptr without_plane(new pcl::PointCloud<pcl::PointXYZ>);
+            remove_plane.filter(*without_plane);
+            remaining = without_plane;
+        }
+
+        if (candidates.empty()) {
+            RCLCPP_ERROR(this->get_logger(), "auto_level failed: no horizontal floor candidates found");
             return false;
         }
 
-        Eigen::Vector3f normal(
-            coefficients->values[0],
-            coefficients->values[1],
-            coefficients->values[2]);
-        const float normal_norm = normal.norm();
-        if (!std::isfinite(normal_norm) || normal_norm < 1e-6f) {
-            RCLCPP_ERROR(this->get_logger(), "auto_level failed: invalid plane normal");
-            return false;
-        }
+        auto best_it = std::min_element(
+            candidates.begin(), candidates.end(),
+            [](const PlaneCandidate& a, const PlaneCandidate& b) {
+                constexpr double kSameHeightEpsilon = 0.05;
+                if (std::abs(a.leveled_z - b.leveled_z) > kSameHeightEpsilon) {
+                    return a.leveled_z < b.leveled_z;
+                }
+                return a.inliers > b.inliers;
+            });
 
-        normal.normalize();
-        if (normal.z() < 0.0f) {
-            normal = -normal;
-        }
-
-        if (normal.z() < ground_normal_threshold_) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "dominant plane normal z=%.4f is below threshold %.4f; "
-                "please verify it is really the floor",
-                normal.z(), ground_normal_threshold_);
-        }
-
-        Eigen::Quaternionf rotation =
-            Eigen::Quaternionf::FromTwoVectors(normal, Eigen::Vector3f::UnitZ());
+        const PlaneCandidate& selected = *best_it;
+        Eigen::Vector3f normal = selected.normal;
+        Eigen::Quaternionf rotation = selected.rotation;
 
         Eigen::Affine3f level_transform = Eigen::Affine3f::Identity();
-        level_transform.rotate(rotation.normalized());
+        level_transform.rotate(rotation);
 
         pcl::PointCloud<pcl::PointXYZ>::Ptr leveled(
             new pcl::PointCloud<pcl::PointXYZ>);
         pcl::transformPointCloud(*cloud_, *leveled, level_transform);
-
-        double ground_z_sum = 0.0;
-        int ground_z_count = 0;
-        for (const int idx : inliers->indices) {
-            if (idx < 0 || idx >= static_cast<int>(leveled->points.size())) {
-                continue;
-            }
-            const auto& point = leveled->points[static_cast<std::size_t>(idx)];
-            if (std::isfinite(point.z)) {
-                ground_z_sum += point.z;
-                ground_z_count++;
-            }
-        }
-
-        double ground_z = 0.0;
-        if (ground_z_count > 0) {
-            ground_z = ground_z_sum / static_cast<double>(ground_z_count);
-        }
+        double ground_z = selected.leveled_z;
 
         if (translate_ground_to_zero_) {
             for (auto& point : leveled->points) {
@@ -133,14 +193,15 @@ private:
 
         Eigen::Vector3f aligned_normal = rotation * normal;
         const double inlier_ratio =
-            static_cast<double>(inliers->indices.size()) /
+            static_cast<double>(selected.inliers) /
             static_cast<double>(std::max<std::size_t>(1, cloud_->points.size()));
 
         RCLCPP_INFO(
             this->get_logger(),
-            "auto_level: plane normal [%.5f, %.5f, %.5f], inliers=%zu/%zu (%.2f%%)",
+            "auto_level: selected plane %d as floor, normal [%.5f, %.5f, %.5f], inliers=%zu/%zu (%.2f%%)",
+            selected.plane_index,
             normal.x(), normal.y(), normal.z(),
-            inliers->indices.size(), cloud_->points.size(), inlier_ratio * 100.0);
+            selected.inliers, cloud_->points.size(), inlier_ratio * 100.0);
         RCLCPP_INFO(
             this->get_logger(),
             "auto_level: aligned normal [%.5f, %.5f, %.5f], ground_z=%.4f%s",
@@ -189,6 +250,8 @@ public:
         this->declare_parameter<bool>("translate_ground_to_zero", true);
         this->declare_parameter<double>("level_distance_threshold", 0.08);
         this->declare_parameter<int>("level_max_iterations", 1000);
+        this->declare_parameter<int>("level_candidate_planes", 6);
+        this->declare_parameter<int>("level_min_plane_inliers", 1000);
         this->declare_parameter<double>("ground_normal_threshold", 0.70);
         this->get_parameter("pcd_path", pcd_path_);
         this->get_parameter("output_path", output_path_);
@@ -198,6 +261,8 @@ public:
         this->get_parameter("translate_ground_to_zero", translate_ground_to_zero_);
         this->get_parameter("level_distance_threshold", level_distance_threshold_);
         this->get_parameter("level_max_iterations", level_max_iterations_);
+        this->get_parameter("level_candidate_planes", level_candidate_planes_);
+        this->get_parameter("level_min_plane_inliers", level_min_plane_inliers_);
         this->get_parameter("ground_normal_threshold", ground_normal_threshold_);
         if (pcl::io::loadPCDFile<pcl::PointXYZ>(pcd_path_, *cloud_) == -1) 
         {

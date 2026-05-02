@@ -23,6 +23,9 @@ def generate_launch_description():
                 # RANSAC地面拟合阈值，地面点较厚/噪声大时适当调大
                 'level_distance_threshold': 0.08,
                 'level_max_iterations': 1000,
+                # 连续提取多个水平平面，选择旋平后高度最低的平面作为地面，避免误选天花板
+                'level_candidate_planes': 8,
+                'level_min_plane_inliers': 1000,
                 # 保存旋平后的完整点云，方便RViz检查；PGM仍使用去地面后的output_path
                 'leveled_full_output_path': '/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
             }])
