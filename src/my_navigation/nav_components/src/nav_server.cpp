@@ -92,6 +92,17 @@ public:
         declare_parameter("escape.search_radius", 5.0);
         declare_parameter("escape.preferred_search_distance", 1.0);
         declare_parameter("escape.preferred_search_half_angle", 0.35);
+        declare_parameter("escape.enable_release_maneuver", true);
+        declare_parameter("escape.backup_dist", 0.25);
+        declare_parameter("escape.backup_vel", -0.20);
+        declare_parameter("escape.backup_timeout", 1.8);
+        declare_parameter("escape.backup_min_progress", 0.03);
+        declare_parameter("escape.backup_progress_timeout", 0.8);
+        declare_parameter("escape.arc_backup_dist", 0.25);
+        declare_parameter("escape.arc_backup_vel", -0.18);
+        declare_parameter("escape.arc_backup_angular_vel", 0.45);
+        declare_parameter("escape.arc_backup_timeout", 1.8);
+        declare_parameter("escape.arc_backup_safety_check_duration", 1.2);
         declare_parameter("escape.rotation_speed", 0.3);
         declare_parameter("escape.forward_speed", 0.15);
         declare_parameter("escape.yaw_tolerance", 0.1);
@@ -103,6 +114,20 @@ public:
         escape_search_radius_ = get_parameter("escape.search_radius").as_double();
         escape_preferred_search_distance_ = get_parameter("escape.preferred_search_distance").as_double();
         escape_preferred_search_half_angle_ = get_parameter("escape.preferred_search_half_angle").as_double();
+        escape_enable_release_maneuver_ = get_parameter("escape.enable_release_maneuver").as_bool();
+        escape_backup_dist_ = get_parameter("escape.backup_dist").as_double();
+        escape_backup_vel_ = get_parameter("escape.backup_vel").as_double();
+        escape_backup_timeout_ = get_parameter("escape.backup_timeout").as_double();
+        escape_backup_min_progress_ = get_parameter("escape.backup_min_progress").as_double();
+        escape_backup_progress_timeout_ =
+            get_parameter("escape.backup_progress_timeout").as_double();
+        escape_arc_backup_dist_ = get_parameter("escape.arc_backup_dist").as_double();
+        escape_arc_backup_vel_ = get_parameter("escape.arc_backup_vel").as_double();
+        escape_arc_backup_angular_vel_ =
+            get_parameter("escape.arc_backup_angular_vel").as_double();
+        escape_arc_backup_timeout_ = get_parameter("escape.arc_backup_timeout").as_double();
+        escape_arc_backup_safety_check_duration_ =
+            get_parameter("escape.arc_backup_safety_check_duration").as_double();
         escape_rotation_speed_ = get_parameter("escape.rotation_speed").as_double();
         escape_forward_speed_ = get_parameter("escape.forward_speed").as_double();
         escape_yaw_tolerance_ = get_parameter("escape.yaw_tolerance").as_double();
@@ -165,6 +190,9 @@ public:
         RCLCPP_INFO(get_logger(), "escape.search_radius: %.1f m", escape_search_radius_);
         RCLCPP_INFO(get_logger(), "escape.preferred_search_distance: %.2f m", escape_preferred_search_distance_);
         RCLCPP_INFO(get_logger(), "escape.preferred_search_half_angle: %.2f rad", escape_preferred_search_half_angle_);
+        RCLCPP_INFO(get_logger(), "escape.release_maneuver: %d, backup=%.2fm %.2fm/s, arc=%.2fm %.2fm/s %.2frad/s",
+                    escape_enable_release_maneuver_, escape_backup_dist_, escape_backup_vel_,
+                    escape_arc_backup_dist_, escape_arc_backup_vel_, escape_arc_backup_angular_vel_);
         RCLCPP_INFO(get_logger(), "escape.rotation_speed: %.2f rad/s", escape_rotation_speed_);
         RCLCPP_INFO(get_logger(), "escape.forward_speed: %.2f m/s", escape_forward_speed_);
         RCLCPP_INFO(get_logger(), "========================================");
@@ -861,37 +889,6 @@ private:
             });
         recovery_mgr_.addRecovery(backup);
         
-        auto spin_seed = std::make_shared<nav_components::SpinRecovery>();
-        spin_seed->initialize(this, vel_pub);
-        const std::vector<double> spin_sequence =
-            get_parameter("recovery.spin_sequence").as_double_array();
-        const double spin_vel_abs = std::abs(get_parameter("recovery.spin_vel").as_double());
-        const double spin_timeout = get_parameter("recovery.spin_timeout").as_double();
-        const double spin_min_progress = get_parameter("recovery.spin_min_progress").as_double();
-        const double spin_progress_timeout =
-            get_parameter("recovery.spin_progress_timeout").as_double();
-        for (size_t i = 0; i < spin_sequence.size(); ++i) {
-            const double signed_angle = spin_sequence[i];
-            if (std::abs(signed_angle) < 1e-6) {
-                RCLCPP_WARN(get_logger(),
-                            "recovery.spin_sequence[%zu] 接近 0，跳过该旋转恢复动作",
-                            i);
-                continue;
-            }
-
-            auto spin = (i == 0) ? spin_seed : std::make_shared<nav_components::SpinRecovery>();
-            const double spin_vel = std::copysign(spin_vel_abs, signed_angle);
-            spin->initializeConfigured(this,
-                                       vel_pub,
-                                       std::abs(signed_angle),
-                                       spin_vel,
-                                       spin_timeout,
-                                       spin_min_progress,
-                                       spin_progress_timeout,
-                                       "spin_sequence_" + std::to_string(i + 1));
-            recovery_mgr_.addRecovery(spin);
-        }
-
         nav_components::ArcBackupRecovery::SafetyChecker arc_safety_checker =
             [this](const geometry_msgs::msg::PoseStamped& pose,
                    double linear_vel,
@@ -998,6 +995,37 @@ private:
                                               "arc_backup_right");
         arc_backup_right->setSafetyChecker(arc_safety_checker);
         recovery_mgr_.addRecovery(arc_backup_right);
+
+        auto spin_seed = std::make_shared<nav_components::SpinRecovery>();
+        spin_seed->initialize(this, vel_pub);
+        const std::vector<double> spin_sequence =
+            get_parameter("recovery.spin_sequence").as_double_array();
+        const double spin_vel_abs = std::abs(get_parameter("recovery.spin_vel").as_double());
+        const double spin_timeout = get_parameter("recovery.spin_timeout").as_double();
+        const double spin_min_progress = get_parameter("recovery.spin_min_progress").as_double();
+        const double spin_progress_timeout =
+            get_parameter("recovery.spin_progress_timeout").as_double();
+        for (size_t i = 0; i < spin_sequence.size(); ++i) {
+            const double signed_angle = spin_sequence[i];
+            if (std::abs(signed_angle) < 1e-6) {
+                RCLCPP_WARN(get_logger(),
+                            "recovery.spin_sequence[%zu] 接近 0，跳过该旋转恢复动作",
+                            i);
+                continue;
+            }
+
+            auto spin = (i == 0) ? spin_seed : std::make_shared<nav_components::SpinRecovery>();
+            const double spin_vel = std::copysign(spin_vel_abs, signed_angle);
+            spin->initializeConfigured(this,
+                                       vel_pub,
+                                       std::abs(signed_angle),
+                                       spin_vel,
+                                       spin_timeout,
+                                       spin_min_progress,
+                                       spin_progress_timeout,
+                                       "spin_sequence_" + std::to_string(i + 1));
+            recovery_mgr_.addRecovery(spin);
+        }
     }
     
     rclcpp_action::GoalResponse handleGoal(
@@ -1330,6 +1358,272 @@ private:
         return angle;
     }
 
+    void resetEscapeState() {
+        escape_target_x_ = -1.0;
+        escape_target_y_ = -1.0;
+        escape_phase_ = escape_enable_release_maneuver_ ? 0 : 3;
+        escape_drive_direction_ = 1;
+        escape_phase_initialized_ = false;
+        escape_active_release_phase_ = -1;
+        escape_phase_start_time_ = std::chrono::steady_clock::now();
+        escape_phase_last_progress_time_ = escape_phase_start_time_;
+        escape_phase_last_progress_dist_ = 0.0;
+        escape_phase_start_pose_ = current_pose_;
+    }
+
+    bool isPoseSafeForEscape(double wx, double wy) const {
+        if (!map_manager_ || !map_manager_->hasEsdf()) {
+            return false;
+        }
+
+        auto costmap = map_manager_->getCostmap();
+        if (!costmap) {
+            return false;
+        }
+
+        double gx = 0.0;
+        double gy = 0.0;
+        const double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
+        if (esdf_dist <= escape_target_safe_esdf_) {
+            return false;
+        }
+
+        const double resolution = costmap->info.resolution;
+        const double origin_x = costmap->info.origin.position.x;
+        const double origin_y = costmap->info.origin.position.y;
+        const int width = static_cast<int>(costmap->info.width);
+        const int height = static_cast<int>(costmap->info.height);
+
+        const int mx = static_cast<int>((wx - origin_x) / resolution);
+        const int my = static_cast<int>((wy - origin_y) / resolution);
+        if (mx < 0 || mx >= width || my < 0 || my >= height) {
+            return false;
+        }
+
+        const int idx = my * width + mx;
+        const int8_t cost = costmap->data[idx];
+        return cost >= 0 && cost < escape_trigger_costmap_threshold_;
+    }
+
+    bool isEscapeTrajectorySafe(double linear_vel,
+                                double angular_vel,
+                                double duration_s,
+                                std::string* reason) const {
+        auto costmap = map_manager_ ? map_manager_->getCostmap() : nullptr;
+        if (!costmap) {
+            if (reason) {
+                *reason = "costmap 不可用";
+            }
+            return false;
+        }
+
+        tf2::Quaternion q;
+        tf2::fromMsg(current_pose_.pose.orientation, q);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        const double resolution = costmap->info.resolution;
+        const double origin_x = costmap->info.origin.position.x;
+        const double origin_y = costmap->info.origin.position.y;
+        const int width = static_cast<int>(costmap->info.width);
+        const int height = static_cast<int>(costmap->info.height);
+        const double dt = 0.08;
+        const double horizon = std::max(0.0, duration_s);
+        double x = current_pose_.pose.position.x;
+        double y = current_pose_.pose.position.y;
+        double theta = yaw;
+
+        for (double t = 0.0; t <= horizon + 1e-6; t += dt) {
+            x += linear_vel * std::cos(theta) * dt;
+            y += linear_vel * std::sin(theta) * dt;
+            theta += angular_vel * dt;
+
+            const int mx = static_cast<int>((x - origin_x) / resolution);
+            const int my = static_cast<int>((y - origin_y) / resolution);
+            if (mx < 0 || mx >= width || my < 0 || my >= height) {
+                if (reason) {
+                    *reason = "退让轨迹越出 costmap";
+                }
+                return false;
+            }
+
+            const int idx = my * width + mx;
+            const int8_t cost = costmap->data[idx];
+            if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
+                if (reason) {
+                    *reason = "退让轨迹存在障碍/未知区域";
+                }
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void advanceEscapeReleasePhase(const char* reason) {
+        stopRobot();
+        RCLCPP_WARN(get_logger(), "脱困退让阶段%d结束: %s", escape_phase_, reason);
+        escape_phase_initialized_ = false;
+        escape_active_release_phase_ = -1;
+        escape_phase_++;
+        if (escape_phase_ > 2) {
+            escape_phase_ = 3;
+        }
+    }
+
+    bool runEscapeReleasePhase() {
+        if (!escape_enable_release_maneuver_) {
+            escape_phase_ = 3;
+            return false;
+        }
+
+        double target_dist = escape_backup_dist_;
+        double linear_vel = -std::abs(escape_backup_vel_);
+        double angular_vel = 0.0;
+        double timeout_s = escape_backup_timeout_;
+        double safety_duration = (std::abs(linear_vel) > 1e-6)
+            ? std::max(0.1, target_dist / std::abs(linear_vel))
+            : timeout_s;
+
+        if (escape_phase_ == 1 || escape_phase_ == 2) {
+            target_dist = escape_arc_backup_dist_;
+            linear_vel = -std::abs(escape_arc_backup_vel_);
+            const double arc_w = std::abs(escape_arc_backup_angular_vel_);
+            angular_vel = (escape_phase_ == 1) ? arc_w : -arc_w;
+            timeout_s = escape_arc_backup_timeout_;
+            safety_duration = escape_arc_backup_safety_check_duration_;
+        }
+
+        if (target_dist <= 1e-6 || std::abs(linear_vel) <= 1e-6 || timeout_s <= 0.0) {
+            advanceEscapeReleasePhase("参数禁用");
+            return true;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (!escape_phase_initialized_ || escape_active_release_phase_ != escape_phase_) {
+            escape_phase_initialized_ = true;
+            escape_active_release_phase_ = escape_phase_;
+            escape_phase_start_pose_ = current_pose_;
+            escape_phase_start_time_ = now;
+            escape_phase_last_progress_time_ = now;
+            escape_phase_last_progress_dist_ = 0.0;
+
+            std::string reason;
+            if (!isEscapeTrajectorySafe(linear_vel, angular_vel, safety_duration, &reason)) {
+                advanceEscapeReleasePhase(reason.empty() ? "安全检查失败" : reason.c_str());
+                return true;
+            }
+
+            RCLCPP_INFO(get_logger(),
+                        "脱困退让阶段%d开始: dist=%.2fm v=%.2fm/s w=%.2frad/s timeout=%.1fs",
+                        escape_phase_, target_dist, linear_vel, angular_vel, timeout_s);
+        }
+
+        const double dx = current_pose_.pose.position.x - escape_phase_start_pose_.pose.position.x;
+        const double dy = current_pose_.pose.position.y - escape_phase_start_pose_.pose.position.y;
+        const double traveled = std::hypot(dx, dy);
+        if (traveled >= target_dist) {
+            advanceEscapeReleasePhase("达到目标退让距离");
+            return true;
+        }
+
+        const double elapsed = std::chrono::duration<double>(now - escape_phase_start_time_).count();
+        if (elapsed > timeout_s) {
+            advanceEscapeReleasePhase("动作超时");
+            return true;
+        }
+
+        if (escape_backup_min_progress_ > 0.0 &&
+            traveled - escape_phase_last_progress_dist_ >= escape_backup_min_progress_) {
+            escape_phase_last_progress_dist_ = traveled;
+            escape_phase_last_progress_time_ = now;
+        }
+
+        const double no_progress_elapsed =
+            std::chrono::duration<double>(now - escape_phase_last_progress_time_).count();
+        if (escape_backup_progress_timeout_ > 0.0 &&
+            no_progress_elapsed > escape_backup_progress_timeout_) {
+            advanceEscapeReleasePhase("无有效位移进展");
+            return true;
+        }
+
+        std::string reason;
+        if (!isEscapeTrajectorySafe(linear_vel, angular_vel, 0.25, &reason)) {
+            advanceEscapeReleasePhase(reason.empty() ? "运行中安全检查失败" : reason.c_str());
+            return true;
+        }
+
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = linear_vel;
+        cmd.angular.z = angular_vel;
+        cmd_vel_pub_->publish(cmd);
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "脱困退让阶段%d执行中: traveled=%.2f/%.2fm elapsed=%.1fs",
+                             escape_phase_, traveled, target_dist, elapsed);
+        return true;
+    }
+
+    bool validateRecoveryResult(nav_msgs::msg::Path* validated_path = nullptr) {
+        if (!map_manager_) {
+            RCLCPP_WARN(get_logger(), "恢复验证失败: map_manager 不可用");
+            return false;
+        }
+
+        auto costmap = map_manager_->getCostmap();
+        if (!costmap) {
+            RCLCPP_WARN(get_logger(), "恢复验证失败: costmap 不可用");
+            return false;
+        }
+
+        const double resolution = costmap->info.resolution;
+        const double origin_x = costmap->info.origin.position.x;
+        const double origin_y = costmap->info.origin.position.y;
+        const int width = static_cast<int>(costmap->info.width);
+        const int height = static_cast<int>(costmap->info.height);
+        const int mx = static_cast<int>((current_pose_.pose.position.x - origin_x) / resolution);
+        const int my = static_cast<int>((current_pose_.pose.position.y - origin_y) / resolution);
+        if (mx < 0 || mx >= width || my < 0 || my >= height) {
+            RCLCPP_WARN(get_logger(), "恢复验证失败: 当前位置越出 costmap");
+            return false;
+        }
+
+        const int idx = my * width + mx;
+        const int8_t cost = costmap->data[idx];
+        if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
+            RCLCPP_WARN(get_logger(),
+                        "恢复验证失败: 当前位置仍不安全 cost=%d threshold=%d",
+                        cost,
+                        escape_trigger_costmap_threshold_);
+            return false;
+        }
+
+        planner_.clearCache();
+        nav_msgs::msg::Path path;
+        if (!planner_.plan(current_pose_, goal_, path)) {
+            RCLCPP_WARN(get_logger(), "恢复验证失败: 当前位姿仍无法规划到目标");
+            return false;
+        }
+
+        if (validated_path) {
+            *validated_path = path;
+        }
+        RCLCPP_INFO(get_logger(), "恢复验证通过: 当前位置安全且已找到新路径");
+        return true;
+    }
+
+    void enterControllingWithPath(const nav_msgs::msg::Path& path) {
+        current_path_ = path;
+        controller_.setPath(current_path_);
+        path_pub_->publish(current_path_);
+
+        control_count_ = 0;
+        last_progress_time_ = std::chrono::steady_clock::now();
+        last_progress_pose_ = current_pose_;
+        last_path_check_wall_time_ = std::chrono::steady_clock::now();
+
+        fsm_.transitionTo(nav_core::NavState::CONTROLLING);
+    }
+
     void applyStairModeOmegaLimit(geometry_msgs::msg::Twist& cmd) {
         if (stair_mode_current_ != 1) {
             stair_mode_omega_limiter_initialized_ = false;
@@ -1592,8 +1886,7 @@ private:
                         cost, escape_trigger_costmap_threshold_);
                     fsm_.transitionTo(nav_core::NavState::ESCAPING);
                     escape_start_time_ = std::chrono::steady_clock::now();
-                    escape_target_x_ = -1.0;
-                    escape_phase_ = 0;
+                    resetEscapeState();
                     return;
                 }
             }
@@ -1623,72 +1916,49 @@ private:
     }
     
     void doEscaping() {
-        // 脱困模式：搜索最近的安全点，原地转向后直线前往
-        // 策略：BFS 搜索 ESDF > target_safe_esdf 的格子，差速底盘先转向再前进
-
-        auto isPoseSafeForEscape = [this](double wx, double wy) {
-            if (!map_manager_ || !map_manager_->hasEsdf()) {
-                return false;
-            }
-
-            auto costmap = map_manager_->getCostmap();
-            if (!costmap) {
-                return false;
-            }
-
-            double gx = 0.0;
-            double gy = 0.0;
-            const double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
-            if (esdf_dist <= escape_target_safe_esdf_) {
-                return false;
-            }
-
-            const double resolution = costmap->info.resolution;
-            const double origin_x = costmap->info.origin.position.x;
-            const double origin_y = costmap->info.origin.position.y;
-            const int width = static_cast<int>(costmap->info.width);
-            const int height = static_cast<int>(costmap->info.height);
-
-            const int mx = static_cast<int>((wx - origin_x) / resolution);
-            const int my = static_cast<int>((wy - origin_y) / resolution);
-            if (mx < 0 || mx >= width || my < 0 || my >= height) {
-                return false;
-            }
-
-            const int idx = my * width + mx;
-            const int8_t cost = costmap->data[idx];
-            return cost < escape_trigger_costmap_threshold_;
-        };
-        
+        // 脱困模式：先低速退让释放车头接触，再搜索安全点并直线驶入。
         double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - escape_start_time_).count();
         
         if (elapsed > escape_timeout_) {
             RCLCPP_ERROR(get_logger(), "脱困超时(%.1fs)，进入恢复模式", escape_timeout_);
             stopRobot();
-            escape_target_x_ = -1.0;  // 重置标记
+            escape_target_x_ = -1.0;
             fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
             return;
         }
-        
-        // 首次进入：搜索安全目标点（只执行一次）
-        if (escape_target_x_ < -0.5) {  // 使用 -1.0 作为"未初始化"标记
-            // BFS 搜索最近的安全点
+
+        if (isPoseSafeForEscape(current_pose_.pose.position.x, current_pose_.pose.position.y)) {
+            RCLCPP_INFO(get_logger(), "脱困成功: 当前位置已安全，返回规划");
+            stopRobot();
+            escape_target_x_ = -1.0;
+            fsm_.transitionTo(nav_core::NavState::PLANNING);
+            return;
+        }
+
+        if (escape_phase_ >= 0 && escape_phase_ <= 2) {
+            if (runEscapeReleasePhase()) {
+                return;
+            }
+        }
+
+        // 首次进入目标搜索阶段：搜索安全目标点（只执行一次）
+        if (escape_phase_ == 3 && escape_target_x_ < -0.5) {
             if (!findSafeEscapeTarget()) {
                 RCLCPP_ERROR(get_logger(), "无法找到安全脱困点，进入恢复模式");
                 stopRobot();
-                escape_target_x_ = -1.0;  // 重置标记
+                escape_target_x_ = -1.0;
                 fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
                 return;
             }
-            escape_phase_ = 0;  // 阶段0: 转向
-            RCLCPP_WARN(get_logger(), 
-                "脱困目标: (%.2f, %.2f), 距离=%.2fm", 
-                escape_target_x_, escape_target_y_,
-                std::hypot(escape_target_x_ - current_pose_.pose.position.x,
-                          escape_target_y_ - current_pose_.pose.position.y));
+            escape_phase_ = 4;  // 阶段4: 转向
+            RCLCPP_WARN(get_logger(),
+                        "脱困目标: (%.2f, %.2f), 距离=%.2fm",
+                        escape_target_x_, escape_target_y_,
+                        std::hypot(escape_target_x_ - current_pose_.pose.position.x,
+                                   escape_target_y_ - current_pose_.pose.position.y));
         }
-        
+
         // 获取当前朝向
         tf2::Quaternion q;
         tf2::fromMsg(current_pose_.pose.orientation, q);
@@ -1710,28 +1980,27 @@ private:
         
         geometry_msgs::msg::Twist cmd;
         
-        // 阶段0: 原地旋转对齐目标
-        if (escape_phase_ == 0) {
+        // 阶段4: 原地旋转对齐目标
+        if (escape_phase_ == 4) {
             if (std::abs(yaw_error) > escape_yaw_tolerance_) {
                 cmd.angular.z = std::copysign(escape_rotation_speed_, yaw_error);
                 cmd_vel_pub_->publish(cmd);
                 RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-                    "阶段0: 旋转对齐(%s), yaw_error=%.2f°",
+                    "阶段4: 旋转对齐(%s), yaw_error=%.2f°",
                     (escape_drive_direction_ > 0 ? "前进" : "倒车"),
                     yaw_error * 180.0 / M_PI);
             } else {
-                escape_phase_ = 1;
+                escape_phase_ = 5;
             }
             return;
         }
         
-        // 阶段1: 直线前进到目标
-        if (escape_phase_ == 1) {
+        // 阶段5: 直线前进/倒车到目标
+        if (escape_phase_ == 5) {
             // 检查是否到达目标
             if (dist_to_target < escape_position_tolerance_) {
-                const bool safe_now = isPoseSafeForEscape(
-                    current_pose_.pose.position.x,
-                    current_pose_.pose.position.y);
+                const bool safe_now = isPoseSafeForEscape(current_pose_.pose.position.x,
+                                                          current_pose_.pose.position.y);
 
                 if (safe_now) {
                     RCLCPP_INFO(get_logger(), "脱困成功");
@@ -1746,17 +2015,8 @@ private:
                                 escape_position_tolerance_);
                     stopRobot();
                     escape_target_x_ = -1.0;  // 触发下一周期重新选点
-                    escape_phase_ = 0;
+                    escape_phase_ = 3;
                 }
-                return;
-            }
-            
-            // 检查是否已经进入安全区域（提前退出）
-            if (isPoseSafeForEscape(current_pose_.pose.position.x,
-                                    current_pose_.pose.position.y)) {
-                stopRobot();
-                escape_target_x_ = -1.0;
-                fsm_.transitionTo(nav_core::NavState::PLANNING);
                 return;
             }
             
@@ -1765,7 +2025,7 @@ private:
                 // 角度偏离过大，停止前进，重新进入旋转阶段
                 RCLCPP_WARN(get_logger(), "⚠️ 方向偏离过大(%.1f°)，重新旋转", 
                     yaw_error * 180.0 / M_PI);
-                escape_phase_ = 0;
+                escape_phase_ = 4;
                 return;
             }
             
@@ -1774,7 +2034,7 @@ private:
             cmd_vel_pub_->publish(cmd);
             
             RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, 
-                "阶段1: %s中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs", 
+                "阶段5: %s中, 剩余=%.2fm, yaw_error=%.1f°, 用时=%.1fs",
                 (escape_drive_direction_ > 0 ? "前进" : "倒车"),
                 dist_to_target, yaw_error * 180.0 / M_PI, elapsed);
         }
@@ -2078,13 +2338,36 @@ private:
             return;
         }
         
-        auto status = recovery_mgr_.update(current_pose_);
+        auto status = recovery_mgr_.updateCurrent(current_pose_);
         
         if (status == nav_core::RecoveryStatus::SUCCEEDED) {
-            recovery_mgr_.reset();
-            fsm_.transitionTo(nav_core::NavState::PLANNING);
+            nav_msgs::msg::Path validated_path;
+            if (validateRecoveryResult(&validated_path)) {
+                recovery_mgr_.reset();
+                enterControllingWithPath(validated_path);
+                return;
+            }
+
+            RCLCPP_WARN(get_logger(),
+                        "恢复动作[%s]完成但验证未通过，继续下一个恢复动作",
+                        recovery_mgr_.currentRecoveryName());
+            if (!recovery_mgr_.advanceToNext(current_pose_)) {
+                fsm_.transitionTo(nav_core::NavState::FAILED);
+            }
         } else if (status == nav_core::RecoveryStatus::FAILED) {
-            fsm_.transitionTo(nav_core::NavState::FAILED);
+            nav_msgs::msg::Path validated_path;
+            if (validateRecoveryResult(&validated_path)) {
+                recovery_mgr_.reset();
+                enterControllingWithPath(validated_path);
+                return;
+            }
+
+            RCLCPP_WARN(get_logger(),
+                        "恢复动作[%s]失败且验证未通过，继续下一个恢复动作",
+                        recovery_mgr_.currentRecoveryName());
+            if (!recovery_mgr_.advanceToNext(current_pose_)) {
+                fsm_.transitionTo(nav_core::NavState::FAILED);
+            }
         } else if (status == nav_core::RecoveryStatus::IDLE) {
             recovery_mgr_.start(fsm_.recoveryTrigger(), current_pose_);
         }
@@ -2238,6 +2521,17 @@ private:
     double escape_search_radius_;           // 环形搜索半径
     double escape_preferred_search_distance_;  // 定向搜索距离
     double escape_preferred_search_half_angle_;  // 定向搜索半角(rad)
+    bool escape_enable_release_maneuver_{true};  // 是否先执行退让释放动作
+    double escape_backup_dist_{0.25};       // 直退释放距离
+    double escape_backup_vel_{-0.20};       // 直退释放速度
+    double escape_backup_timeout_{1.8};     // 直退超时
+    double escape_backup_min_progress_{0.03};  // 退让最小有效进展
+    double escape_backup_progress_timeout_{0.8};  // 退让无进展超时
+    double escape_arc_backup_dist_{0.25};   // 弧线后退释放距离
+    double escape_arc_backup_vel_{-0.18};   // 弧线后退线速度
+    double escape_arc_backup_angular_vel_{0.45};  // 弧线后退角速度幅值
+    double escape_arc_backup_timeout_{1.8}; // 弧线后退超时
+    double escape_arc_backup_safety_check_duration_{1.2};  // 弧线安全预测时长
     double escape_rotation_speed_;          // 旋转速度
     double escape_forward_speed_;           // 前进速度
     double escape_yaw_tolerance_;           // 角度容差
@@ -2253,8 +2547,14 @@ private:
     // 脱困相关状态
     double escape_target_x_ = -1.0;  // 脱困目标点 X（-1表示未设置）
     double escape_target_y_ = -1.0;  // 脱困目标点 Y
-    int escape_phase_ = 0;  // 脱困阶段：0=旋转, 1=前进
+    int escape_phase_ = 0;  // 脱困阶段：0=直退,1=左弧退,2=右弧退,3=找点,4=旋转,5=驶向目标
     int escape_drive_direction_ = 1;  // 脱困驱动方向：1=前进, -1=倒车
+    bool escape_phase_initialized_ = false;
+    int escape_active_release_phase_ = -1;
+    geometry_msgs::msg::PoseStamped escape_phase_start_pose_;
+    std::chrono::steady_clock::time_point escape_phase_start_time_;
+    std::chrono::steady_clock::time_point escape_phase_last_progress_time_;
+    double escape_phase_last_progress_dist_ = 0.0;
 };
 
 int main(int argc, char** argv) {

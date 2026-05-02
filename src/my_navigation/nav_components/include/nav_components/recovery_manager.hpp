@@ -49,6 +49,26 @@ public:
         
         return status;
     }
+
+    // 只更新当前恢复行为，不在 FAILED 时自动切换到下一个。
+    nav_core::RecoveryStatus updateCurrent(const geometry_msgs::msg::PoseStamped& pose) {
+        if (current_idx_ >= recoveries_.size()) {
+            return nav_core::RecoveryStatus::FAILED;
+        }
+        return recoveries_[current_idx_]->update(pose);
+    }
+
+    bool advanceToNext(const geometry_msgs::msg::PoseStamped& pose) {
+        if (current_idx_ < recoveries_.size()) {
+            recoveries_[current_idx_]->cancel();
+        }
+        current_idx_++;
+        if (current_idx_ < recoveries_.size()) {
+            recoveries_[current_idx_]->start(pose);
+            return true;
+        }
+        return false;
+    }
     
     void cancel() {
         if (current_idx_ < recoveries_.size()) {
