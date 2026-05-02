@@ -8,7 +8,7 @@ nav_server:
     debug_reset_odom_to_base_link: false
     
     # 地图路径由 navigation.launch.py 注入
-    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.pgm"
+    map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map3.pgm"
     control_rate: 50.0
     goal_timeout: 60.0      # 总任务超时(s)，从收到目标开始超过该时间仍未完成则触发 TIMEOUT recovery
     goal_tolerance: 0.1
@@ -20,8 +20,8 @@ nav_server:
     odom_frame: "odom"
     
     # 控制器超时保护
-    controller_timeout: 10.0  # 控制器无进展超时(s)，超过该时间无有效位移则触发 CONTROL_FAILED recovery
-    controller_progress_threshold: 0.15  # 控制器有效进展距离阈值(m)，移动超过该距离才刷新进展时间
+    controller_timeout: 1.2  # 控制器无进展超时(s)，超过该时间无有效位移则触发 CONTROL_FAILED recovery
+    controller_progress_threshold: 0.16  # 控制器有效进展距离阈值(m)，移动超过该距离才刷新进展时间
     
     # 周期性路径检查 (动态障碍物应对，默认启用)
     path_check_period: 0.1  # 路径检查周期(秒) - 降低以快速响应动态障碍物
@@ -79,8 +79,8 @@ nav_server:
       gray_max: 140
       # 二级台阶像素范围（高侧=black，低侧=gray），清除逻辑复用双向台阶
       stair_level2_clear_perp_dist_m: 0.35 # 二级台阶边沿清理距离(米)
-      stair_level2_clear_perp_high_dist_m: 1.00 # 二级台阶高侧法向扩展清除距离(米)
-      stair_level2_clear_perp_low_dist_m: 0.20 # 二级台阶低侧反法向扩展清除距离(米)
+      stair_level2_clear_perp_high_dist_m: 0.65 # 二级台阶高侧法向扩展清除距离(米)
+      stair_level2_clear_perp_low_dist_m: 0.35 # 二级台阶低侧反法向扩展清除距离(米)
       stair_level2_black_min: 71
       stair_level2_black_max: 90
       stair_level2_gray_min: 221
@@ -94,7 +94,7 @@ nav_server:
       oneway_gray_max: 190
 
       # 飞坡层（低侧线/高侧线）
-      enable_fly_slope_layer: true
+      enable_fly_slope_layer: false
       fly_slope_mask_yaml: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"  # 默认可与台阶mask共图，不同像素段区分
       fly_slope_clear_perp_dist_m: 0.45
       fly_slope_clear_perp_high_dist_m: 0.45
@@ -125,7 +125,7 @@ nav_server:
       stair_mode_trigger_distance_m: 2.2
       stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
-      stair_mode_entry_heading_error_max_rad: 0.5  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
+      stair_mode_entry_heading_error_max_rad: 0.9  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
 
     # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
       stair_mode_release_grace_cycles: 2
@@ -136,17 +136,17 @@ nav_server:
       stair_mode_omega_slew_rate_rad_s2: 50.0  # stair_mode=1 时角速度斜坡限幅 (rad/s^2)
 
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
-      stair_contact_distance_m: 1.00              # 接触判定阈值(米)
+      stair_contact_distance_m: 1.20              # 接触判定阈值(米)
       stair_commit_success_dist_m: 0.10          # 越过台阶中心线后的成功法向距离阈值(米)
-      stair_level2_commit_success_dist_m: 0.4   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
+      stair_level2_commit_success_dist_m: 0.45   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
       stair_verify_timeout_sec: 1.2              # VERIFY_SUCCESS 超时(秒)
 
       # [失败判据] A + B(弧长进展超时)
       leg_length_topic: "LegLength"              # 腿长反馈话题，来自 myserial
       leg_length_timeout_sec: 0.50               # 抬腿命令发出后，允许腿长达到阈值的最长时间
       leg_length_stale_timeout_sec: 0.20         # 腿长反馈超过该时间未更新时，按“已满足”处理
-      stair_leg_ready_threshold_m: 0.18          # 一级台阶抬腿到位阈值
-      stair_level2_leg_ready_threshold_m: 0.22   # 二级台阶抬腿到位阈值
+      stair_leg_ready_threshold_m: 0.15         # 一级台阶抬腿到位阈值
+      stair_level2_leg_ready_threshold_m: 0.15   # 二级台阶抬腿到位阈值
       fly_slope_leg_ready_threshold_m: 0.16      # 飞坡抬腿到位阈值
       stair_fail_a_precontact_miss_cycles: 3     # 兼容旧参数，当前判据A已改为腿长超时
       stair_progress_timeout_sec: 1.2            # COMMIT_ASCENT 进展超时(秒)
@@ -154,26 +154,26 @@ nav_server:
 
       # [提交段控制] COMMIT_ASCENT
       enable_stair_fixed_velocity_strategy: true
-      stair_raise_leg_distance_m: 0.80           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
-      stair_fixed_velocity_trigger_distance_m: 0.9 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
+      stair_raise_leg_distance_m: 0.90           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
+      stair_fixed_velocity_trigger_distance_m: 1.0 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
       stair_fixed_linear_vel: 1.35
-      stair_level2_raise_leg_distance_m: 0.8   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3/4 抬腿
-      stair_level2_fixed_velocity_trigger_distance_m: 0.9 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
+      stair_level2_raise_leg_distance_m: 1.0   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3/4 抬腿
+      stair_level2_fixed_velocity_trigger_distance_m: 1.1 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
       stair_level2_fixed_linear_vel: 1.45        # 二级台阶：固定速度线速度(m/s)
       stair_fixed_heading_kp: 2.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
       stair_fixed_max_angular_vel: 100.0
       stair_fixed_heading_deadband: 0.05    # 固定速度航向死区(rad)，小于此值不进行航向调整，防止过近时的过度修正和震荡
 
       # [失败退让与重试] FAIL_RETRY_BACKOFF
-      stair_backoff_distance_m: 1.34           # 失败后沿法向退让距离(米)
+      stair_backoff_distance_m: 1.7           # 失败后沿法向退让距离(米)
       stair_backoff_tangent_search_half_width_m: 0.30  # 中垂线局部搜索半宽(米)
-      stair_backoff_linear_vel: 1.3             # 退让线速度(米/秒)
+      stair_backoff_linear_vel: 1.0             # 退让线速度(米/秒)
       stair_backoff_heading_kp: 2.0              # 退让航向控制增益
-      stair_backoff_max_angular_vel: 6.0         # 退让角速度上限(rad/s)
+      stair_backoff_max_angular_vel: 2.5         # 退让角速度上限(rad/s)
       stair_backoff_pos_tolerance_m: 0.08        # 退让完成判定容差(米)
       backoff_strategy: normal_tangent           # normal_tangent: -normal为主+切向弱纠偏; target_point: 锁定目标点跟踪
-      backoff_initial_turn_error_rad: 0.60       # 进入退让时初始航向误差大于该值，先执行一次原地预转向(rad)
-      backoff_initial_turn_done_error_rad: 0.25  # 原地预转向完成阈值(rad)
+      backoff_initial_turn_error_rad: 1.00       # 进入退让时初始航向误差大于该值，先执行一次原地预转向(rad)
+      backoff_initial_turn_done_error_rad: 0.20  # 原地预转向完成阈值(rad)
       backoff_initial_turn_timeout_sec: 1.50     # 原地预转向最长持续时间，超时后本轮退让不再只转不走
       backoff_min_linear_scale_after_turn: 0.8  # 预转向后边走边修正的最小线速度比例
       backoff_total_timeout_sec: 4.0             # FAIL_RETRY_BACKOFF 总超时，超时请求恢复
@@ -184,7 +184,7 @@ nav_server:
 
       # [阶段C] 同台阶失败统计与冷却（按 stair_id）
       enable_stair_cooldown: true
-      stair_cooldown_fail_threshold: 3           # 同一 stair_id 连续失败达到阈值进入冷却
+      stair_cooldown_fail_threshold: 10          # 同一 stair_id 连续失败达到阈值进入冷却
       stair_cooldown_duration_sec: 1000.0          # 冷却时长(秒)，期间触发 REQUEST_REPLAN
 
 
@@ -192,7 +192,7 @@ nav_server:
       # [候选检测窗口] 何时识别“即将上台阶”
       fly_slope_mode_trigger_distance_m: 4.0         # PRE_ALIGN 触发窗口：候选地形距离小于该值进入预对准
       fly_slope_mode_lookahead_dist_m: 4.4             # 前向沿路径扫描飞坡候选的最大距离(米)
-      fly_slope_mode_sample_step_m: 0.05               # 候选扫描采样步长(米)，越小检测越细
+      fly_slope_mode_sample_step_m: 0.05               # 候选扫描采样步长(米)，越小检测越细.
       fly_slope_mode_entry_heading_error_max_rad: 0.05  # PRE_ALIGN -> COMMIT 的航向误差阈值(rad)
 
       # [输出保持与保护] 兼容原 stair_mode 抖动抑制/安全释放
@@ -213,7 +213,7 @@ nav_server:
       fly_slope_pre_align_turn_in_place_error_rad: 0.6 # PRE_ALIGN 触发原地粗对齐的航向误差阈值(rad)
       fly_slope_pre_align_max_angular_vel: 2.8         # PRE_ALIGN 原地对齐角速度上限(rad/s)
       fly_slope_contact_distance_m: 2.7              # PRE_ALIGN -> COMMIT 的接触距离阈值(米)
-      fly_slope_commit_success_dist_m: 0.7           # COMMIT/VERIFY 成功判定法向距离阈值(米)
+      fly_slope_commit_success_dist_m: 0.72           # COMMIT/VERIFY 成功判定法向距离阈值(米)
       fly_slope_verify_timeout_sec: 1.2                # VERIFY_SUCCESS 最大等待时长(秒)
 
       # [失败判据] A + B(弧长进展超时)
@@ -254,7 +254,7 @@ nav_server:
     # Costmap 膨胀
     inflation:
       radius: 0.8              # 膨胀半径(m)
-      inscribed_radius: 0.2    # 内切圆半径(m)，致命代价区
+      inscribed_radius: 0.35    # 内切圆半径(m)，致命代价区
       cost_scaling: 1.8        # 指数衰减因子
       decay_type: exponential  # linear 或 exponential
     
@@ -348,8 +348,8 @@ nav_server:
       astar_anchor_tangent_improve_min_m: 0.005  # 最小改善量：新位置ESDF需至少提升该值才接受本次偏移
       stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
       # 推荐：按弧长定义窗口，并区分上/下台阶
-      stair_align_up_pre_dist_m: 1.5
-      stair_align_up_post_dist_m: 0.2
+      stair_align_up_pre_dist_m: 2.2
+      stair_align_up_post_dist_m: 0.5
       stair_align_down_pre_dist_m: 0.01
       stair_align_down_post_dist_m: 0.01
     
@@ -368,42 +368,42 @@ nav_server:
       max_linear_vel: 2.5        # 最大线速度 (m/s) 
       max_angular_vel: 7.5       # 最大角速度 (rad/s)
       max_linear_accel: 6.0      # 最大线加速度 (m/s²)
-      max_linear_decel: 3.0     # 最大线减速度 (m/s²)
+      max_linear_decel: 4.0     # 最大线减速度 (m/s²)
       max_angular_accel: 7.0     # 最大角加速度 (rad/s²) 
       allow_reverse: false       # 倒车
       
       # === 局部参考轨迹提取 ===
       # horizon_length 与 desired_velocity 共同决定参考轨迹的运动学一致性：
       #   直道下：v_ref_implicit = horizon_length / T_horizon = desired_velocity
-      #   故推荐 horizon_length = desired_velocity * T_horizon_solver (= 1.5 * 1.5 = 2.25m)
+      #   故推荐 horizon_length = desired_velocity * T_horizon_solver (= 2.0 * 1.5 = 3.0m)
       # 速度一致性补丁（代码中已实施）：desired_v = min(desired_v, step_dist/dt)，
       #   确保速度参考不超过位置间距隐含的速度上限，消除代价函数内耗
-      horizon_length: 1.35     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
-      desired_velocity: 2.5      # 期望巡航速度 (m/s)
+      horizon_length: 2.55     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
+      desired_velocity: 2.3      # 期望巡航速度 (m/s)
       speed_profile:
-        enable: false
-        v_cruise: 2.5              # 解耦后的巡航参考速度 (m/s)
+        enable: true
+        v_cruise: 2.3              # 解耦后的巡航参考速度 (m/s)
         v_min: 0.30                # 非终点工况最低参考速度 (m/s)
-        max_lateral_accel: 3.5   # 横向加速度上限，用于曲率限速 (m/s^2)
+        max_lateral_accel: 2.5   # 横向加速度上限，用于曲率限速 (m/s^2)
         kappa_epsilon: 0.08        # 曲率分母下限，防止小曲率时限速发散 (1/m)
-        curvature_window_m: 1.0   # 曲率统计窗口长度 (m)
+        curvature_window_m: 1.5   # 曲率统计窗口长度 (m)
 
       # 曲率自适应 horizon：effective_horizon = horizon_length / (1 + kappa_scale * kappa_max)
       # 同时自动压缩位置间距和速度参考上限（运动学一致），一致降低弯道速度
-      # 典型效果（kappa_scale=0.5, horizon=2.25m）：
-      #   κ=0/m (直道): horizon=2.25m → v_implicit=1.50 m/s
-      #   κ=1/m       : horizon=1.50m → v_implicit=1.00 m/s
-      #   κ=2/m       : horizon=1.12m → v_implicit=0.75 m/s
-      #   κ=3/m       : horizon=0.90m → v_implicit=0.60 m/s
+      # 典型效果（kappa_scale=0.5, horizon=3.0m）：
+      #   κ=0/m (直道): horizon=3.0m → v_implicit=2.00 m/s
+      #   κ=1/m       : horizon=2.00m → v_implicit=1.33 m/s
+      #   κ=2/m       : horizon=1.50m → v_implicit=1.00 m/s
+      #   κ=3/m       : horizon=1.20m → v_implicit=0.80 m/s
       enable_curvature_horizon_adapt: false  # 启用曲率自适应 horizon
       horizon_kappa_scale: 0.05   # 压缩强度
       horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
-      enable_goal_speed_limit: false # 是否启用沿路径剩余距离的终点限速
-      goal_slowdown_dist: 0.65    # 沿路径剩余距离小于该值时启用终点限速(m)
+      enable_goal_speed_limit: true # 是否启用沿路径剩余距离的终点限速
+      goal_slowdown_dist: 0.70    # 沿路径剩余距离小于该值时启用终点限速(m)
       goal_min_moving_speed: 0.12 # 终点减速区内最小可动速度(m/s)，需大于底盘死区
-      goal_max_slow_speed: 0.50   # 刚进入终点减速区时的速度上限(m/s)
+      goal_max_slow_speed: 0.3  # 刚进入终点减速区时的速度上限(m/s)
       pivot_turn_heading_thresh: 2.00  # 航向误差>该值时原地转向 (rad)
       pivot_turn_startup_only: false  # true=仅新路径起步阶段生效, false=控制过程中任意时刻生效
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
@@ -411,7 +411,7 @@ nav_server:
       chassis_odom_topic: "/Odometry" # 需为 nav_msgs/msg/Odometry，避免与 /ChassisOdom 多类型冲突
       # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
       vel_lag_tau: 0.60 #0.25           # 线速度一阶滞后时间常数(s)
-      omega_lag_tau: 0.20        # 角速度一阶滞后时间常数(s)
+      omega_lag_tau: 0.05        # 角速度一阶滞后时间常数(s)
 
       # === 代价权重（运行时生效） ===
       Q_position: 25.0           # 位置(x,y)跟踪权重
@@ -443,7 +443,7 @@ nav_server:
       
       # 后退恢复：用于从局部卡住、控制失败等状态中先退开一点，再重新规划
       backup_dist: 0.5              # 后退目标距离(m)，达到该位移后认为后退动作完成
-      backup_vel: -1.6              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
+      backup_vel: -1.7              # 后退线速度(m/s)，应为负值；绝对值越大后退越快
       backup_timeout: 5.0           # 后退动作最大执行时间(s)，超时则该恢复动作失败
       
       # 恢复动作进展检测：防止底盘卡住后一直发送恢复速度
@@ -451,7 +451,7 @@ nav_server:
       progress_timeout: 3.0         # 后退时允许无有效进展的最长时间(s)，超过则判定失败
       
       # 后退安全检查：执行后退前沿 base_link 后方采样 costmap，避免盲退撞障碍
-      enable_safety_check: true      # 是否启用后退轨迹安全检查
+      enable_safety_check: false      # 是否启用后退轨迹安全检查
       backup_allow_unsafe: false     # true 时即使后方安全检查失败也继续后退，仅建议人工调试/特殊场地使用
       safety_check_distance: 0.5    # 后退方向安全检查距离(m)，建议 >= backup_dist
       
@@ -464,15 +464,15 @@ nav_server:
       spin_progress_timeout: 1.5    # 旋转时允许无有效进展的最长时间(s)，超过则判定失败
       
       # 弧线后退恢复：在直退和旋转都失败后执行，适合从墙角/局部卡滞中斜向退开
-      arc_backup_dist: 0.25         # 弧线后退目标位移(m)，达到该位移后认为动作完成
-      arc_backup_vel: -0.15         # 弧线后退线速度(m/s)，应为负值
+      arc_backup_dist: 0.3         # 弧线后退目标位移(m)，达到该位移后认为动作完成
+      arc_backup_vel: -1.0         # 弧线后退线速度(m/s)，应为负值
       arc_backup_angular_vel: 0.4   # 兼容保留参数；未配置左右角速度时作为默认角速度幅值
-      arc_backup_left_angular_vel: 0.4   # 左弧线后退角速度(rad/s)
-      arc_backup_right_angular_vel: -0.4 # 右弧线后退角速度(rad/s)
+      arc_backup_left_angular_vel: 2.0  # 左弧线后退角速度(rad/s)
+      arc_backup_right_angular_vel: -2.0 # 右弧线后退角速度(rad/s)
       arc_backup_timeout: 2.0       # 弧线后退最大执行时间(s)，超时则该恢复动作失败
       arc_backup_min_progress: 0.02 # 弧线后退的最小有效位移(m)
       arc_backup_progress_timeout: 1.0  # 弧线后退允许无有效进展的最长时间(s)
-      arc_backup_enable_safety_check: true  # 是否启用弧线轨迹安全检查
+      arc_backup_enable_safety_check: false  # 是否启用弧线轨迹安全检查
       arc_backup_allow_unsafe: false        # true 时即使弧线安全检查失败也继续执行，仅建议人工调试使用
       arc_backup_safety_check_duration: 1.5 # 弧线轨迹前向预测检查时长(s)
     
@@ -480,12 +480,12 @@ nav_server:
     escape:
       # 触发条件
       trigger_costmap_threshold: 99   # Costmap 触发阈值，起点 cost >= 此值时触发脱困
-      target_safe_esdf: 0.3           # 目标 ESDF 距离 (m)，搜索大于此值的安全点
+      target_safe_esdf: 0.20           # 目标 ESDF 距离 (m)，搜索大于此值的安全点
       
       # 搜索参数
       search_radius: 1.0              # BFS 最大搜索半径 (m)
       preferred_search_distance: 1.0  # 优先沿车体前后方向搜索安全点的最大距离(m)
-      preferred_search_half_angle: 0.35 # 定向搜索半角(rad)
+      preferred_search_half_angle: 0.2 # 定向搜索半角(rad)
 
       # 退让释放动作：车头顶障碍时先低速倒退/弧线倒退，再旋转找安全点
       enable_release_maneuver: true
@@ -497,16 +497,16 @@ nav_server:
       backup_vel: -0.5               # 直退释放速度(m/s)
       backup_timeout: 1.8             # 直退动作超时(s)
       backup_min_progress: 0.03       # 退让阶段最小有效位移(m)
-      backup_progress_timeout: 0.8    # 无有效位移超过该时间则切换下一退让动作(s)
-      arc_backup_dist: 0.25           # 弧线后退释放距离(m)
-      arc_backup_vel: -0.5            # 弧线后退线速度(m/s)
-      arc_backup_angular_vel: 3.0   # 弧线后退角速度幅值(rad/s)，先左后右
+      backup_progress_timeout: 2.0    # 无有效位移超过该时间则切换下一退让动作(s)
+      arc_backup_dist: 0.3           # 弧线后退释放距离(m)
+      arc_backup_vel: -0.9            # 弧线后退线速度(m/s)
+      arc_backup_angular_vel: 2.5   # 弧线后退角速度幅值(rad/s)，先左后右
       arc_backup_timeout: 1.8         # 单个弧线后退动作超时(s)
       arc_backup_safety_check_duration: 1.2 # 弧线轨迹安全预测时长(s)
       
       # 控制参数
-      rotation_speed: 2.0             # 旋转角速度 (rad/s)
-      forward_speed: 0.5             # 前进线速度 (m/s)
+      rotation_speed: 3.0             # 旋转角速度 (rad/s)
+      forward_speed: 0.7             # 前进线速度 (m/s)
       yaw_tolerance: 0.1              # 角度对齐容差 (rad, ~6度)
       position_tolerance: 0.1        # 到达位置容差 (m)
       

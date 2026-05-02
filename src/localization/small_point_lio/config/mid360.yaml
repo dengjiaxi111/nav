@@ -16,7 +16,7 @@ small_point_lio:
         max_distance: 100.0                       # 点云半径最大值，大于该值会被过滤
         base_link_to_lidar_xyz: [0.2, 0.0, 0.05]   # base_link -> lidar_frame 静态 TF 的 xyz
         space_downsample: true                     # 是否启用点云降采样
-        space_downsample_leaf_size: 0.1            # 点云降采样时使用的栅格大小
+        space_downsample_leaf_size: 0.2            # 点云降采样时使用的栅格大小
 
         # IMU处理
         gravity: [0.0, 0.0, -9.810]               # 重力向量（odom系下指向地心，负Z轴）
@@ -27,7 +27,7 @@ small_point_lio:
         acc_norm: 1.0                              # IMU的加速度模长
 
         # 地图
-        map_resolution: 0.5                        # 地图分辨率
+        map_resolution: 0.8                        # 地图分辨率
         init_map_size: 2000                          # 接收到多少个点才初始化地图
 
         # 雷达与IMU相对位姿
