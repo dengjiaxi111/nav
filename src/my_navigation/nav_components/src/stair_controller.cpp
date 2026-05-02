@@ -27,6 +27,7 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.enable_stair_mode_detection", true);
     declare_if_needed("special_terrain.enable_fly_slope_mode_detection", true);
     declare_if_needed("special_terrain.enable_stair_fsm", true);
+    declare_if_needed("special_terrain.enable_stair_level2_down_fsm", false);
     declare_if_needed("special_terrain.stair_mode_trigger_distance_m", 1.0);
     declare_if_needed("special_terrain.stair_mode_lookahead_dist_m", 3.0);
     declare_if_needed("special_terrain.stair_mode_sample_step_m", 0.10);
@@ -131,6 +132,8 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.enable_fly_slope_mode_detection").as_bool();
     enable_stair_fsm_ =
         node_->get_parameter("special_terrain.enable_stair_fsm").as_bool();
+    enable_stair_level2_down_fsm_ =
+        node_->get_parameter("special_terrain.enable_stair_level2_down_fsm").as_bool();
     stair_mode_trigger_distance_m_ =
         node_->get_parameter("special_terrain.stair_mode_trigger_distance_m").as_double();
     stair_mode_lookahead_dist_m_ =
@@ -390,7 +393,8 @@ void StairController::initialize(rclcpp::Node* node) {
     }
     if (enable_stair_fsm_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_fsm 启用: contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, leg(topic=%s,timeout=%.2fs,stale=%.2fs,th=%.2f/%.2f/fly%.2f), backoff=%.2fm, retry_max=%d, backoff_strategy=%s, initial_turn(start=%.2frad,done=%.2frad,timeout=%.2fs,min_v=%.2f), total_timeout=%.2fs, tangent_kp=%.2f, tangent_ratio=%.2f, cooldown(en=%d,th=%d,dur=%.1fs)",
+                    "stair_fsm 启用: level2_down_en=%d, contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, leg(topic=%s,timeout=%.2fs,stale=%.2fs,th=%.2f/%.2f/fly%.2f), backoff=%.2fm, retry_max=%d, backoff_strategy=%s, initial_turn(start=%.2frad,done=%.2frad,timeout=%.2fs,min_v=%.2f), total_timeout=%.2fs, tangent_kp=%.2f, tangent_ratio=%.2f, cooldown(en=%d,th=%d,dur=%.1fs)",
+                    enable_stair_level2_down_fsm_ ? 1 : 0,
                     stair_contact_distance_m_,
                     stair_commit_success_dist_m_,
                     stair_level2_commit_success_dist_m_,
@@ -1300,6 +1304,9 @@ bool StairController::queryUpcomingStairCandidate(
 
             const double dot = dir_x * candidate.normal.x() + dir_y * candidate.normal.y();
             if (has_primitive && primitive.is_level2) {
+                if (dot < 0.0 && !enable_stair_level2_down_fsm_) {
+                    continue;
+                }
                 candidate.terrain_type = (dot < 0.0)
                     ? TerrainType::STAIR_LEVEL2_DOWN
                     : TerrainType::STAIR_LEVEL2;

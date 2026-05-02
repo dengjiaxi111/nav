@@ -24,6 +24,7 @@ private:
     std::string pcd_path_;
     std::string output_path_;
     std::string leveled_full_output_path_;
+    std::string level_height_origin_mode_;
     bool auto_level_;
     bool require_auto_level_;
     bool translate_ground_to_zero_;
@@ -32,6 +33,7 @@ private:
     int level_candidate_planes_;
     int level_min_plane_inliers_;
     double level_early_stop_below_first_m_;
+    double level_ground_percentile_;
     double ground_normal_threshold_;
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
@@ -198,6 +200,39 @@ private:
         pcl::transformPointCloud(*cloud_, *leveled, level_transform);
         double ground_z = selected.leveled_z;
 
+        if (level_height_origin_mode_ == "low_percentile") {
+            std::vector<float> finite_z;
+            finite_z.reserve(leveled->points.size());
+            for (const auto& point : leveled->points) {
+                if (std::isfinite(point.z)) {
+                    finite_z.push_back(point.z);
+                }
+            }
+            if (!finite_z.empty()) {
+                const double clamped_percentile =
+                    std::min(0.50, std::max(0.0, level_ground_percentile_));
+                std::size_t kth = static_cast<std::size_t>(
+                    std::floor(clamped_percentile * static_cast<double>(finite_z.size() - 1)));
+                kth = std::min(kth, finite_z.size() - 1);
+                std::nth_element(finite_z.begin(), finite_z.begin() + kth, finite_z.end());
+                ground_z = finite_z[kth];
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "auto_level: using low_percentile height origin p=%.3f, z=%.4f",
+                    clamped_percentile, ground_z);
+            } else {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "auto_level: low_percentile requested but no finite z values found; "
+                    "falling back to selected plane z");
+            }
+        } else if (level_height_origin_mode_ != "selected_plane") {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "unknown level_height_origin_mode '%s', using selected_plane",
+                level_height_origin_mode_.c_str());
+        }
+
         if (translate_ground_to_zero_) {
             for (auto& point : leveled->points) {
                 point.z -= static_cast<float>(ground_z);
@@ -258,6 +293,7 @@ public:
         this->declare_parameter<std::string>("pcd_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/rmul_2025.pcd");
         this->declare_parameter<std::string>("output_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/object.pcd");
         this->declare_parameter<std::string>("leveled_full_output_path", "");
+        this->declare_parameter<std::string>("level_height_origin_mode", "selected_plane");
         this->declare_parameter<bool>("auto_level", true);
         this->declare_parameter<bool>("require_auto_level", false);
         this->declare_parameter<bool>("translate_ground_to_zero", true);
@@ -266,10 +302,12 @@ public:
         this->declare_parameter<int>("level_candidate_planes", 4);
         this->declare_parameter<int>("level_min_plane_inliers", 1000);
         this->declare_parameter<double>("level_early_stop_below_first_m", 0.10);
+        this->declare_parameter<double>("level_ground_percentile", 0.02);
         this->declare_parameter<double>("ground_normal_threshold", 0.70);
         this->get_parameter("pcd_path", pcd_path_);
         this->get_parameter("output_path", output_path_);
         this->get_parameter("leveled_full_output_path", leveled_full_output_path_);
+        this->get_parameter("level_height_origin_mode", level_height_origin_mode_);
         this->get_parameter("auto_level", auto_level_);
         this->get_parameter("require_auto_level", require_auto_level_);
         this->get_parameter("translate_ground_to_zero", translate_ground_to_zero_);
@@ -278,6 +316,7 @@ public:
         this->get_parameter("level_candidate_planes", level_candidate_planes_);
         this->get_parameter("level_min_plane_inliers", level_min_plane_inliers_);
         this->get_parameter("level_early_stop_below_first_m", level_early_stop_below_first_m_);
+        this->get_parameter("level_ground_percentile", level_ground_percentile_);
         this->get_parameter("ground_normal_threshold", ground_normal_threshold_);
         if (pcl::io::loadPCDFile<pcl::PointXYZ>(pcd_path_, *cloud_) == -1) 
         {

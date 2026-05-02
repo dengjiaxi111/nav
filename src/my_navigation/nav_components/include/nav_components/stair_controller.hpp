@@ -130,6 +130,7 @@ private:
     bool enable_stair_mode_detection_{true};
     bool enable_fly_slope_mode_detection_{true};
     bool enable_stair_fsm_{true};
+    bool enable_stair_level2_down_fsm_{false};
     double stair_mode_trigger_distance_m_{1.0};
     double stair_mode_lookahead_dist_m_{3.0};
     double stair_mode_sample_step_m_{0.10};

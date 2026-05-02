@@ -20,6 +20,9 @@ def generate_launch_description():
                 'require_auto_level': True,
                 # 旋平后把拟合地面平均高度平移到z=0
                 'translate_ground_to_zero': True,
+                # 旋转用平面找水平，高度原点用点云低分位数，避免选中天花板时把天花板当z=0
+                'level_height_origin_mode': 'low_percentile',
+                'level_ground_percentile': 0.02,
                 # RANSAC地面拟合阈值，地面点较厚/噪声大时适当调大
                 'level_distance_threshold': 0.08,
                 'level_max_iterations': 500,
@@ -43,9 +46,9 @@ def generate_launch_description():
                 #pcd文件名称
                 'file_name': 'GlobalMap_processed',
                 #选取的范围　最小的高度
-                'thre_z_min': -1.0,
+                'thre_z_min': 0.05,
                 #选取的范围　最大的高度
-                'thre_z_max': 2.0,
+                'thre_z_max': 1.6,
                 #0 选取高度范围内的，１选取高度范围外的
                 'flag_pass_through': 0,
                 #半径滤波的半径
