@@ -115,7 +115,7 @@ nav_server:
       # === 台阶动作状态机（阶段B，不含冷却） ===
       # 总开关：false 时退化为旧逻辑（仅 stair_mode 检测/透传）
       enable_stair_fsm: true
-      enable_stair_level2_down_fsm: false  # 下二级台阶状态机开关；false 时反向二级台阶按旧逻辑跳过，不发布 stair_mode=4
+      enable_stair_level2_down_fsm: false  # 下二级台阶状态机开关；false 时高侧->低侧禁行，规划绕路；true 时发布 stair_mode=4
 
     # [兼容输出] stair_mode: 0=正常, 1=一级台阶, 2=飞坡, 3=上二级台阶, 4=下二级台阶
       enable_stair_mode_detection: true

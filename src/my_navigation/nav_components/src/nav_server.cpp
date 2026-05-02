@@ -230,6 +230,7 @@ public:
         declare_parameter("special_terrain.stair_level2_black_max", -1);
         declare_parameter("special_terrain.stair_level2_gray_min", -1);
         declare_parameter("special_terrain.stair_level2_gray_max", -1);
+        declare_parameter("special_terrain.enable_stair_level2_down_fsm", false);
         declare_parameter("special_terrain.pair_search_radius_cells", 4);
         declare_parameter("special_terrain.enable_oneway_stair_down", false);
         declare_parameter("special_terrain.oneway_black_min", 41);
@@ -326,6 +327,8 @@ public:
             get_parameter("special_terrain.stair_level2_gray_min").as_int();
         stair_layer_cfg.stair_level2_gray_max =
             get_parameter("special_terrain.stair_level2_gray_max").as_int();
+        stair_layer_cfg.block_level2_down =
+            !get_parameter("special_terrain.enable_stair_level2_down_fsm").as_bool();
         stair_layer_cfg.pair_search_radius_cells =
             get_parameter("special_terrain.pair_search_radius_cells").as_int();
         stair_layer_cfg.enable_oneway_stair_down =

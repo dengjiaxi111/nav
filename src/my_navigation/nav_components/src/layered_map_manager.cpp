@@ -251,6 +251,32 @@ bool LayeredMapManager::isTransitionAllowed(int from_x, int from_y, int to_x, in
         }
     }
 
+    if (stair_layer_cfg_.enable && stair_layer_cfg_.block_level2_down &&
+        !stair_primitive_id_map_.empty() && !stair_primitives_.empty()) {
+        if (from_idx >= 0 && from_idx < static_cast<int>(stair_primitive_id_map_.size()) &&
+            to_idx >= 0 && to_idx < static_cast<int>(stair_primitive_id_map_.size())) {
+            const int from_stair_id = stair_primitive_id_map_[from_idx];
+            const int to_stair_id = stair_primitive_id_map_[to_idx];
+            if (from_stair_id >= 0 && from_stair_id == to_stair_id &&
+                from_stair_id < static_cast<int>(stair_primitives_.size())) {
+                const auto& primitive = stair_primitives_[from_stair_id];
+                const Eigen::Vector2d normal = primitive.normal;
+                if (primitive.is_level2 && normal.squaredNorm() >= 1e-9) {
+                    const double from_wx = origin_x_ + (from_x + 0.5) * resolution_;
+                    const double from_wy = origin_y_ + (from_y + 0.5) * resolution_;
+                    const double to_wx = origin_x_ + (to_x + 0.5) * resolution_;
+                    const double to_wy = origin_y_ + (to_y + 0.5) * resolution_;
+                    const Eigen::Vector2d delta(to_wx - from_wx, to_wy - from_wy);
+                    const double down_projection = delta.dot(normal);
+                    const double down_eps = std::max(1e-6, resolution_ * 0.05);
+                    if (down_projection < -down_eps) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
     if (runtime_blocked_stair_uphill_ids_.empty() || stair_primitive_id_map_.empty() ||
         stair_primitives_.empty()) {
         return true;

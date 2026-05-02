@@ -151,6 +151,7 @@ public:
         int oneway_black_max{80};
         int oneway_gray_min{171};
         int oneway_gray_max{230};
+        bool block_level2_down{true};
     };
 
     struct StairCrossingBand {
