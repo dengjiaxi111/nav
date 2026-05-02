@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -522,6 +523,8 @@ public:
         static_map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("static_map", rclcpp::QoS(1).transient_local().reliable());
         fused_map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("fused_map", rclcpp::QoS(1).transient_local().reliable());
         costmap_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("costmap", rclcpp::QoS(1).transient_local().reliable());
+        escape_debug_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+            "escape_debug/failure_point", rclcpp::QoS(1).transient_local().reliable());
         if (enable_esdf_) {
             esdf_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("esdf_map", rclcpp::QoS(1).transient_local().reliable());
         }
@@ -1441,6 +1444,91 @@ private:
         double y = current_pose_.pose.position.y;
         double theta = yaw;
 
+        auto set_failure_reason = [&](const char* label,
+                                      double sample_t,
+                                      double wx,
+                                      double wy,
+                                      int mx,
+                                      int my,
+                                      int idx,
+                                      int cost,
+                                      int raw_cost) {
+            if (!reason) {
+                return;
+            }
+
+            std::ostringstream oss;
+            oss << label
+                << " t=" << sample_t << "s"
+                << " world=(" << wx << ", " << wy << ")"
+                << " grid=(" << mx << ", " << my << ")"
+                << " idx=" << idx
+                << " costmap=" << cost
+                << " raw_fused=" << raw_cost
+                << " threshold=" << escape_trigger_costmap_threshold_
+                << " ignore_unknown=" << (escape_release_ignore_unknown_ ? "true" : "false");
+            *reason = oss.str();
+        };
+
+        auto publish_failure_marker = [&](const char* label, double wx, double wy, int cost, int raw_cost) {
+            if (!escape_debug_pub_) {
+                return;
+            }
+
+            visualization_msgs::msg::MarkerArray markers;
+
+            visualization_msgs::msg::Marker delete_marker;
+            delete_marker.header.frame_id = map_frame_;
+            delete_marker.header.stamp = now();
+            delete_marker.ns = "escape_failure";
+            delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+            markers.markers.push_back(delete_marker);
+
+            visualization_msgs::msg::Marker point;
+            point.header.frame_id = map_frame_;
+            point.header.stamp = delete_marker.header.stamp;
+            point.ns = "escape_failure";
+            point.id = 0;
+            point.type = visualization_msgs::msg::Marker::SPHERE;
+            point.action = visualization_msgs::msg::Marker::ADD;
+            point.pose.position.x = wx;
+            point.pose.position.y = wy;
+            point.pose.position.z = 0.12;
+            point.pose.orientation.w = 1.0;
+            point.scale.x = 0.22;
+            point.scale.y = 0.22;
+            point.scale.z = 0.22;
+            point.color.r = 1.0f;
+            point.color.g = 0.1f;
+            point.color.b = 0.05f;
+            point.color.a = 0.9f;
+            markers.markers.push_back(point);
+
+            visualization_msgs::msg::Marker text;
+            text.header = point.header;
+            text.ns = "escape_failure";
+            text.id = 1;
+            text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+            text.action = visualization_msgs::msg::Marker::ADD;
+            text.pose.position.x = wx;
+            text.pose.position.y = wy;
+            text.pose.position.z = 0.45;
+            text.pose.orientation.w = 1.0;
+            text.scale.z = 0.18;
+            text.color.r = 1.0f;
+            text.color.g = 1.0f;
+            text.color.b = 1.0f;
+            text.color.a = 0.95f;
+
+            std::ostringstream text_ss;
+            text_ss << label << "\n"
+                    << "cost=" << cost << " raw=" << raw_cost;
+            text.text = text_ss.str();
+            markers.markers.push_back(text);
+
+            escape_debug_pub_->publish(markers);
+        };
+
         for (double t = 0.0; t <= horizon + 1e-6; t += dt) {
             x += linear_vel * std::cos(theta) * dt;
             y += linear_vel * std::sin(theta) * dt;
@@ -1449,30 +1537,59 @@ private:
             const int mx = static_cast<int>((x - origin_x) / resolution);
             const int my = static_cast<int>((y - origin_y) / resolution);
             if (mx < 0 || mx >= width || my < 0 || my >= height) {
-                if (reason) {
-                    *reason = "退让轨迹越出 costmap";
-                }
+                publish_failure_marker("out_of_costmap", x, y, -999, -999);
+                set_failure_reason("退让轨迹越出 costmap",
+                                   t,
+                                   x,
+                                   y,
+                                   mx,
+                                   my,
+                                   -1,
+                                   -999,
+                                   -999);
                 return false;
             }
 
             const int idx = my * width + mx;
+            const int8_t cost = costmap->data[idx];
             if (raw_map && raw_map->info.width == costmap->info.width &&
                 raw_map->info.height == costmap->info.height &&
                 idx < static_cast<int>(raw_map->data.size())) {
                 const int8_t raw_cost = raw_map->data[idx];
                 if (raw_cost >= escape_trigger_costmap_threshold_) {
-                    if (reason) {
-                        *reason = "退让轨迹存在明确障碍区域";
-                    }
+                    publish_failure_marker("raw_obstacle",
+                                           x,
+                                           y,
+                                           static_cast<int>(cost),
+                                           static_cast<int>(raw_cost));
+                    set_failure_reason("退让轨迹存在明确障碍区域",
+                                       t,
+                                       x,
+                                       y,
+                                       mx,
+                                       my,
+                                       idx,
+                                       static_cast<int>(cost),
+                                       static_cast<int>(raw_cost));
                     return false;
                 }
             } else {
-                const int8_t cost = costmap->data[idx];
                 if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
-                    if (reason) {
-                        *reason = (cost < 0) ? "退让轨迹存在未知区域"
-                                             : "退让轨迹存在障碍区域";
-                    }
+                    publish_failure_marker((cost < 0) ? "unknown" : "costmap_obstacle",
+                                           x,
+                                           y,
+                                           static_cast<int>(cost),
+                                           -999);
+                    set_failure_reason((cost < 0) ? "退让轨迹存在未知区域"
+                                                  : "退让轨迹存在障碍区域",
+                                       t,
+                                       x,
+                                       y,
+                                       mx,
+                                       my,
+                                       idx,
+                                       static_cast<int>(cost),
+                                       -999);
                     return false;
                 }
             }
@@ -2474,6 +2591,7 @@ private:
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr fused_map_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr esdf_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr escape_debug_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr stair_debug_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr stair_mode_pub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr dynamic_layer_sub_;
