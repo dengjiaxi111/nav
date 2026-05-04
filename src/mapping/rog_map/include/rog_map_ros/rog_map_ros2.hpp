@@ -194,10 +194,6 @@ namespace rog_map {
                 // Keep only the newest frame. If the worker is busy, older pending work is overwritten.
                 rc_.unfinished_frame_cnt = 1;
             }
-            {
-                std::lock_guard<std::mutex> map_lock(map_access_mutex_);
-                map_empty_ = false;
-            }
             rc_.update_cv.notify_one();
         }
 
@@ -524,10 +520,32 @@ namespace rog_map {
             boxSearch(box_min, box_max, gt, out_points);
         }
 
+        bool tryBoxSearchThreadSafe(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt,
+                                    vec_E<Vec3f>& out_points) {
+            std::unique_lock<std::mutex> map_lock(map_access_mutex_, std::try_to_lock);
+            if (!map_lock.owns_lock()) {
+                out_points.clear();
+                return false;
+            }
+            boxSearch(box_min, box_max, gt, out_points);
+            return true;
+        }
+
         void boxSearchInflateThreadSafe(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt,
                                         vec_E<Vec3f>& out_points) {
             std::lock_guard<std::mutex> map_lock(map_access_mutex_);
             boxSearchInflate(box_min, box_max, gt, out_points);
+        }
+
+        bool tryBoxSearchInflateThreadSafe(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt,
+                                           vec_E<Vec3f>& out_points) {
+            std::unique_lock<std::mutex> map_lock(map_access_mutex_, std::try_to_lock);
+            if (!map_lock.owns_lock()) {
+                out_points.clear();
+                return false;
+            }
+            boxSearchInflate(box_min, box_max, gt, out_points);
+            return true;
         }
 
     private:

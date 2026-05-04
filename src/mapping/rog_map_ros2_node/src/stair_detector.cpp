@@ -229,7 +229,11 @@ void StairDetector::updateTimerCallback() {
     
     // 台阶检测使用原始占据点云（不需要膨胀）
     rog_map::vec_E<Eigen::Vector3d> occ_points;
-    rog_map_ptr_->boxSearchThreadSafe(box_min, box_max, rog_map::OCCUPIED, occ_points);
+    if (!rog_map_ptr_->tryBoxSearchThreadSafe(box_min, box_max, rog_map::OCCUPIED, occ_points)) {
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+                              "ROG-Map busy, skipping this stair detection frame");
+        return;
+    }
     
     if (occ_points.empty()) {
         RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,

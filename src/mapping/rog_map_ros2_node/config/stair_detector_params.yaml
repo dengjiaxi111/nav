@@ -3,6 +3,9 @@
 
 /**:
   ros__parameters:
+    # Set false to skip creating StairDetector in integration_node.
+    stair_detector.enable: false
+
     # Input/Output topics
     input_cloud_topic: "/rog_map/occ"  
     output_target_topic: "/stair_detector/target"
