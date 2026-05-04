@@ -34,6 +34,7 @@ rog_map:
     pub_unknown_map_en: false   
     frame_id: "odom"
     time_rate: 10.0           
+    starvation_timeout: 1.0   # [s] 可视化抢不到地图锁超过该时间后，阻塞刷新一次防止 /rog_map/occ 饥饿；0 表示禁用保底
     frame_rate: 100
     range: [15.0, 15.0, 2.0]
 

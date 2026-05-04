@@ -89,6 +89,9 @@ rog_map:
   
   # Update frequency for visualization (Hz)
   viz_pub_freq: 5.0
+
+  # Seconds before visualization blocks once to avoid starvation; 0 disables fallback
+  starvation_timeout: 1.0
   
   # ==================== Point Cloud Filtering ====================
   # Filter points by height (useful for 2.5D mapping)

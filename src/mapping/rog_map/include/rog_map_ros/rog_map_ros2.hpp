@@ -335,14 +335,27 @@ namespace rog_map {
 #endif
 
             {
-                std::unique_lock<std::mutex> map_lock(map_access_mutex_, std::try_to_lock);
-                if (!map_lock.owns_lock()) {
-                    return;
+                static auto last_successful_viz_time = t_viz_start;
+                const double since_success_sec =
+                    std::chrono::duration<double>(t_viz_start - last_successful_viz_time).count();
+                const bool force_refresh =
+                    cfg_.viz_starvation_timeout > 0.0 && since_success_sec >= cfg_.viz_starvation_timeout;
+
+                std::unique_lock<std::mutex> map_lock(map_access_mutex_, std::defer_lock);
+                if (force_refresh) {
+                    map_lock.lock();
+                } else {
+                    map_lock.try_lock();
+                    if (!map_lock.owns_lock()) {
+                        return;
+                    }
                 }
 
                 if (map_empty_) {
                     return;
                 }
+
+                last_successful_viz_time = t_viz_start;
 
                 box_max = robot_state_.p + cfg_.visualization_range / 2;
                 box_min = robot_state_.p - cfg_.visualization_range / 2;

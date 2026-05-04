@@ -125,6 +125,13 @@ namespace rog_map {
             loader.LoadParam(name_space + "/visualization/frame_id", frame_id, string("odom"));
             loader.LoadParam(name_space + "/visualization/time_rate", viz_time_rate, 0.0);
             loader.LoadParam(name_space + "/visualization/frame_rate", viz_frame_rate, 0);
+            loader.LoadParam(name_space + "/visualization/starvation_timeout", viz_starvation_timeout, 1.0);
+            if (viz_starvation_timeout < 0.0) {
+                std::cout << color_text::YELLOW
+                          << " -- [ROG] visualization/starvation_timeout should be non-negative, set to 1.0s."
+                          << color_text::RESET << std::endl;
+                viz_starvation_timeout = 1.0;
+            }
             vector<double> temp_vis_range;
             loader.LoadParam(name_space + "/visualization/range", temp_vis_range, vector<double>{0, 0, 0});
             if (temp_vis_range.size() != 3) {
@@ -370,6 +377,7 @@ namespace rog_map {
         double odom_timeout{};
         Vec3f visualization_range{};
         double viz_time_rate{};
+        double viz_starvation_timeout{1.0};
         int viz_frame_rate{};
 
         double unk_thresh{};
