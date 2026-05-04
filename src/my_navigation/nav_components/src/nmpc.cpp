@@ -52,6 +52,18 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.goal_max_slow_speed", params_.goal_max_slow_speed);
     node_->declare_parameter("nmpc.pivot_turn_heading_thresh", params_.pivot_turn_heading_thresh);
     node_->declare_parameter("nmpc.pivot_turn_startup_only", params_.pivot_turn_startup_only);
+    node_->declare_parameter("nmpc.startup_align.enable", params_.startup_align_enable);
+    node_->declare_parameter("nmpc.startup_align.enter_thresh",
+                             params_.startup_align_enter_thresh);
+    node_->declare_parameter("nmpc.startup_align.exit_thresh",
+                             params_.startup_align_exit_thresh);
+    node_->declare_parameter("nmpc.startup_align.lookahead",
+                             params_.startup_align_lookahead);
+    node_->declare_parameter("nmpc.startup_align.kp", params_.startup_align_kp);
+    node_->declare_parameter("nmpc.startup_align.min_angular_vel",
+                             params_.startup_align_min_angular_vel);
+    node_->declare_parameter("nmpc.startup_align.max_angular_vel",
+                             params_.startup_align_max_angular_vel);
     node_->declare_parameter("nmpc.speed_profile.enable", params_.speed_profile_enable);
     node_->declare_parameter("nmpc.speed_profile.v_cruise", params_.speed_profile_v_cruise);
     node_->declare_parameter("nmpc.speed_profile.v_min", params_.speed_profile_v_min);
@@ -116,6 +128,20 @@ void NMPC::initialize(rclcpp::Node* node) {
         node_->get_parameter("nmpc.pivot_turn_heading_thresh").as_double();
     params_.pivot_turn_startup_only =
         node_->get_parameter("nmpc.pivot_turn_startup_only").as_bool();
+    params_.startup_align_enable =
+        node_->get_parameter("nmpc.startup_align.enable").as_bool();
+    params_.startup_align_enter_thresh =
+        node_->get_parameter("nmpc.startup_align.enter_thresh").as_double();
+    params_.startup_align_exit_thresh =
+        node_->get_parameter("nmpc.startup_align.exit_thresh").as_double();
+    params_.startup_align_lookahead =
+        node_->get_parameter("nmpc.startup_align.lookahead").as_double();
+    params_.startup_align_kp =
+        node_->get_parameter("nmpc.startup_align.kp").as_double();
+    params_.startup_align_min_angular_vel =
+        node_->get_parameter("nmpc.startup_align.min_angular_vel").as_double();
+    params_.startup_align_max_angular_vel =
+        node_->get_parameter("nmpc.startup_align.max_angular_vel").as_double();
     params_.speed_profile_enable = node_->get_parameter("nmpc.speed_profile.enable").as_bool();
     params_.speed_profile_v_cruise =
         node_->get_parameter("nmpc.speed_profile.v_cruise").as_double();
@@ -134,6 +160,16 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.goal_max_slow_speed =
         std::max(params_.goal_min_moving_speed, params_.goal_max_slow_speed);
     params_.pivot_turn_heading_thresh = std::clamp(params_.pivot_turn_heading_thresh, 0.0, M_PI);
+    params_.startup_align_enter_thresh =
+        std::clamp(params_.startup_align_enter_thresh, 0.0, M_PI);
+    params_.startup_align_exit_thresh =
+        std::clamp(params_.startup_align_exit_thresh, 0.0, params_.startup_align_enter_thresh);
+    params_.startup_align_lookahead = std::max(0.05, params_.startup_align_lookahead);
+    params_.startup_align_kp = std::max(0.0, params_.startup_align_kp);
+    params_.startup_align_min_angular_vel =
+        std::max(0.0, params_.startup_align_min_angular_vel);
+    params_.startup_align_max_angular_vel =
+        std::max(params_.startup_align_min_angular_vel, params_.startup_align_max_angular_vel);
     params_.speed_profile_v_cruise = std::max(0.0, params_.speed_profile_v_cruise);
     params_.speed_profile_v_min = std::max(0.0, params_.speed_profile_v_min);
     params_.speed_profile_v_min =
@@ -268,6 +304,9 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
         pivot_turn_active_ = false;
         pivot_turn_heading_error_ = 0.0;
         startup_pivot_phase_active_ = false;
+        startup_align_active_ = false;
+        startup_align_engaged_ = false;
+        startup_align_heading_error_ = 0.0;
         path_remaining_dist_ = std::numeric_limits<double>::infinity();
         return;
     }
@@ -278,6 +317,9 @@ void NMPC::setPath(const nav_msgs::msg::Path& path) {
     pivot_turn_active_ = false;
     pivot_turn_heading_error_ = 0.0;
     startup_pivot_phase_active_ = true;
+    startup_align_active_ = params_.startup_align_enable;
+    startup_align_engaged_ = false;
+    startup_align_heading_error_ = 0.0;
     
     RCLCPP_INFO(node_->get_logger(), 
         "NMPC: 接收新路径, %zu 个点", path.poses.size());
@@ -354,6 +396,10 @@ nav_core::ControlResult NMPC::computeVelocity(
         cmd_vel.angular.z = 0.0;
         RCLCPP_INFO(node_->get_logger(), "NMPC: 到达目标 (xy距离=%.3fm)", dist);
         return nav_core::ControlResult::SUCCEEDED;
+    }
+
+    if (applyStartupAlignmentGate(current_pose, cmd_vel)) {
+        return nav_core::ControlResult::RUNNING;
     }
     
     // 3. 提取局部参考轨迹
@@ -559,6 +605,9 @@ void NMPC::reset() {
     predicted_stage1_valid_ = false;
     path_remaining_dist_ = std::numeric_limits<double>::infinity();
     startup_pivot_phase_active_ = false;
+    startup_align_active_ = false;
+    startup_align_engaged_ = false;
+    startup_align_heading_error_ = 0.0;
     
     // 重置 solver
     if (acados_ocp_capsule_) {
@@ -643,6 +692,27 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
                 changed = true;
             } else if (name == "nmpc.pivot_turn_startup_only") {
                 params_.pivot_turn_startup_only = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.startup_align.enable") {
+                params_.startup_align_enable = p.as_bool();
+                changed = true;
+            } else if (name == "nmpc.startup_align.enter_thresh") {
+                params_.startup_align_enter_thresh = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.startup_align.exit_thresh") {
+                params_.startup_align_exit_thresh = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.startup_align.lookahead") {
+                params_.startup_align_lookahead = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.startup_align.kp") {
+                params_.startup_align_kp = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.startup_align.min_angular_vel") {
+                params_.startup_align_min_angular_vel = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.startup_align.max_angular_vel") {
+                params_.startup_align_max_angular_vel = p.as_double();
                 changed = true;
             } else if (name == "nmpc.speed_profile.enable") {
                 params_.speed_profile_enable = p.as_bool();
@@ -741,6 +811,16 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
     params_.goal_max_slow_speed =
         std::max(params_.goal_min_moving_speed, params_.goal_max_slow_speed);
     params_.pivot_turn_heading_thresh = std::clamp(params_.pivot_turn_heading_thresh, 0.0, M_PI);
+    params_.startup_align_enter_thresh =
+        std::clamp(params_.startup_align_enter_thresh, 0.0, M_PI);
+    params_.startup_align_exit_thresh =
+        std::clamp(params_.startup_align_exit_thresh, 0.0, params_.startup_align_enter_thresh);
+    params_.startup_align_lookahead = std::max(0.05, params_.startup_align_lookahead);
+    params_.startup_align_kp = std::max(0.0, params_.startup_align_kp);
+    params_.startup_align_min_angular_vel =
+        std::max(0.0, params_.startup_align_min_angular_vel);
+    params_.startup_align_max_angular_vel =
+        std::max(params_.startup_align_min_angular_vel, params_.startup_align_max_angular_vel);
     params_.speed_profile_v_cruise = std::max(0.0, params_.speed_profile_v_cruise);
     params_.speed_profile_v_min = std::max(0.0, params_.speed_profile_v_min);
     params_.speed_profile_v_min =
@@ -835,6 +915,141 @@ int NMPC::solveNMPC(
     }
     
     return status;
+}
+
+bool NMPC::computeStartupAlignmentTargetYaw(
+    const geometry_msgs::msg::Pose& current_pose,
+    double& target_yaw)
+{
+    if (global_path_.poses.size() < 2) {
+        return false;
+    }
+
+    const int nearest_idx = findNearestPathPoint(current_pose);
+    const int start_idx = std::clamp(
+        nearest_idx, 0, static_cast<int>(global_path_.poses.size()) - 1);
+    const auto& start = global_path_.poses[start_idx].pose.position;
+
+    double accum_dist = 0.0;
+    int target_idx = start_idx;
+    for (int i = start_idx; i < static_cast<int>(global_path_.poses.size()) - 1; ++i) {
+        const auto& p1 = global_path_.poses[i].pose.position;
+        const auto& p2 = global_path_.poses[i + 1].pose.position;
+        const double seg_dist = std::hypot(p2.x - p1.x, p2.y - p1.y);
+        if (seg_dist < 1e-4) {
+            continue;
+        }
+        accum_dist += seg_dist;
+        target_idx = i + 1;
+        if (accum_dist >= params_.startup_align_lookahead) {
+            break;
+        }
+    }
+
+    const auto& target = global_path_.poses[target_idx].pose.position;
+    const double dx = target.x - start.x;
+    const double dy = target.y - start.y;
+    if (std::hypot(dx, dy) < 1e-4) {
+        target_yaw = tf2::getYaw(global_path_.poses[start_idx].pose.orientation);
+    } else {
+        target_yaw = std::atan2(dy, dx);
+    }
+    nearest_idx_ = std::max(nearest_idx_, nearest_idx);
+    return true;
+}
+
+bool NMPC::applyStartupAlignmentGate(
+    const geometry_msgs::msg::PoseStamped& current_pose,
+    geometry_msgs::msg::Twist& cmd_vel)
+{
+    if (!params_.startup_align_enable || !startup_align_active_) {
+        return false;
+    }
+
+    double target_yaw = 0.0;
+    if (!computeStartupAlignmentTargetYaw(current_pose.pose, target_yaw)) {
+        startup_align_active_ = false;
+        startup_align_engaged_ = false;
+        return false;
+    }
+
+    const double current_yaw = tf2::getYaw(current_pose.pose.orientation);
+    double heading_error = target_yaw - current_yaw;
+    while (heading_error > M_PI) heading_error -= 2.0 * M_PI;
+    while (heading_error < -M_PI) heading_error += 2.0 * M_PI;
+
+    startup_align_heading_error_ = std::abs(heading_error);
+    const double active_thresh = startup_align_engaged_
+        ? params_.startup_align_exit_thresh
+        : params_.startup_align_enter_thresh;
+
+    if (startup_align_heading_error_ <= active_thresh) {
+        startup_align_active_ = false;
+        startup_align_engaged_ = false;
+        RCLCPP_INFO(node_->get_logger(),
+            "NMPC startup align: done, heading_err=%.1fdeg <= %.1fdeg",
+            startup_align_heading_error_ * 180.0 / M_PI,
+            active_thresh * 180.0 / M_PI);
+        return false;
+    }
+
+    startup_align_engaged_ = true;
+
+    double omega_cmd = params_.startup_align_kp * heading_error;
+    const double max_w = std::min(
+        params_.startup_align_max_angular_vel, params_.max_angular_vel);
+    omega_cmd = std::clamp(omega_cmd, -max_w, max_w);
+    if (std::abs(omega_cmd) < params_.startup_align_min_angular_vel &&
+        startup_align_heading_error_ > params_.startup_align_exit_thresh) {
+        omega_cmd = std::copysign(params_.startup_align_min_angular_vel, heading_error);
+    }
+
+    cmd_vel.linear.x = 0.0;
+    cmd_vel.linear.y = 0.0;
+    cmd_vel.linear.z = 0.0;
+    cmd_vel.angular.x = 0.0;
+    cmd_vel.angular.y = 0.0;
+    cmd_vel.angular.z = omega_cmd;
+
+    last_state_[3] = 0.0;
+    last_state_[4] = omega_cmd;
+    last_state_[5] = 0.0;
+    last_state_[6] = omega_cmd;
+    last_control_[0] = 0.0;
+    last_control_[1] = 0.0;
+    predicted_stage1_valid_ = false;
+
+    if (speed_observation_pub_) {
+        geometry_msgs::msg::TwistStamped obs;
+        obs.header = current_pose.header;
+        if (obs.header.stamp.nanosec == 0 && obs.header.stamp.sec == 0) {
+            obs.header.stamp = node_->now();
+        }
+        obs.header.frame_id = "base_link";
+        obs.twist.linear.x = 0.0;
+        obs.twist.linear.y = std::numeric_limits<double>::quiet_NaN();
+        obs.twist.linear.z = std::numeric_limits<double>::quiet_NaN();
+        obs.twist.angular.x = 0.0;
+        obs.twist.angular.y = params_.vel_lag_tau;
+        obs.twist.angular.z = omega_cmd;
+
+        {
+            std::lock_guard<std::mutex> lock(odom_mutex_);
+            if (chassis_odom_received_) {
+                obs.twist.linear.y = latest_chassis_odom_.twist.twist.linear.x;
+            }
+        }
+        speed_observation_pub_->publish(obs);
+    }
+
+    RCLCPP_INFO_THROTTLE(
+        node_->get_logger(), *node_->get_clock(), 500,
+        "NMPC startup align: holding v=0, heading_err=%.1fdeg, target=%.1fdeg, w=%.2f",
+        startup_align_heading_error_ * 180.0 / M_PI,
+        target_yaw * 180.0 / M_PI,
+        omega_cmd);
+
+    return true;
 }
 
 double NMPC::computeGoalApproachSpeedLimit(double path_remaining_dist) const {

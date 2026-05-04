@@ -91,6 +91,24 @@ private:
                              const std::vector<double>& x0);
 
     /**
+     * @brief 新路径/重规划起步阶段硬对准门控。
+     *
+     * 激活时跳过 NMPC 求解，只发布原地旋转速度；航向误差收敛后退出，
+     * 后续控制周期恢复正常 NMPC 跟踪。
+     * @return true 表示本周期已由门控接管 cmd_vel
+     */
+    bool applyStartupAlignmentGate(
+        const geometry_msgs::msg::PoseStamped& current_pose,
+        geometry_msgs::msg::Twist& cmd_vel);
+
+    /**
+     * @brief 基于路径几何切线计算起步对准目标航向。
+     */
+    bool computeStartupAlignmentTargetYaw(
+        const geometry_msgs::msg::Pose& current_pose,
+        double& target_yaw);
+
+    /**
      * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
      * 参数格式 p = [xref(7), d_esdf, weight_scale,
      *               q_pos, q_theta, q_vel, r_lin, r_ang,
@@ -201,6 +219,15 @@ private:
         double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
         bool pivot_turn_startup_only = true;      // true=仅起步阶段原地转向, false=控制全程生效
 
+        // 新路径/重规划起步硬对准：在 NMPC 求解前强制 linear.x=0
+        bool startup_align_enable = true;
+        double startup_align_enter_thresh = 0.45;     // 进入硬对准阈值(rad)
+        double startup_align_exit_thresh = 0.15;      // 退出硬对准阈值(rad)
+        double startup_align_lookahead = 0.40;        // 用于计算路径切线的前视距离(m)
+        double startup_align_kp = 2.0;                // 原地转向比例系数
+        double startup_align_min_angular_vel = 0.25;  // 克服底盘死区的最小角速度(rad/s)
+        double startup_align_max_angular_vel = 2.5;   // 起步对准最大角速度(rad/s)
+
     // 速度规划（第一批参数）
     bool speed_profile_enable = true;
     double speed_profile_v_cruise = 1.0;          // 巡航参考速度 (m/s)
@@ -251,6 +278,9 @@ private:
     bool pivot_turn_active_ = false;
     double pivot_turn_heading_error_ = 0.0;
     bool startup_pivot_phase_active_ = false;
+    bool startup_align_active_ = false;
+    bool startup_align_engaged_ = false;
+    double startup_align_heading_error_ = 0.0;
 };
 
 }  // namespace nav_components

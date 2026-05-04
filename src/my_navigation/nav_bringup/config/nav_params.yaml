@@ -404,6 +404,14 @@ nav_server:
       goal_max_slow_speed: 0.3  # 刚进入终点减速区时的速度上限(m/s)
       pivot_turn_heading_thresh: 2.00  # 航向误差>该值时原地转向 (rad)
       pivot_turn_startup_only: false  # true=仅新路径起步阶段生效, false=控制过程中任意时刻生效
+      startup_align:
+        enable: true             # 新路径/重规划起步阶段启用硬对准门控
+        enter_thresh: 0.45       # 航向误差超过该值时进入硬对准(rad)，约26deg
+        exit_thresh: 0.15        # 进入硬对准后误差小于该值才允许起步(rad)，约9deg
+        lookahead: 0.40          # 用路径几何前视点计算起步目标航向(m)
+        kp: 2.0                  # 原地对准角速度比例系数
+        min_angular_vel: 0.25    # 原地对准最小角速度(rad/s)
+        max_angular_vel: 2.5     # 原地对准最大角速度(rad/s)
       odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
       chassis_odom_topic: "/Odometry" # 需为 nav_msgs/msg/Odometry，避免与 /ChassisOdom 多类型冲突
