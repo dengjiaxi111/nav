@@ -41,6 +41,8 @@ public:
         geometry_msgs::msg::Twist& out_cmd) = 0;
 
     virtual void onNavStateChanged(NavState state) = 0;
+    virtual bool controlProgressTimeoutOverrideActive() const { return false; }
+    virtual double controlProgressTimeoutSec() const { return 0.0; }
 
 protected:
     MapInterface::Ptr map_;

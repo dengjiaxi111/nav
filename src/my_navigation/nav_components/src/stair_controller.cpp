@@ -69,14 +69,12 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.stair_backoff_pos_tolerance_m", 0.08);
     declare_if_needed("special_terrain.stair_retry_max_attempts", 3);
     declare_if_needed("special_terrain.stair_request_recovery_on_max_attempts", true);
-    declare_if_needed("special_terrain.backoff_strategy", std::string("normal_tangent"));
-    declare_if_needed("special_terrain.backoff_initial_turn_error_rad", 0.60);
-    declare_if_needed("special_terrain.backoff_initial_turn_done_error_rad", 0.25);
-    declare_if_needed("special_terrain.backoff_initial_turn_timeout_sec", 1.50);
-    declare_if_needed("special_terrain.backoff_min_linear_scale_after_turn", 0.35);
-    declare_if_needed("special_terrain.backoff_total_timeout_sec", 4.0);
-    declare_if_needed("special_terrain.backoff_tangent_correction_kp", 0.6);
-    declare_if_needed("special_terrain.backoff_max_tangent_correction_ratio", 0.35);
+    declare_if_needed("special_terrain.backoff_release_distance_m", 0.35);
+    declare_if_needed("special_terrain.backoff_release_linear_vel", 0.45);
+    declare_if_needed("special_terrain.backoff_release_max_angular_vel", 0.60);
+    declare_if_needed("special_terrain.backoff_release_heading_kp", 0.8);
+    declare_if_needed("special_terrain.backoff_total_timeout_sec", 6.0);
+    declare_if_needed("special_terrain.backoff_nav_progress_timeout_sec", 8.0);
     declare_if_needed("special_terrain.enable_stair_cooldown", true);
     declare_if_needed("special_terrain.stair_cooldown_fail_threshold", 3);
     declare_if_needed("special_terrain.stair_cooldown_duration_sec", 30.0);
@@ -214,40 +212,24 @@ void StairController::initialize(rclcpp::Node* node) {
         node_->get_parameter("special_terrain.stair_retry_max_attempts").as_int();
     stair_request_recovery_on_max_attempts_ =
         node_->get_parameter("special_terrain.stair_request_recovery_on_max_attempts").as_bool();
-    const std::string backoff_strategy =
-        node_->get_parameter("special_terrain.backoff_strategy").as_string();
-    if (backoff_strategy == "target_point" || backoff_strategy == "target_point_tracking") {
-        backoff_strategy_ = BackoffStrategy::TARGET_POINT_TRACKING;
-    } else {
-        if (backoff_strategy != "normal_tangent" &&
-            backoff_strategy != "normal_with_tangent_correction") {
-            RCLCPP_WARN(node_->get_logger(),
-                        "special_terrain.backoff_strategy='%s' 未识别，回退为 normal_tangent",
-                        backoff_strategy.c_str());
-        }
-        backoff_strategy_ = BackoffStrategy::NORMAL_WITH_TANGENT_CORRECTION;
-    }
-    backoff_initial_turn_error_rad_ = std::max(
+    backoff_release_distance_m_ = std::max(
         0.0,
-        node_->get_parameter("special_terrain.backoff_initial_turn_error_rad").as_double());
-    backoff_initial_turn_done_error_rad_ = std::max(
+        node_->get_parameter("special_terrain.backoff_release_distance_m").as_double());
+    backoff_release_linear_vel_ = std::max(
         0.0,
-        node_->get_parameter("special_terrain.backoff_initial_turn_done_error_rad").as_double());
-    backoff_initial_turn_timeout_sec_ = std::max(
+        node_->get_parameter("special_terrain.backoff_release_linear_vel").as_double());
+    backoff_release_max_angular_vel_ = std::max(
         0.0,
-        node_->get_parameter("special_terrain.backoff_initial_turn_timeout_sec").as_double());
-    backoff_min_linear_scale_after_turn_ = std::clamp(
-        node_->get_parameter("special_terrain.backoff_min_linear_scale_after_turn").as_double(),
-        0.0, 1.0);
+        node_->get_parameter("special_terrain.backoff_release_max_angular_vel").as_double());
+    backoff_release_heading_kp_ = std::max(
+        0.0,
+        node_->get_parameter("special_terrain.backoff_release_heading_kp").as_double());
     backoff_total_timeout_sec_ = std::max(
         0.0,
         node_->get_parameter("special_terrain.backoff_total_timeout_sec").as_double());
-    backoff_tangent_correction_kp_ = std::max(
+    backoff_nav_progress_timeout_sec_ = std::max(
         0.0,
-        node_->get_parameter("special_terrain.backoff_tangent_correction_kp").as_double());
-    backoff_max_tangent_correction_ratio_ = std::clamp(
-        node_->get_parameter("special_terrain.backoff_max_tangent_correction_ratio").as_double(),
-        0.0, 1.0);
+        node_->get_parameter("special_terrain.backoff_nav_progress_timeout_sec").as_double());
     enable_stair_cooldown_ =
         node_->get_parameter("special_terrain.enable_stair_cooldown").as_bool();
     stair_cooldown_fail_threshold_ =
@@ -386,7 +368,7 @@ void StairController::initialize(rclcpp::Node* node) {
     }
     if (enable_stair_fsm_) {
         RCLCPP_INFO(node_->get_logger(),
-                    "stair_fsm 启用: level2_down_en=%d, contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, leg(topic=%s,timeout=%.2fs,stale=%.2fs,th=%.2f/%.2f/fly%.2f), backoff=%.2fm, retry_max=%d, backoff_strategy=%s, initial_turn(start=%.2frad,done=%.2frad,timeout=%.2fs,min_v=%.2f), total_timeout=%.2fs, tangent_kp=%.2f, tangent_ratio=%.2f, cooldown(en=%d,th=%d,dur=%.1fs)",
+                    "stair_fsm 启用: level2_down_en=%d, contact=%.2fm, success=%.2fm, level2_success=%.2fm, verify_to=%.2fs, progress_to=%.2fs, progress_min=%.2fm, leg(topic=%s,timeout=%.2fs,stale=%.2fs,th=%.2f/%.2f/fly%.2f), backoff=%.2fm, retry_max=%d, release(dist=%.2fm,v=%.2fm/s,wz_max=%.2frad/s,kp=%.2f), total_timeout=%.2fs, nav_progress_timeout=%.2fs, cooldown(en=%d,th=%d,dur=%.1fs)",
                     enable_stair_level2_down_fsm_ ? 1 : 0,
                     stair_contact_distance_m_,
                     stair_commit_success_dist_m_,
@@ -402,16 +384,12 @@ void StairController::initialize(rclcpp::Node* node) {
                     fly_slope_leg_ready_threshold_m_,
                     stair_backoff_distance_m_,
                     stair_retry_max_attempts_,
-                    backoff_strategy_ == BackoffStrategy::TARGET_POINT_TRACKING
-                        ? "target_point"
-                        : "normal_tangent",
-                    backoff_initial_turn_error_rad_,
-                    backoff_initial_turn_done_error_rad_,
-                    backoff_initial_turn_timeout_sec_,
-                    backoff_min_linear_scale_after_turn_,
+                    backoff_release_distance_m_,
+                    backoff_release_linear_vel_,
+                    backoff_release_max_angular_vel_,
+                    backoff_release_heading_kp_,
                     backoff_total_timeout_sec_,
-                    backoff_tangent_correction_kp_,
-                    backoff_max_tangent_correction_ratio_,
+                    backoff_nav_progress_timeout_sec_,
                     enable_stair_cooldown_,
                     stair_cooldown_fail_threshold_,
                     stair_cooldown_duration_sec_);
@@ -461,6 +439,15 @@ void StairController::onNavStateChanged(nav_core::NavState state) {
             consumed_terrain_features_.clear();
         }
     }
+}
+
+bool StairController::controlProgressTimeoutOverrideActive() const {
+    return fsm_state_ == StairFsmState::FAIL_RETRY_BACKOFF &&
+           backoff_nav_progress_timeout_sec_ > 0.0;
+}
+
+double StairController::controlProgressTimeoutSec() const {
+    return backoff_nav_progress_timeout_sec_;
 }
 
 nav_core::TerrainControlDecision StairController::update(
@@ -908,9 +895,6 @@ nav_core::TerrainControlDecision StairController::update(
             double roll, pitch, yaw;
             tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
             const double traverse_sign = traversal_sign(active_terrain_type_);
-            const Eigen::Vector2d initial_backoff_dir = -traverse_sign * n;
-            const double initial_heading_ref =
-                std::atan2(initial_backoff_dir.y(), initial_backoff_dir.x());
 
             const double tangent_proj = (robot_pos - active_feature_.center).dot(t);
             const double max_tangent = active_feature_.half_length + backoff_tangent_half(active_terrain_type_);
@@ -918,28 +902,16 @@ nav_core::TerrainControlDecision StairController::update(
             const Eigen::Vector2d centerline_point = active_feature_.center + s_clamped * t;
             const double signed_dist = (robot_pos - centerline_point).dot(n);
             const double target_signed = -traverse_sign * backoff_distance(active_terrain_type_);
-            if (!backoff_target_initialized_) {
-                backoff_target_centerline_point_ = centerline_point;
-                backoff_target_point_ = backoff_target_centerline_point_ + target_signed * n;
-                backoff_target_initialized_ = true;
-                backoff_initial_heading_ref_ = initial_heading_ref;
-                const double initial_heading_err =
-                    normalizeAngle(backoff_initial_heading_ref_ - yaw);
-                backoff_initial_turn_active_ =
-                    std::abs(initial_heading_err) > backoff_initial_turn_error_rad_;
-                backoff_initial_turn_completed_ = !backoff_initial_turn_active_;
-                backoff_initial_turn_start_time_ = std::chrono::steady_clock::now();
+            if (!backoff_initialized_) {
+                backoff_entry_signed_dist_ = signed_dist;
+                backoff_initialized_ = true;
                 RCLCPP_INFO(node_->get_logger(),
-                            "backoff target locked: type=%s id=%d target=(%.2f,%.2f), centerline=(%.2f,%.2f), signed=%.2f, initial_err=%.2f, initial_turn=%d",
+                            "backoff start: type=%s id=%d entry_signed=%.2f target_signed=%.2f release_dist=%.2f",
                             terrainTypeName(active_terrain_type_),
                             active_feature_.feature_id,
-                            backoff_target_point_.x(),
-                            backoff_target_point_.y(),
-                            backoff_target_centerline_point_.x(),
-                            backoff_target_centerline_point_.y(),
+                            backoff_entry_signed_dist_,
                             target_signed,
-                            initial_heading_err,
-                            backoff_initial_turn_active_ ? 1 : 0);
+                            backoff_release_distance_m_);
             }
 
             if (traverse_sign * signed_dist <=
@@ -975,63 +947,46 @@ nav_core::TerrainControlDecision StairController::update(
                 break;
             }
 
-            if (backoff_initial_turn_active_ && !backoff_initial_turn_completed_) {
-                const double initial_heading_err =
-                    normalizeAngle(backoff_initial_heading_ref_ - yaw);
-                const double turn_dt = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - backoff_initial_turn_start_time_).count();
-                if (std::abs(initial_heading_err) <= backoff_initial_turn_done_error_rad_ ||
-                    turn_dt >= backoff_initial_turn_timeout_sec_) {
-                    backoff_initial_turn_active_ = false;
-                    backoff_initial_turn_completed_ = true;
-                    RCLCPP_INFO(node_->get_logger(),
-                                "backoff initial turn done: err=%.2f, dt=%.2f",
-                                initial_heading_err, turn_dt);
-                } else {
-                    out_cmd = geometry_msgs::msg::Twist();
-                    out_cmd.angular.z = std::clamp(
-                        backoff_heading_kp(active_terrain_type_) * initial_heading_err,
-                        -backoff_wz_max(active_terrain_type_),
-                        backoff_wz_max(active_terrain_type_));
-                    decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
-                    break;
-                }
-            }
-
-            Eigen::Vector2d backoff_dir = -traverse_sign * n;
-            if (backoff_strategy_ == BackoffStrategy::TARGET_POINT_TRACKING) {
-                const Eigen::Vector2d target_vec = backoff_target_point_ - robot_pos;
-                if (target_vec.norm() > 1e-6) {
-                    backoff_dir = target_vec.normalized();
-                }
-            } else {
-                const double tangent_error =
-                    (robot_pos - backoff_target_centerline_point_).dot(t);
-                const double tangent_component = std::clamp(
-                    -backoff_tangent_correction_kp_ * tangent_error,
-                    -backoff_max_tangent_correction_ratio_,
-                    backoff_max_tangent_correction_ratio_);
-                backoff_dir = -traverse_sign * n + tangent_component * t;
-                if (backoff_dir.norm() > 1e-6) {
-                    backoff_dir.normalize();
-                } else {
-                    backoff_dir = -traverse_sign * n;
-                }
-            }
+            const Eigen::Vector2d backoff_dir = -traverse_sign * n;
             const double heading_ref = std::atan2(backoff_dir.y(), backoff_dir.x());
             const double heading_err_backoff = normalizeAngle(heading_ref - yaw);
+
             out_cmd = geometry_msgs::msg::Twist();
-            out_cmd.angular.z = std::clamp(
-                backoff_heading_kp(active_terrain_type_) * heading_err_backoff,
-                -backoff_wz_max(active_terrain_type_),
-                backoff_wz_max(active_terrain_type_));
-            const double heading_forward_scale = std::cos(heading_err_backoff);
-            const double linear_scale = (heading_forward_scale > 0.0)
-                ? std::clamp(heading_forward_scale,
-                             backoff_min_linear_scale_after_turn_,
-                             1.0)
-                : 0.0;
-            out_cmd.linear.x = backoff_linear_vel(active_terrain_type_) * linear_scale;
+
+            const double released_distance =
+                std::max(0.0, traverse_sign * (backoff_entry_signed_dist_ - signed_dist));
+            const bool in_release_phase =
+                released_distance < backoff_release_distance_m_;
+            if (in_release_phase) {
+                const Eigen::Vector2d forward_dir(std::cos(yaw), std::sin(yaw));
+                const double forward_alignment = forward_dir.dot(backoff_dir);
+                const double direction_sign = (forward_alignment >= 0.0) ? 1.0 : -1.0;
+                const double directional_heading_err =
+                    (direction_sign > 0.0)
+                        ? heading_err_backoff
+                        : normalizeAngle(heading_err_backoff + M_PI);
+
+                out_cmd.linear.x = direction_sign * backoff_release_linear_vel_;
+                out_cmd.angular.z = std::clamp(
+                    backoff_release_heading_kp_ * directional_heading_err,
+                    -backoff_release_max_angular_vel_,
+                    backoff_release_max_angular_vel_);
+                RCLCPP_INFO_THROTTLE(
+                    node_->get_logger(), *node_->get_clock(), 500,
+                    "backoff release: released=%.2f/%.2f, vx=%.2f, wz=%.2f, err=%.2f",
+                    released_distance,
+                    backoff_release_distance_m_,
+                    out_cmd.linear.x,
+                    out_cmd.angular.z,
+                    directional_heading_err);
+            } else {
+                out_cmd.angular.z = std::clamp(
+                    backoff_heading_kp(active_terrain_type_) * heading_err_backoff,
+                    -backoff_wz_max(active_terrain_type_),
+                    backoff_wz_max(active_terrain_type_));
+                out_cmd.linear.x = backoff_linear_vel(active_terrain_type_) *
+                    std::max(0.0, std::cos(heading_err_backoff));
+            }
             decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
             break;
         }
@@ -1160,19 +1115,11 @@ void StairController::transitionFsmState(StairFsmState new_state, const char* re
         resetLegRaiseMonitor();
     }
     if (new_state == StairFsmState::FAIL_RETRY_BACKOFF) {
-        backoff_target_initialized_ = false;
-        backoff_initial_turn_active_ = false;
-        backoff_initial_turn_completed_ = false;
-        backoff_initial_heading_ref_ = 0.0;
-        backoff_initial_turn_start_time_ = std::chrono::steady_clock::time_point{};
+        backoff_initialized_ = false;
+        backoff_entry_signed_dist_ = 0.0;
     } else {
-        backoff_target_initialized_ = false;
-        backoff_target_point_.setZero();
-        backoff_target_centerline_point_.setZero();
-        backoff_initial_turn_active_ = false;
-        backoff_initial_turn_completed_ = false;
-        backoff_initial_heading_ref_ = 0.0;
-        backoff_initial_turn_start_time_ = std::chrono::steady_clock::time_point{};
+        backoff_initialized_ = false;
+        backoff_entry_signed_dist_ = 0.0;
     }
 }
 

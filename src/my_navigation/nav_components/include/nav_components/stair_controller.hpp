@@ -29,6 +29,8 @@ public:
         geometry_msgs::msg::Twist& out_cmd) override;
 
     void onNavStateChanged(nav_core::NavState state) override;
+    bool controlProgressTimeoutOverrideActive() const override;
+    double controlProgressTimeoutSec() const override;
 
 private:
     enum class TerrainType : uint8_t {
@@ -46,11 +48,6 @@ private:
         VERIFY_SUCCESS = 3,
         FAIL_RETRY_BACKOFF = 4,
         COOLDOWN_BLOCKED = 5,
-    };
-
-    enum class BackoffStrategy : uint8_t {
-        NORMAL_WITH_TANGENT_CORRECTION = 0,
-        TARGET_POINT_TRACKING = 1,
     };
 
     struct TerrainCandidateInfo {
@@ -230,14 +227,12 @@ private:
     double stair_backoff_pos_tolerance_m_{0.08};
     int stair_retry_max_attempts_{3};
     bool stair_request_recovery_on_max_attempts_{true};
-    BackoffStrategy backoff_strategy_{BackoffStrategy::NORMAL_WITH_TANGENT_CORRECTION};
-    double backoff_initial_turn_error_rad_{0.60};
-    double backoff_initial_turn_done_error_rad_{0.25};
-    double backoff_initial_turn_timeout_sec_{1.50};
-    double backoff_min_linear_scale_after_turn_{0.35};
-    double backoff_total_timeout_sec_{4.0};
-    double backoff_tangent_correction_kp_{0.6};
-    double backoff_max_tangent_correction_ratio_{0.35};
+    double backoff_release_distance_m_{0.35};
+    double backoff_release_linear_vel_{0.45};
+    double backoff_release_max_angular_vel_{0.60};
+    double backoff_release_heading_kp_{0.8};
+    double backoff_total_timeout_sec_{6.0};
+    double backoff_nav_progress_timeout_sec_{8.0};
 
     // 阶段C：同台阶重试与冷却
     bool enable_stair_cooldown_{true};
@@ -271,13 +266,8 @@ private:
     std::chrono::steady_clock::time_point commit_progress_start_time_{};
     int cooldown_stair_id_{-1};
     bool cooldown_replan_pending_{false};
-    bool backoff_target_initialized_{false};
-    Eigen::Vector2d backoff_target_point_{Eigen::Vector2d::Zero()};
-    Eigen::Vector2d backoff_target_centerline_point_{Eigen::Vector2d::Zero()};
-    bool backoff_initial_turn_active_{false};
-    bool backoff_initial_turn_completed_{false};
-    double backoff_initial_heading_ref_{0.0};
-    std::chrono::steady_clock::time_point backoff_initial_turn_start_time_{};
+    bool backoff_initialized_{false};
+    double backoff_entry_signed_dist_{0.0};
     std::string last_transition_reason_{"init"};
     std::unordered_map<int, int> stair_fail_count_by_id_;
     std::unordered_map<int, std::chrono::steady_clock::time_point> stair_cooldown_until_by_id_;

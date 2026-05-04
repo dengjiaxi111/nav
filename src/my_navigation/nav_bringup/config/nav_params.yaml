@@ -171,14 +171,12 @@ nav_server:
       stair_backoff_heading_kp: 2.0              # 退让航向控制增益
       stair_backoff_max_angular_vel: 2.5         # 退让角速度上限(rad/s)
       stair_backoff_pos_tolerance_m: 0.08        # 退让完成判定容差(米)
-      backoff_strategy: normal_tangent           # normal_tangent: -normal为主+切向弱纠偏; target_point: 锁定目标点跟踪
-      backoff_initial_turn_error_rad: 1.00       # 进入退让时初始航向误差大于该值，先执行一次原地预转向(rad)
-      backoff_initial_turn_done_error_rad: 0.20  # 原地预转向完成阈值(rad)
-      backoff_initial_turn_timeout_sec: 1.50     # 原地预转向最长持续时间，超时后本轮退让不再只转不走
-      backoff_min_linear_scale_after_turn: 0.8  # 预转向后边走边修正的最小线速度比例
-      backoff_total_timeout_sec: 4.0             # FAIL_RETRY_BACKOFF 总超时，超时请求恢复
-      backoff_tangent_correction_kp: 0.5         # normal_tangent策略下的切向纠偏增益
-      backoff_max_tangent_correction_ratio: 0.35 # normal_tangent策略下切向分量占比上限
+      backoff_release_distance_m: 0.35           # 退让初段先沿远离地形方向释放接触的距离(米)，完成后再按航向误差退让
+      backoff_release_linear_vel: 0.45           # 释放接触阶段线速度绝对值；会按车头/车尾方向自动选择前进或倒车
+      backoff_release_max_angular_vel: 0.6       # 释放接触阶段角速度上限，避免贴住台阶时大角速度原地拧车
+      backoff_release_heading_kp: 0.8            # 释放接触阶段航向弱修正增益
+      backoff_total_timeout_sec: 6.0             # FAIL_RETRY_BACKOFF 总超时，超时请求 recovery
+      backoff_nav_progress_timeout_sec: 8.0      # 特殊地形退让阶段使用的导航控制无进展超时，避免普通控制超时过早 recovery
       stair_retry_max_attempts: 3                # 单次任务最大重试次数（阶段B）
       stair_request_recovery_on_max_attempts: true  # 超过最大重试后请求恢复，否则请求重规划
 

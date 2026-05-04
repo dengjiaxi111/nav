@@ -280,14 +280,12 @@ public:
         declare_parameter("special_terrain.stair_fixed_heading_kp", 1.8);
         declare_parameter("special_terrain.stair_fixed_max_angular_vel", 0.8);
         declare_parameter("special_terrain.stair_fixed_heading_deadband", 0.05);
-        declare_parameter("special_terrain.backoff_strategy", "normal_tangent");
-        declare_parameter("special_terrain.backoff_initial_turn_error_rad", 0.60);
-        declare_parameter("special_terrain.backoff_initial_turn_done_error_rad", 0.25);
-        declare_parameter("special_terrain.backoff_initial_turn_timeout_sec", 1.50);
-        declare_parameter("special_terrain.backoff_min_linear_scale_after_turn", 0.35);
-        declare_parameter("special_terrain.backoff_total_timeout_sec", 4.0);
-        declare_parameter("special_terrain.backoff_tangent_correction_kp", 0.6);
-        declare_parameter("special_terrain.backoff_max_tangent_correction_ratio", 0.35);
+        declare_parameter("special_terrain.backoff_release_distance_m", 0.35);
+        declare_parameter("special_terrain.backoff_release_linear_vel", 0.45);
+        declare_parameter("special_terrain.backoff_release_max_angular_vel", 0.60);
+        declare_parameter("special_terrain.backoff_release_heading_kp", 0.8);
+        declare_parameter("special_terrain.backoff_total_timeout_sec", 6.0);
+        declare_parameter("special_terrain.backoff_nav_progress_timeout_sec", 8.0);
         
         enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
         enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();
@@ -2482,10 +2480,20 @@ private:
         double time_since_progress = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - last_progress_time_).count();
         
-        if (time_since_progress > controller_timeout_) {
+        double effective_controller_timeout = controller_timeout_;
+        if (terrain_controller_ &&
+            terrain_controller_->controlProgressTimeoutOverrideActive()) {
+            const double override_timeout =
+                terrain_controller_->controlProgressTimeoutSec();
+            if (override_timeout > 0.0) {
+                effective_controller_timeout = override_timeout;
+            }
+        }
+
+        if (time_since_progress > effective_controller_timeout) {
             RCLCPP_ERROR(get_logger(), 
                 "Controller: 控制超时 (%.1f秒无进展 > %.1f秒阈值)", 
-                time_since_progress, controller_timeout_);
+                time_since_progress, effective_controller_timeout);
             stopRobot();
             fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
             return;
