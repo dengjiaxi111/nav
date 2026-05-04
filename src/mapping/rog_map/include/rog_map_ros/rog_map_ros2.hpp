@@ -295,11 +295,6 @@ namespace rog_map {
             if (!cfg_.visualization_en) {
                 return;
             }
-            std::lock_guard<std::mutex> map_lock(map_access_mutex_);
-
-            if (map_empty_) {
-                return;
-            }
 
             // Performance monitoring: measure visualization callback time
             auto t_viz_start = std::chrono::high_resolution_clock::now();
@@ -318,60 +313,170 @@ namespace rog_map {
             }
             interval_count++;
 
-            Vec3f box_max = robot_state_.p + cfg_.visualization_range / 2;
-            Vec3f box_min = robot_state_.p - cfg_.visualization_range / 2;
+            const bool publish_unknown =
+                cfg_.pub_unknown_map_en && vm_.unknown_pub->get_subscription_count() >= 1;
+            const bool publish_inf_unknown =
+                publish_unknown && cfg_.unk_inflation_en &&
+                vm_.unknown_inf_pub->get_subscription_count() >= 1;
+            const bool publish_frontier =
+                cfg_.frontier_extraction_en && vm_.frontier_pub->get_subscription_count() >= 1;
+            const bool publish_occ = vm_.occ_pub->get_subscription_count() >= 1;
+            const bool publish_inf_occ = vm_.occ_inf_pub->get_subscription_count() >= 1;
+            const bool publish_esdf =
+                cfg_.esdf_en && vm_.esdf_pub->get_subscription_count() >= 1;
 
-            boundBoxByLocalMap(box_min, box_max);
-            if ((box_max - box_min).minCoeff() <= 0) {
-                cout << YELLOW << " -- [ROGMap] Visualization range is too small." << RESET << endl;
-                return;
-            }
+            vec_E<Vec3f> unknown_map, inf_unknown_map, frontier_map;
+            vec_E<Vec3f> occ_map, inf_occ_map;
+            PointCloud esdf_pc;
+            visualization_msgs::msg::MarkerArray mkr_arr;
+            Vec3f box_min, box_max;
+#ifdef ESDF_MAP_DEBUG
+            std::unique_ptr<sensor_msgs::msg::PointCloud2> esdf_occ_debug_msg;
+#endif
 
-            if (cfg_.pub_unknown_map_en && vm_.unknown_pub->get_subscription_count() >= 1) {
-                vec_E<Vec3f> unknown_map, inf_unknown_map;
-                boxSearch(box_min, box_max, UNKNOWN, unknown_map);
-                sensor_msgs::msg::PointCloud2 cloud_msg;
-                vecEVec3fToPC2(unknown_map, cloud_msg);
-                cloud_msg.header.stamp = nh_->get_clock()->now();
-                vm_.unknown_pub->publish(cloud_msg);
-                if (cfg_.unk_inflation_en && vm_.unknown_inf_pub->get_subscription_count() >= 1) {
-                    boxSearchInflate(box_min, box_max, UNKNOWN, inf_unknown_map);
-                    vecEVec3fToPC2(inf_unknown_map, cloud_msg);
-                    cloud_msg.header.stamp = nh_->get_clock()->now();
-                    vm_.unknown_inf_pub->publish(cloud_msg);
+            {
+                std::unique_lock<std::mutex> map_lock(map_access_mutex_, std::try_to_lock);
+                if (!map_lock.owns_lock()) {
+                    return;
+                }
+
+                if (map_empty_) {
+                    return;
+                }
+
+                box_max = robot_state_.p + cfg_.visualization_range / 2;
+                box_min = robot_state_.p - cfg_.visualization_range / 2;
+
+                boundBoxByLocalMap(box_min, box_max);
+                if ((box_max - box_min).minCoeff() <= 0) {
+                    cout << YELLOW << " -- [ROGMap] Visualization range is too small." << RESET << endl;
+                    return;
+                }
+
+                if (publish_unknown) {
+                    boxSearch(box_min, box_max, UNKNOWN, unknown_map);
+                    if (publish_inf_unknown) {
+                        boxSearchInflate(box_min, box_max, UNKNOWN, inf_unknown_map);
+                    }
+                }
+
+                if (publish_frontier) {
+                    boxSearch(box_min, box_max, FRONTIER, frontier_map);
+                }
+
+                if (publish_occ) {
+                    boxSearch(box_min, box_max, OCCUPIED, occ_map);
+                }
+
+                if (publish_inf_occ) {
+                    boxSearchInflate(box_min, box_max, OCCUPIED, inf_occ_map);
+                }
+
+                if (publish_esdf) {
+                    esdf_map_->getPositiveESDFPointCloud(box_min, box_max, robot_state_.p.z() - 0.5, esdf_pc);
+                }
+
+#ifdef ESDF_MAP_DEBUG
+                if (cfg_.esdf_en && vm_.esdf_occ_pub) {
+                    esdf_occ_debug_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+                    esdf_map_->getESDFOccPC2(box_min, box_max, *esdf_occ_debug_msg);
+                }
+#endif
+
+                /* Publish visualization range */
+                visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), box_min, box_max,
+                                     "Visualization Range", Color::Purple());
+                visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "Visualization Range Text",
+                              "Visualization Range", box_max + Vec3f(0, 0, 0.5),
+                              Color::Purple(), 0.6, 0);
+
+                /* Publish local map range */
+                Vec3f local_map_max(999, 999, 999), local_map_min(-999, -999, -999);
+                boundBoxByLocalMap(local_map_min, local_map_max);
+                visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), local_map_min, local_map_max,
+                                     "Local Map Range", Color::Orange());
+                visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "Local Map Range Text", "Local Map Range",
+                              local_map_max + Vec3f(0, 0, 1.0),
+                              Color::Orange(), 0.6, 0);
+
+                /* Publish Ray-casting range */
+                visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), raycast_data_.cache_box_min,
+                                     raycast_data_.cache_box_max, "Updating Range", Color::Green());
+                visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "Updating Range Text", "Updating Range",
+                              raycast_data_.cache_box_max + Vec3f(0, 0, 0.5),
+                              Color::Green(), 0.6, 0);
+
+                /* Publish Local map origin */
+                visualizePoint(mkr_arr, nh_->get_clock()->now().seconds(), local_map_origin_d_, Color::Red(),
+                               "Local Map Origin", 0.2, 0);
+
+                if (cfg_.esdf_en) {
+                    Vec3f esdf_box_max, esdf_box_min;
+                    esdf_map_->getUpdatedBbox(esdf_box_min, esdf_box_max);
+                    visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "ESDF Map Text", "ESDF Map",
+                                  esdf_box_max + Vec3f(0, 0, 1.0),
+                                  Color::Blue(), 0.6, 0);
+                    visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), esdf_box_min, esdf_box_max,
+                                         "ESDF Updating Range", Color::Blue());
                 }
             }
 
-            if (cfg_.frontier_extraction_en && vm_.frontier_pub->get_subscription_count() >= 1) {
-                vec_E<Vec3f> frontier_map;
-                boxSearch(box_min, box_max, FRONTIER, frontier_map);
+            const auto stamp = nh_->get_clock()->now();
+
+            if (publish_unknown) {
+                sensor_msgs::msg::PointCloud2 cloud_msg;
+                vecEVec3fToPC2(unknown_map, cloud_msg);
+                cloud_msg.header.stamp = stamp;
+                vm_.unknown_pub->publish(cloud_msg);
+            }
+
+            if (publish_inf_unknown) {
+                sensor_msgs::msg::PointCloud2 cloud_msg;
+                vecEVec3fToPC2(inf_unknown_map, cloud_msg);
+                cloud_msg.header.stamp = stamp;
+                vm_.unknown_inf_pub->publish(cloud_msg);
+            }
+
+            if (publish_frontier) {
                 sensor_msgs::msg::PointCloud2 cloud_msg;
                 vecEVec3fToPC2(frontier_map, cloud_msg);
-                cloud_msg.header.stamp = nh_->get_clock()->now();
+                cloud_msg.header.stamp = stamp;
                 vm_.frontier_pub->publish(cloud_msg);
             }
 
-            vec_E<Vec3f> occ_map, inf_occ_map;
-
-            if (vm_.occ_pub->get_subscription_count() >= 1) {
-                boxSearch(box_min, box_max, OCCUPIED, occ_map);
-                // 使用 UniquePtr 发布，支持进程内零拷贝传输
+            if (publish_occ) {
                 auto cloud_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
                 vecEVec3fToPC2(occ_map, *cloud_msg);
-                cloud_msg->header.stamp = nh_->get_clock()->now();
+                cloud_msg->header.stamp = stamp;
                 cloud_msg->header.frame_id = "odom";
                 vm_.occ_pub->publish(std::move(cloud_msg));
             }
 
-            if (vm_.occ_inf_pub->get_subscription_count() >= 1) {
-                boxSearchInflate(box_min, box_max, OCCUPIED, inf_occ_map);
+            if (publish_inf_occ) {
                 auto cloud_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
                 vecEVec3fToPC2(inf_occ_map, *cloud_msg);
-                cloud_msg->header.stamp = nh_->get_clock()->now();
+                cloud_msg->header.stamp = stamp;
                 cloud_msg->header.frame_id = "odom";
                 vm_.occ_inf_pub->publish(std::move(cloud_msg));
             }
-            
+
+            if (publish_esdf) {
+                auto esdf_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+                pcl::toROSMsg(esdf_pc, *esdf_msg);
+                esdf_msg->header.frame_id = "odom";
+                esdf_msg->header.stamp = stamp;
+                vm_.esdf_pub->publish(std::move(esdf_msg));
+            }
+
+#ifdef ESDF_MAP_DEBUG
+            if (esdf_occ_debug_msg && vm_.esdf_occ_pub) {
+                esdf_occ_debug_msg->header.stamp = stamp;
+                vm_.esdf_occ_pub->publish(std::move(esdf_occ_debug_msg));
+            }
+#endif
+
+            vm_.mkr_arr_pub->publish(mkr_arr);
+
             // Performance monitoring: measure total visualization time
             auto t_viz_end = std::chrono::high_resolution_clock::now();
             double viz_ms = std::chrono::duration<double, std::milli>(t_viz_end - t_viz_start).count();
@@ -397,85 +502,6 @@ namespace rog_map {
             //               << " max=" << interval_max << "ms"
             //               << " (expected=" << expected_period << "ms)" << RESET << std::endl;
             // }
-
-            /* visualize ESDF Map*/
-            if (cfg_.esdf_en) {
-                if (vm_.esdf_pub->get_subscription_count() >= 1) {
-                    PointCloud pc;
-                    esdf_map_->getPositiveESDFPointCloud(box_min, box_max, robot_state_.p.z() - 0.5, pc);
-                    auto esdf_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
-                    pcl::toROSMsg(pc, *esdf_msg);
-                    esdf_msg->header.frame_id = "odom";
-                    esdf_msg->header.stamp = nh_->get_clock()->now();
-                    vm_.esdf_pub->publish(std::move(esdf_msg));
-                }
-
-                // if (vm_.esdf_neg_pub->get_subscription_count() >= 1) {
-                //     PointCloud pc;
-                //     esdf_map_->getNegativeESDFPointCloud(box_min, box_max, robot_state_.p.z() - 0.5, pc);
-                //     auto neg_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
-                //     pcl::toROSMsg(pc, *neg_msg);
-                //     neg_msg->header.frame_id = "world";
-                //     neg_msg->header.stamp = nh_->get_clock()->now();
-                //     vm_.esdf_neg_pub->publish(std::move(neg_msg));
-                // }
-
-#ifdef ESDF_MAP_DEBUG
-        {
-            auto debug_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
-            esdf_map_->getESDFOccPC2(box_min, box_max, *debug_msg);
-            debug_msg->header.stamp = nh_->get_clock()->now();
-            vm_.esdf_occ_pub->publish(std::move(debug_msg));
-        }
-#endif
-            }
-
-
-            /* Publish visualization range */
-            visualization_msgs::msg::MarkerArray mkr_arr;
-            visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), box_min, box_max, "Visualization Range",
-                                 Color::Purple());
-            visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "Visualization Range Text", "Visualization Range",
-                          box_max + Vec3f(0, 0, 0.5),
-                          Color::Purple(), 0.6, 0);
-
-            /* Publish local map range */
-            Vec3f local_map_max(999, 999, 999), local_map_min(-999, -999, -999);
-            boundBoxByLocalMap(local_map_min, local_map_max);
-            visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), local_map_min, local_map_max,
-                                 "Local Map Range",
-                                 Color::Orange());
-            visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "Local Map Range Text", "Local Map Range",
-                          local_map_max + Vec3f(0, 0, 1.0),
-                          Color::Orange(),
-                          0.6, 0);
-
-            /* Publish Ray-casting range */
-            visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), raycast_data_.cache_box_min,
-                                 raycast_data_.cache_box_max,
-                                 "Updating Range",
-                                 Color::Green());
-            visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "Updating Range Text", "Updating Range",
-                          raycast_data_.cache_box_max + Vec3f(0, 0, 0.5),
-                          Color::Green(), 0.6, 0);
-
-            /* Publish Local map origin */
-            visualizePoint(mkr_arr, nh_->get_clock()->now().seconds(), local_map_origin_d_, Color::Red(),
-                           "Local Map Origin", 0.2, 0);
-
-            if (cfg_.esdf_en) {
-                Vec3f esdf_box_max, esdf_box_min;
-                esdf_map_->getUpdatedBbox(esdf_box_min, esdf_box_max);
-                visualizeText(mkr_arr, nh_->get_clock()->now().seconds(), "ESDF Map Text", "ESDF Map",
-                              esdf_box_max + Vec3f(0, 0, 1.0),
-                              Color::Blue(),
-                              0.6, 0);
-                visualizeBoundingBox(mkr_arr, nh_->get_clock()->now().seconds(), esdf_box_min, esdf_box_max,
-                                     "ESDF Updating Range",
-                                     Color::Blue());
-            }
-
-            vm_.mkr_arr_pub->publish(mkr_arr);
         }
 
     public:
