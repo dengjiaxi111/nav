@@ -110,7 +110,7 @@ private:
 
     /**
      * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
-     * 参数格式 p = [xref(7), d_esdf, weight_scale,
+     * 参数格式 p = [xref(7), d_esdf, x_lin, y_lin, grad_x, grad_y, weight_scale,
      *               q_pos, q_theta, q_vel, r_lin, r_ang,
      *               esdf_weight, esdf_safe_dist, contouring_weight,
      *               vel_lag_tau, omega_lag_tau, q_omega]
@@ -169,8 +169,8 @@ private:
     int N_horizon_ = 50;
     double T_horizon_ = 1.5;
     
-    // 参数总数必须与 model.py 中 self.params 的维度一致（当前 20 = 原19 + q_omega）
-    static constexpr int NP_PARAM = 20;
+    // 参数总数必须与 model.py 中 self.params 的维度一致（当前 24 = 原20 + ESDF线性化点/梯度）
+    static constexpr int NP_PARAM = 24;
     
     // ========== 参数配置 ==========
     struct NMPCParams {

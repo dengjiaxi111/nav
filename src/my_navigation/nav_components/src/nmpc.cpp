@@ -1424,16 +1424,19 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
 
     // 参数布局（与 model.py self.params 顺序严格对应）:
     // [0..6]  xref: x, y, theta, v, omega, a, alpha
-    // [7]     d_esdf
-    // [8]     weight_scale
-    // [9..11] q_pos, q_theta, q_vel
-    // [12..13] r_lin, r_ang
-    // [14..16] esdf_weight, esdf_safe_dist, contouring_weight
-    // [17..18] vel_lag_tau, omega_lag_tau
-    // [19]    q_omega
+    // [7]     d_esdf at linearization point
+    // [8..9]  x_esdf_lin, y_esdf_lin
+    // [10..11] grad_esdf_x, grad_esdf_y
+    // [12]    weight_scale
+    // [13..15] q_pos, q_theta, q_vel
+    // [16..17] r_lin, r_ang
+    // [18..20] esdf_weight, esdf_safe_dist, contouring_weight
+    // [21..22] vel_lag_tau, omega_lag_tau
+    // [23]    q_omega
     double p_default[NP_PARAM] = {
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-        10.0, 1.0,
+        10.0, 0.0, 0.0, 0.0, 0.0,
+        1.0,
         params_.Q_position, params_.Q_orientation, params_.Q_velocity,
         params_.R_linear, params_.R_angular,
         params_.esdf_weight, params_.esdf_safe_dist, params_.contouring_weight,
@@ -1469,7 +1472,7 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
         double dt_ref = std::max(1e-3, T_horizon_ / static_cast<double>(N_horizon_));
         double a_ref = (yref[idx_next][3] - yref[idx][3]) / dt_ref;
         double alpha_ref = (yref[idx_next][4] - yref[idx][4]) / dt_ref;
-    p_values[5] = std::clamp(a_ref, -params_.max_linear_decel, params_.max_linear_accel);
+        p_values[5] = std::clamp(a_ref, -params_.max_linear_decel, params_.max_linear_accel);
         p_values[6] = std::clamp(alpha_ref, -params_.max_angular_accel, params_.max_angular_accel);
 
         // 近端/终端权重缩放
@@ -1481,37 +1484,55 @@ void NMPC::injectEsdfParameters(const std::vector<std::vector<double>>& yref,
         if (i == N_horizon_) {
             weight_scale = params_.terminal_multiplier;
         }
-        p_values[8] = weight_scale;
+        p_values[12] = weight_scale;
 
         // 运行时权重注入
-        p_values[9] = params_.Q_position;
-        p_values[10] = params_.Q_orientation;
-        p_values[11] = params_.Q_velocity;
-        p_values[12] = params_.R_linear;
-        p_values[13] = params_.R_angular;
-        p_values[14] = params_.esdf_weight;
-        p_values[15] = params_.esdf_safe_dist;
-        p_values[16] = params_.contouring_weight;
-        p_values[17] = params_.vel_lag_tau;
-        p_values[18] = params_.omega_lag_tau;
-        p_values[19] = params_.Q_omega;
+        p_values[13] = params_.Q_position;
+        p_values[14] = params_.Q_orientation;
+        p_values[15] = params_.Q_velocity;
+        p_values[16] = params_.R_linear;
+        p_values[17] = params_.R_angular;
+        p_values[18] = params_.esdf_weight;
+        p_values[19] = params_.esdf_safe_dist;
+        p_values[20] = params_.contouring_weight;
+        p_values[21] = params_.vel_lag_tau;
+        p_values[22] = params_.omega_lag_tau;
+        p_values[23] = params_.Q_omega;
 
-        // ESDF 查询 (仅距离)
+        // ESDF 查询：在参考点/上一轮预测点混合位置做一阶线性化
         double dist = 10.0;
+        double qx = yref[idx][0];
+        double qy = yref[idx][1];
+        double gx = 0.0;
+        double gy = 0.0;
         if (has_esdf && esdf) {
             double x_pred[7] = {0};
             ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, i, "x", x_pred);
 
             double alpha = (stats_.solve_count == 0) ? 1.0 : 0.7;
-            double qx = alpha * yref[idx][0] + (1.0 - alpha) * x_pred[0];
-            double qy = alpha * yref[idx][1] + (1.0 - alpha) * x_pred[1];
+            qx = alpha * yref[idx][0] + (1.0 - alpha) * x_pred[0];
+            qy = alpha * yref[idx][1] + (1.0 - alpha) * x_pred[1];
 
-            double gx = 0.0, gy = 0.0;
             if (esdf->getDistanceAndGradient(qx, qy, dist, gx, gy)) {
-                // dist 已填充
+                const double grad_norm = std::hypot(gx, gy);
+                if (grad_norm > 1e-6) {
+                    gx /= grad_norm;
+                    gy /= grad_norm;
+                } else {
+                    gx = 0.0;
+                    gy = 0.0;
+                }
+            } else {
+                dist = 10.0;
+                gx = 0.0;
+                gy = 0.0;
             }
         }
         p_values[7] = dist;
+        p_values[8] = qx;
+        p_values[9] = qy;
+        p_values[10] = gx;
+        p_values[11] = gy;
 
         wheelleg_nmpc_acados_update_params(acados_ocp_capsule_, i, p_values, NP_PARAM);
     }

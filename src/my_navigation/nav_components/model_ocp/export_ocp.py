@@ -112,19 +112,21 @@ def export_nmpc_solver():
     ocp.model.cost_expr_ext_cost_e = terminal_cost
     
     # ========== 运行时参数默认值 ==========
-    # p = [xref(7), d_esdf, weight_scale,
+    # p = [xref(7), d_esdf, x_esdf_lin, y_esdf_lin, grad_esdf_x, grad_esdf_y,
+    #      weight_scale,
     #      q_pos, q_theta, q_vel, r_lin, r_ang,
     #      esdf_weight, esdf_safe_dist, contouring_weight,
     #      vel_lag_tau, omega_lag_tau, q_omega]
     ocp.parameter_values = np.array([
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # xref [0..6]
         10.0,                                  # d_esdf [7]
-        1.0,                                   # weight_scale [8]
-        10.0, 5.0, 1.0,                        # q_pos, q_theta, q_vel [9..11]
-        0.1, 0.1,                              # r_lin, r_ang [12..13]
-        20.0, 0.5, 50.0,                       # esdf_weight, esdf_safe_dist, contouring_weight [14..16]
-        0.6, 0.6,                              # vel_lag_tau, omega_lag_tau [17..18]
-        5.0                                    # q_omega [19]
+        0.0, 0.0, 0.0, 0.0,                    # x/y linearization + ESDF gradient [8..11]
+        1.0,                                   # weight_scale [12]
+        10.0, 5.0, 1.0,                        # q_pos, q_theta, q_vel [13..15]
+        0.1, 0.1,                              # r_lin, r_ang [16..17]
+        20.0, 0.5, 50.0,                       # esdf_weight, esdf_safe_dist, contouring_weight [18..20]
+        0.6, 0.6,                              # vel_lag_tau, omega_lag_tau [21..22]
+        5.0                                    # q_omega [23]
     ])
     
     # ========== 约束 ==========
@@ -173,7 +175,7 @@ def export_nmpc_solver():
     print(f"正在生成 NMPC solver 到 {output_dir}...")
     print(f"  模型类型: {'Lag-augmented' if enable_lag_model else 'Direct-accel(no-lag)'}")
     print(f"  状态维度: nx={nx}, 控制维度: nu={nu}")
-    print(f"  参数维度: np={np_} (xref[7] + ESDF + Q/R + weights + lag_tau + q_omega)")
+    print(f"  参数维度: np={np_} (xref[7] + ESDF linearization + Q/R + weights + lag_tau + q_omega)")
     print(f"  成本类型: EXTERNAL (tracking + ESDF + control)")
     print(f"  预测步数: N={N}, 时域: T={T_horizon}s, dt={T_horizon/N}s")
     

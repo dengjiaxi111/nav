@@ -4,14 +4,15 @@
 控制: [a_cmd, alpha_cmd] (速度命令导数)
 运行时参数 p (外部代价版):
     [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
-     d_esdf, weight_scale,
-    q_pos, q_theta, q_vel,
+     d_esdf, x_esdf_lin, y_esdf_lin, grad_esdf_x, grad_esdf_y, weight_scale,
+     q_pos, q_theta, q_vel,
      r_lin, r_ang,
      esdf_weight, esdf_safe_dist, contouring_weight,
-     vel_lag_tau, omega_lag_tau]
+     vel_lag_tau, omega_lag_tau, q_omega]
 说明:
     - 跟踪参考 (前7个) 由上层 C++ 在每个 shooting node 注入
-    - d_esdf 仅包含 ESDF 距离 (m)
+    - ESDF 使用一阶线性化距离:
+      d_lin = d_esdf + grad_esdf_x * (x - x_esdf_lin) + grad_esdf_y * (y - y_esdf_lin)
     - weight_scale 用于近端/终端权重缩放 (含 terminal_multiplier)
     - Q/R/ESDF/contouring 权重均支持运行时注入
     - 采用增广状态建模: 通过 (v_cmd, omega_cmd) 表示下发给底层的速度目标
@@ -59,7 +60,11 @@ class WheellegModel:
         self.omega_ref = ca.SX.sym('omega_ref')
         self.a_ref = ca.SX.sym('a_ref')
         self.alpha_ref = ca.SX.sym('alpha_ref')
-        self.d_esdf = ca.SX.sym('d_esdf')                # ESDF 距离 (m)
+        self.d_esdf = ca.SX.sym('d_esdf')                # 线性化点处 ESDF 距离 (m)
+        self.x_esdf_lin = ca.SX.sym('x_esdf_lin')        # ESDF 线性化点 x (m)
+        self.y_esdf_lin = ca.SX.sym('y_esdf_lin')        # ESDF 线性化点 y (m)
+        self.grad_esdf_x = ca.SX.sym('grad_esdf_x')      # ESDF 距离对 x 的梯度
+        self.grad_esdf_y = ca.SX.sym('grad_esdf_y')      # ESDF 距离对 y 的梯度
         self.weight_scale = ca.SX.sym('weight_scale')    # 近端/终端权重缩放
 
         # 运行时权重
@@ -82,7 +87,8 @@ class WheellegModel:
         self.params = ca.vertcat(
             self.x_ref, self.y_ref, self.theta_ref, self.v_ref, self.omega_ref,
             self.a_ref, self.alpha_ref,
-            self.d_esdf, self.weight_scale,
+            self.d_esdf, self.x_esdf_lin, self.y_esdf_lin,
+            self.grad_esdf_x, self.grad_esdf_y, self.weight_scale,
             self.q_pos, self.q_theta, self.q_vel,
             self.r_lin, self.r_ang,
             self.esdf_weight, self.esdf_safe_dist, self.contouring_weight,
@@ -144,8 +150,13 @@ class WheellegModel:
         return e_contour**2
 
     def esdf_cost_expr(self, safe_dist):
-        """ESDF 障碍物排斥违反量 (无梯度线性化)"""
-        violation = ca.fmax(0.0, safe_dist - self.d_esdf)
+        """ESDF 障碍物排斥违反量（一阶线性化距离）。"""
+        d_lin = (
+            self.d_esdf
+            + self.grad_esdf_x * (self.x - self.x_esdf_lin)
+            + self.grad_esdf_y * (self.y - self.y_esdf_lin)
+        )
+        violation = ca.fmax(0.0, safe_dist - d_lin)
         return violation  # 返回违反量 (标量), 在代价中平方
     
     def get_constraints(self):

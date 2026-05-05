@@ -430,7 +430,7 @@ nav_server:
 
 
       # === ESDF/轮廓代价（运行时生效） ===
-      esdf_weight: 1e-3         # ESDF 违反代价权重
+      esdf_weight: 30.0         # ESDF 违反代价权重
       esdf_safe_dist: 0.8        # ESDF 安全距离阈值(m)
 
       # === 权重缩放/ESDF开关（运行时生效） ===
