@@ -1,0 +1,109 @@
+# ========== 坐标点（单位：cm） ==========
+red_attack_x: 1642.0
+red_attack_y: 1146.0
+blue_attack_x: 1642.0
+blue_attack_y: 1146.0
+
+red_supply_x: 176.0
+red_supply_y: 262.0
+blue_supply_x: 176.0
+blue_supply_y: 262.0
+
+red_base_gain_x: 412.0
+red_base_gain_y: 754.0
+blue_base_gain_x: 412.0
+blue_base_gain_y: 754.0
+
+red_fortress_occupy_x: 2118.0
+red_fortress_occupy_y: 744.0
+blue_fortress_occupy_x: 2118.0
+blue_fortress_occupy_y: 744.0
+
+red_ramp_point_x: 1070.0
+red_ramp_point_y: 94.0
+blue_ramp_point_x: 1070.0
+blue_ramp_point_y: 94.0
+
+red_fortress_gain_x: 690.0
+red_fortress_gain_y: 746.0
+blue_fortress_gain_x: 690.0
+blue_fortress_gain_y: 746.0
+
+central_highland_gain_x: 1220.0
+central_highland_gain_y: 1092.0
+trapezoid_highland_gain_x: 430.0
+trapezoid_highland_gain_y: 1108.0
+
+# ========== 行为参数 ==========
+arrival_wait_time: 1.0
+deviation_threshold: 50.0
+init_attack_duration: 10.0
+attack_duration: 8.0
+defend_duration: 10.0
+
+# ========== Z值计算权重 ==========
+hp_weight: 0.3
+ammo_weight: 0.3
+base_weight: 0.4
+
+# ========== 补给阈值（血量/弹药比例，低于此值触发补给） ==========
+supply_threshold: 0.3
+
+# ========== 机器人自身属性 ==========
+max_hp: 400.0
+max_ammo: 300.0
+
+# ========== 决策阈值 ==========
+hero_attack_z_threshold: 0.4
+hero_attack_h_threshold: 0.5
+hero_high_priority_z_threshold: 0.3
+
+target_selection_z_high: 0.6
+target_selection_z_mid: 0.4
+target_selection_threshold_high: 0.6
+target_selection_threshold_mid: 0.5
+target_selection_threshold_low: 0.7
+
+gain_point_z_high: 0.6
+gain_point_z_mid: 0.4
+gain_point_threshold_high: 0.5
+gain_point_threshold_mid: 0.4
+gain_point_threshold_low: 0.6
+
+fortress_occupy_z_threshold: 0.6
+fortress_occupy_f_threshold: 0.7
+fortress_occupy_hp_ratio: 0.7
+
+# ========== 飞坡相关 ==========
+half_map_x: 1400.0
+
+# ========== 发布周期 ==========
+publish_interval_ms: 100
+
+# ========== 攻击优先级目标列表（从上到下依次判断） ==========
+priority_targets:
+  - type: "hero_deploy"        # 部署模式英雄（特殊评分模型）
+    weight_hp: 0.5             # 不使用，保留占位
+    weight_distance: 0.35
+    weight_ammo: 0.15
+    threshold: 0.5
+  - type: "infantry"           # 步兵
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "hero"               # 普通英雄
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "sentry"             # 哨兵
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "engineer"           # 工程
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5

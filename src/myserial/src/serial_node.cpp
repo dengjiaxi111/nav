@@ -461,15 +461,17 @@ void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryContr
     // spin_mode 直接映射到底盘模式（0~3），超范围值进行截断
     const uint8_t spin_mode = (msg->spin_mode > 3) ? 3 : msg->spin_mode;
     _send_frame_.setChassisMode(spin_mode);
+    _send_frame_._posture = (msg->posture > 3) ? 3 : msg->posture;
 
     RCLCPP_INFO_THROTTLE(
         this->get_logger(),
         *this->get_clock(),
         500,
-        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, auto_drive=%u",
+        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, auto_drive=%u",
         static_cast<unsigned>(msg->spin_mode),
         static_cast<unsigned>(_send_frame_.getChassisMode()),
         static_cast<unsigned>(_send_frame_.getGimbalMode()),
+        static_cast<unsigned>(_send_frame_._posture),
         static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
 }
 
