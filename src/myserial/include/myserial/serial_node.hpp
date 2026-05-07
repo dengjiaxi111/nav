@@ -33,6 +33,7 @@
 
 // 决策系统消息（decision_messages）
 #include "decision_messages/msg/our_robot_state.hpp"
+#include "decision_messages/msg/enemy_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
 #include "sentry_decision/msg/sentry_control.hpp"
 #include "robots_msgs/msg/leg_length.hpp"
@@ -123,6 +124,7 @@ public:
         enemypose_pub_ = this->create_publisher<robots_msgs::msg::EnemyPose>("EnemyPose", 2);   // 发布自瞄敌人信息
         // 决策系统消息（整合后直接发布，供决策节点订阅）
         our_state_pub_   = this->create_publisher<decision_messages::msg::OurRobotState>("/decision_messages/OurRobotState", 10);
+        enemy_state_pub_ = this->create_publisher<decision_messages::msg::EnemyRobotState>("/decision_messages/EnemyRobotState", 10);
         game_state_pub_  = this->create_publisher<decision_messages::msg::GameState>("/decision_messages/GameState", 10);
 
         enemy_tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
@@ -276,9 +278,11 @@ private:
     std::shared_ptr<tf2_ros::TransformBroadcaster> enemy_tf_pub_;
     // 决策系统消息发布者
     rclcpp::Publisher<decision_messages::msg::OurRobotState>::SharedPtr   our_state_pub_;
+    rclcpp::Publisher<decision_messages::msg::EnemyRobotState>::SharedPtr enemy_state_pub_;
     rclcpp::Publisher<decision_messages::msg::GameState>::SharedPtr       game_state_pub_;
     // 决策消息缓存（跨回调聚合：GameStatus 先收到，RobotStatus 后收到，合并后发布）
     decision_messages::msg::OurRobotState   our_state_;
+    decision_messages::msg::EnemyRobotState enemy_state_;
 
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr priority_sub_;
     rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr stair_mode_sub_;

@@ -19,6 +19,17 @@ uint8_t to_decision_team_id(uint8_t referee_robot_id)
     // 异常/未定义值兜底：按蓝方编号规则（>=100）判断，其余默认为红方
     return (referee_robot_id >= 100) ? 1 : 0;
 }
+
+uint32_t set_sentry_cmd_bits(uint32_t sentry_cmd, uint8_t offset, uint8_t width, uint32_t value)
+{
+    const uint32_t mask = ((1u << width) - 1u) << offset;
+    return (sentry_cmd & ~mask) | ((value << offset) & mask);
+}
+
+uint8_t get_event_bits(uint32_t event_data, uint8_t offset, uint8_t width)
+{
+    return static_cast<uint8_t>((event_data >> offset) & ((1u << width) - 1u));
+}
 }  // namespace
 
 // 初始化logger
@@ -325,12 +336,34 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     our_state_.robot_id   = to_decision_team_id(msg._robot_id);
     our_state_.current_hp = msg._my_HP;
     our_state_.max_hp     = 400;
+    our_state_.sentry_hp  = msg._my_HP;
+    our_state_.outpost_hp = msg._my_outpost_HP;
+    our_state_.base_hp    = msg._my_base_HP;
     our_state_.x          = msg._x;
     our_state_.y          = msg._y;
     our_state_.yaw        = msg._angle;
+    our_state_.hp_recovery_buff = static_cast<float>(msg._recovery_buff);
+    our_state_.defense_buff = static_cast<float>(msg._defence_buff);
+    our_state_.negative_defense_buff = static_cast<float>(msg._vulnerability_buff);
+    our_state_.attack_buff = static_cast<float>(msg._attack_buff);
     our_state_.allowance_17mm = msg._projectile_allowance_17mm;
+    our_state_.remaining_gold_coins = msg._remaining_gold_coin;
+    our_state_.reserve_allowance_17mm = (msg._sentry_info_2 >> 1) & 0x07FF;
+    our_state_.rfid_status = msg._rfid_status;
+    our_state_.hero_x = msg.our_hero_x;
+    our_state_.hero_y = msg.our_hero_y;
 
     our_state_pub_->publish(our_state_);
+
+    // ---------- EnemyRobotState ----------
+    // 串口当前只提供敌方血量；敌方全局位置和发弹量没有对应字段，保持默认值。
+    enemy_state_.enemy_hero_hp = msg._enemy_1_robot_HP;
+    enemy_state_.enemy_engineer_hp = msg._enemy_2_robot_HP;
+    enemy_state_.enemy_infantry3_hp = msg._enemy_3_robot_HP;
+    enemy_state_.enemy_infantry4_hp = msg._enemy_4_robot_HP;
+    enemy_state_.enemy_sentry_hp = msg._enemy_7_robot_HP;
+
+    enemy_state_pub_->publish(enemy_state_);
 
     // ---------- GameState ----------
     {
@@ -338,6 +371,20 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
         gs.competition_type     = msg._game_type;
         gs.stage                = msg._game_process;
         gs.stage_remaining_time = static_cast<double>(msg._stage_remain_time);
+        gs.supply_zone_occupation = msg._event_data & 0x01;
+        gs.energy_mechanism_status = get_event_bits(msg._event_data, 3, 4);
+        gs.small_energy_mechanism_activation = get_event_bits(msg._event_data, 3, 2);
+        gs.large_energy_mechanism_activation = get_event_bits(msg._event_data, 5, 2);
+        gs.central_highland_occupation = get_event_bits(msg._event_data, 7, 2);
+        gs.trapezoid_highland_occupation = get_event_bits(msg._event_data, 9, 2);
+        gs.dart_hit_time = get_event_bits(msg._event_data, 11, 9);
+        gs.dart_hit_target = get_event_bits(msg._event_data, 20, 3);
+        gs.center_gain_point_occupation = get_event_bits(msg._event_data, 23, 2);
+        gs.fortress_gain_point_occupation = get_event_bits(msg._event_data, 25, 2);
+        gs.outpost_gain_point_occupation = get_event_bits(msg._event_data, 27, 2);
+        gs.base_gain_point_occupation = (msg._event_data >> 29) & 0x01;
+        gs.exchanged_allowance = msg._sentry_info & 0x07FF;
+        gs.free_resurrection_available = (msg._sentry_info >> 19) & 0x01;
         game_state_pub_->publish(gs);
     }
     // ============================================================
@@ -461,17 +508,19 @@ void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryContr
     // spin_mode 直接映射到底盘模式（0~3），超范围值进行截断
     const uint8_t spin_mode = (msg->spin_mode > 3) ? 3 : msg->spin_mode;
     _send_frame_.setChassisMode(spin_mode);
-    _send_frame_._posture = (msg->posture > 3) ? 3 : msg->posture;
+    const uint8_t posture = (msg->posture > 3) ? 3 : msg->posture;
+    _send_frame_._sentry_cmd = set_sentry_cmd_bits(_send_frame_._sentry_cmd, 21, 2, posture);
 
     RCLCPP_INFO_THROTTLE(
         this->get_logger(),
         *this->get_clock(),
         500,
-        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, auto_drive=%u",
+        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, sentry_cmd=0x%08X, auto_drive=%u",
         static_cast<unsigned>(msg->spin_mode),
         static_cast<unsigned>(_send_frame_.getChassisMode()),
         static_cast<unsigned>(_send_frame_.getGimbalMode()),
-        static_cast<unsigned>(_send_frame_._posture),
+        static_cast<unsigned>(posture),
+        static_cast<unsigned>(_send_frame_._sentry_cmd),
         static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
 }
 

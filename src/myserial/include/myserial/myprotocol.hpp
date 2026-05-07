@@ -81,7 +81,7 @@ namespace rm
         int8_t _delta_y[9] = {0};
         int16_t _buff_yaw_diff_angle = 0;
         uint8_t _stair_mode = 0;  
-        uint8_t _posture = 0;
+        uint32_t _sentry_cmd = 0;
 
         uint8_t _eof = TAIL;
 
@@ -118,7 +118,7 @@ namespace rm
 
             cout << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
             cout << "  Stair Mode: " << static_cast<int>(_stair_mode) << endl;
-            cout << "  Posture: " << static_cast<int>(_posture) << endl;
+            cout << "  Sentry Cmd: 0x" << hex << _sentry_cmd << dec << endl;
 
             cout << "===========================================================" << endl;
         }
@@ -158,7 +158,7 @@ namespace rm
 
             oss << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
             oss << "  Stair Mode: " << static_cast<int>(_stair_mode) << std::endl;
-            oss << "  Posture: " << static_cast<int>(_posture) << std::endl;
+            oss << "  Sentry Cmd: 0x" << std::hex << _sentry_cmd << std::dec << std::endl;
 
             oss << "===========================================================" << std::endl;
             return oss.str();
