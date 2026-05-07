@@ -96,7 +96,7 @@ public:
     geometry_msgs::msg::Point getSupplyPoint() const;
     geometry_msgs::msg::Point getBaseGainPoint() const;
     geometry_msgs::msg::Point getFortressOccupyPoint() const;
-    geometry_msgs::msg::Point getRampPoint() const;
+    // ramp removed: getRampPoint() removed
     geometry_msgs::msg::Point getFortressGainPoint() const;
     geometry_msgs::msg::Point getCentralHighlandGain() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
@@ -187,7 +187,7 @@ public:
     void setTargetReached(bool reached);
     bool shouldLeaveTarget() const;
     bool hasWaitedAtTarget(double wait_seconds) const;
-    void updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode, uint8_t posture, uint8_t ramp_mode);
+    void updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode, uint8_t posture);
     std::shared_ptr<SentryControl> getControlMsg() const { return control_msg_; }
 
     void startBehavior(BehaviorType type, const geometry_msgs::msg::Point& target, double duration);
@@ -209,25 +209,7 @@ public:
     EnemyInfo* getEnemyById(const std::string& id);
     const EnemyInfo* getEnemyById(const std::string& id) const;
 
-    enum RampLockState {
-        RAMP_LOCK_INACTIVE = 0,
-        RAMP_LOCK_PENDING,
-        RAMP_LOCK_ACTIVE,
-        RAMP_LOCK_COMPLETING
-    };
-    void activateRampLock() { ramp_lock_state_ = RAMP_LOCK_PENDING; }
-    void setRampLockActive() { ramp_lock_state_ = RAMP_LOCK_ACTIVE; }
-    void setRampLockCompleting() { ramp_lock_state_ = RAMP_LOCK_COMPLETING; }
-    void deactivateRampLock() { ramp_lock_state_ = RAMP_LOCK_INACTIVE; }
-    bool isRampLockActive() const { return ramp_lock_state_ == RAMP_LOCK_ACTIVE || ramp_lock_state_ == RAMP_LOCK_COMPLETING; }
-    bool isRampLockPending() const { return ramp_lock_state_ == RAMP_LOCK_PENDING; }
-    bool isRampLockInactive() const { return ramp_lock_state_ == RAMP_LOCK_INACTIVE; }
-    RampLockState getRampLockState() const { return ramp_lock_state_; }
-
-    geometry_msgs::msg::Point original_target_before_ramp;
-    bool at_ramp_point = false;
-    bool ramp_mode_active = false;
-    bool ramp_in_process = false;
+    // ramp removed: related fields and methods removed
 
 private:
     struct Config {
@@ -286,7 +268,6 @@ private:
     std::shared_ptr<SentryControl> control_msg_;
     uint8_t robot_id_ = 0;
     uint8_t last_stage_ = 0;
-    RampLockState ramp_lock_state_ = RAMP_LOCK_INACTIVE;
 
     std::vector<PriorityConfig> priority_targets_config_;
 

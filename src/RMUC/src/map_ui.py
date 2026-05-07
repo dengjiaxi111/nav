@@ -164,9 +164,44 @@ class MapUI:
             if 'game_state' in current_status:
                 merged_status['game_state'] = current_status['game_state']
             
+            # 在写入前再次读取文件以合并可能的并发更新，随后原子替换写入
             os.makedirs("decision_messages", exist_ok=True)
-            with open(status_file, "w", encoding='utf-8') as f:
-                json.dump(merged_status, f, indent=2, ensure_ascii=False)
+            try:
+                if os.path.exists(status_file):
+                    with open(status_file, "r", encoding='utf-8') as f:
+                        latest = json.load(f)
+                else:
+                    latest = {}
+            except Exception:
+                latest = merged_status.copy()
+
+            # 将最新坐标写入最新内容，避免覆盖其他关键字段（如 base_hp）
+            if 'red_robots' not in latest:
+                latest['red_robots'] = {}
+            if 'blue_robots' not in latest:
+                latest['blue_robots'] = {}
+            for robot_id, robot in self.game_state.red_robots.items():
+                if str(robot_id) not in latest['red_robots']:
+                    latest['red_robots'][str(robot_id)] = {}
+                latest['red_robots'][str(robot_id)]['x'] = robot.x
+                latest['red_robots'][str(robot_id)]['y'] = robot.y
+            for robot_id, robot in self.game_state.blue_robots.items():
+                if str(robot_id) not in latest['blue_robots']:
+                    latest['blue_robots'][str(robot_id)] = {}
+                latest['blue_robots'][str(robot_id)]['x'] = robot.x
+                latest['blue_robots'][str(robot_id)]['y'] = robot.y
+            # 更新游戏状态部分
+            latest['game_state'] = current_status['game_state']
+
+            # 写入前打上时间戳
+            import time as _time
+            latest['meta'] = {'write_ts': _time.time()}
+            tmp_file = status_file + ".tmp"
+            with open(tmp_file, "w", encoding='utf-8') as f:
+                json.dump(latest, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, status_file)
             
         except Exception as e:
             print(f"地图UI保存状态时出错: {e}")

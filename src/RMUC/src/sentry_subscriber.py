@@ -11,10 +11,9 @@ class SentryStatusDisplay:
         # 初始化状态
         self.current_target = {'x': 0.0, 'y': 0.0}
         self.current_control = {
-            'gimbal_mode': 3,
+            'gimbal_mode': 0,
             'spin_mode': 0,
-            'posture': 3,
-            'ramp_mode': 0
+            'posture': 3
         }
         
         # 名称映射
@@ -25,17 +24,14 @@ class SentryStatusDisplay:
         }
         
         self.gimbal_names = {
-            0: "打符模式",
+            0: "不动",
             1: "打人模式",
             2: "打前哨站模式",
-            3: "不动"
         }
         
         self.spin_names = {
-            0: "不动",
-            1: "低速转",
-            2: "变速转",
-            3: "高速转"
+            0: "不转",
+            1: "转动",
         }
         
         # 状态历史
@@ -94,6 +90,4 @@ class SentryStatusDisplay:
         spin = self.current_control.get('spin_mode', 0)
         spin_name = self.spin_names.get(spin, f"未知({spin})")
         
-        ramp = "飞坡" if self.current_control.get('ramp_mode', 0) == 1 else "不飞坡"
-        
-        return f"{posture_name} | 云台: {gimbal_name} | 陀螺: {spin_name} | {ramp}"
+        return f"{posture_name} | 云台: {gimbal_name} | 陀螺: {spin_name}"

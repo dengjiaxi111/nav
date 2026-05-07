@@ -33,7 +33,7 @@ bool DecisionManager::shouldInterruptForResurrectionOrSupply() const {
     return blackboard_->resurrection_flag || needSupply();
 }
 bool DecisionManager::checkBaseCritical() const {
-    return blackboard_->our_base_hp < 1500;
+    return blackboard_->our_base_hp < 2500; // increased threshold so low base HP triggers defense
 }
 bool DecisionManager::checkOutpostDestroyed() const {
     return blackboard_->our_outpost_hp == 0;
@@ -174,16 +174,16 @@ void DecisionManager::transitionTo(State new_state) {
     switch (new_state) {
         case State::IDLE:
             blackboard_->resetCurrentBehavior();
-            blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_MOVE:
             blackboard_->startBehavior(BehaviorType::INIT_MOVE, blackboard_->getAttackPoint(), 0.0);
-            blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_ATTACK:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_LOW, POSTURE_ATTACK, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);
             break;
         case State::MOVE_TO_ATTACK_HERO:
         case State::MOVE_TO_ATTACK_ROBOT: {
@@ -195,7 +195,7 @@ void DecisionManager::transitionTo(State new_state) {
             BehaviorType bt = (new_state == State::MOVE_TO_ATTACK_HERO) ?
                               BehaviorType::MOVE_TO_ATTACK_HERO : BehaviorType::MOVE_TO_ATTACK_ROBOT;
             blackboard_->startBehavior(bt, target, 0.0);
-            blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         }
         case State::MOVE_TO_SUPPLY:
@@ -203,50 +203,50 @@ void DecisionManager::transitionTo(State new_state) {
         case State::MOVE_TO_BASE_DEFENSE:
         case State::MOVE_TO_GAIN_POINT:
         case State::MOVE_TO_FORTRESS:
-        case State::MOVE_TO_GUARD:       // 新增
-            blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
+        case State::MOVE_TO_GUARD:
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::ATTACK_HERO:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_VARIABLE, POSTURE_ATTACK, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
             break;
         case State::ATTACK_ROBOT:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_VARIABLE, POSTURE_ATTACK, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
             break;
         case State::SUPPLYING:
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
             break;
         case State::RESURRECTING:
             blackboard_->current_behavior.type = BehaviorType::RESURRECTING;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
             break;
         case State::BASE_DEFENSE:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
             break;
         case State::OCCUPY_GAIN_POINT:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
             break;
         case State::OCCUPY_FORTRESS:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_ATTACK, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
             break;
-        case State::GUARD:               // 新增
+        case State::GUARD:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
             break;
         default:
             break;
@@ -272,82 +272,9 @@ std::string DecisionManager::stateToString(State state) const {
         case State::OCCUPY_GAIN_POINT: return "OCCUPY_GAIN_POINT";
         case State::MOVE_TO_FORTRESS: return "MOVE_TO_FORTRESS";
         case State::OCCUPY_FORTRESS: return "OCCUPY_FORTRESS";
-        case State::RAMP_PROCESS: return "RAMP_PROCESS";
         case State::MOVE_TO_GUARD: return "MOVE_TO_GUARD";
         case State::GUARD: return "GUARD";
         default: return "UNKNOWN";
-    }
-}
-
-bool DecisionManager::handleRampProcess(DecisionOutput& output) {
-    static enum RampSubState {
-        RAMP_MOVING_TO_RAMP,
-        RAMP_FLYING,
-        RAMP_MOVING_TO_ORIGINAL
-    } ramp_substate = RAMP_MOVING_TO_RAMP;
-
-    if (!blackboard_->ramp_in_process) {
-        blackboard_->ramp_in_process = true;
-        blackboard_->activateRampLock();
-        ramp_substate = RAMP_MOVING_TO_RAMP;
-        blackboard_->startBehavior(BehaviorType::RAMP_PROCESS, blackboard_->getRampPoint(), 0.0);
-        blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
-        output.control_needs_publishing = true;
-        output.control_msg = *blackboard_->getControlMsg();
-        return true;
-    }
-
-    switch (ramp_substate) {
-        case RAMP_MOVING_TO_RAMP: {
-            geometry_msgs::msg::Point ramp_pt = blackboard_->getRampPoint();
-            if (blackboard_->isAtTarget(ramp_pt, 50.0)) {
-                std::cout << "[RAMP] 到达飞坡点，开始飞坡" << std::endl;
-                blackboard_->setRampLockActive();
-                blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_ON);
-                output.control_needs_publishing = true;
-                ramp_substate = RAMP_FLYING;
-                if (blackboard_->original_target_before_ramp.x != 0 || blackboard_->original_target_before_ramp.y != 0) {
-                    output.target_position = blackboard_->original_target_before_ramp;
-                    output.target_needs_publishing = true;
-                    blackboard_->setTargetPublished(true);
-                }
-            } else {
-                if (!blackboard_->isTargetPublished()) {
-                    output.target_position = ramp_pt;
-                    output.target_needs_publishing = true;
-                    blackboard_->setTargetPublished(true);
-                }
-            }
-            output.control_msg = *blackboard_->getControlMsg();
-            return true;
-        }
-        case RAMP_FLYING: {
-            if (blackboard_->original_target_before_ramp.x != 0 || blackboard_->original_target_before_ramp.y != 0) {
-                if (blackboard_->isAtTarget(blackboard_->original_target_before_ramp, 50.0)) {
-                    std::cout << "[RAMP] 飞坡完成，到达目标" << std::endl;
-                    blackboard_->deactivateRampLock();
-                    blackboard_->ramp_in_process = false;
-                    blackboard_->original_target_before_ramp = geometry_msgs::msg::Point();
-                    blackboard_->ramp_mode_active = false;
-                    blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
-                    output.control_needs_publishing = true;
-                    ramp_substate = RAMP_MOVING_TO_RAMP;
-                    transitionTo(State::IDLE);
-                    return false;
-                }
-            } else {
-                blackboard_->deactivateRampLock();
-                blackboard_->ramp_in_process = false;
-                transitionTo(State::IDLE);
-                return false;
-            }
-            output.control_msg = *blackboard_->getControlMsg();
-            return true;
-        }
-        default:
-            blackboard_->ramp_in_process = false;
-            transitionTo(State::IDLE);
-            return false;
     }
 }
 
@@ -358,11 +285,12 @@ DecisionOutput DecisionManager::executeDecision() {
 
     updateHeroDeployFlag();
 
+    // pre-match behavior: gimbal idle until 5s before battle, then set to ENEMY (1)
     if (blackboard_->stage != STAGE_BATTLE) {
         if (current_state_ != State::IDLE) transitionTo(State::IDLE);
         else {
-            uint8_t gimbal = (blackboard_->stage == 3 || blackboard_->stage == 4) ? GIMBAL_ENEMY : GIMBAL_IDLE;
-            blackboard_->updateControlMsg(gimbal, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
+            uint8_t gimbal = (blackboard_->stage_remaining_time <= 5.0) ? GIMBAL_ENEMY : GIMBAL_IDLE;
+            blackboard_->updateControlMsg(gimbal, SPIN_OFF, POSTURE_MOVE);
         }
         output.control_msg = *blackboard_->getControlMsg();
         output.decision_reason = "NOT_IN_BATTLE";
@@ -371,10 +299,6 @@ DecisionOutput DecisionManager::executeDecision() {
             blackboard_->setControlUpdated(false);
         }
         return output;
-    }
-
-    if (blackboard_->ramp_in_process || blackboard_->isRampLockPending()) {
-        if (handleRampProcess(output)) return output;
     }
 
     switch (current_state_) {
@@ -403,7 +327,6 @@ DecisionOutput DecisionManager::executeDecision() {
                 } else if (checkGainPoint()) {
                     transitionTo(State::MOVE_TO_GAIN_POINT);
                 } else {
-                    // 无攻击目标，移动到固定警戒点
                     transitionTo(State::MOVE_TO_GUARD);
                 }
             }
@@ -433,7 +356,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::IDLE);
             }
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_LOW, POSTURE_ATTACK, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
             }
             break;
@@ -447,21 +370,6 @@ DecisionOutput DecisionManager::executeDecision() {
             geometry_msgs::msg::Point target = getTargetPointForEnemy(current_enemy_id_);
             if (target.x == 0 && target.y == 0) {
                 transitionTo(State::IDLE);
-                break;
-            }
-            bool robot_in_red_half = (blackboard_->x < blackboard_->getHalfMapX());
-            bool target_in_blue_half = (target.x >= blackboard_->getHalfMapX());
-            bool robot_not_central = !region_manager_->isInCentralRegion(blackboard_->x, blackboard_->y);
-            bool target_not_central = !region_manager_->isInCentralRegion(target.x, target.y);
-
-            if (robot_in_red_half && target_in_blue_half &&
-                blackboard_->isRampLockInactive() &&
-                robot_not_central && target_not_central)
-            {
-                blackboard_->original_target_before_ramp = target;
-                blackboard_->ramp_in_process = true;
-                blackboard_->activateRampLock();
-                transitionTo(State::RAMP_PROCESS);
                 break;
             }
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
@@ -501,7 +409,7 @@ DecisionOutput DecisionManager::executeDecision() {
             if (elapsed >= blackboard_->getAttackDuration())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_VARIABLE, POSTURE_ATTACK, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
             }
             break;
@@ -529,7 +437,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 blackboard_->allowance_17mm >= blackboard_->getMaxAmmo())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
@@ -538,7 +446,7 @@ DecisionOutput DecisionManager::executeDecision() {
             if (!blackboard_->resurrection_flag && blackboard_->current_hp >= blackboard_->getMaxHp())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_IDLE, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
@@ -569,7 +477,7 @@ DecisionOutput DecisionManager::executeDecision() {
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
@@ -601,7 +509,7 @@ DecisionOutput DecisionManager::executeDecision() {
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
@@ -632,19 +540,17 @@ DecisionOutput DecisionManager::executeDecision() {
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_ATTACK, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
             }
             break;
         }
-        // ---------- 新增警戒状态处理 ----------
         case State::MOVE_TO_GUARD: {
             geometry_msgs::msg::Point target;
             target.x = GUARD_X;
             target.y = GUARD_Y;
-            // 高优先级打断
             if (shouldInterruptForResurrectionOrSupply() || checkBaseCritical()) {
-                transitionTo(State::IDLE);   // 回到 IDLE 重新判断
+                transitionTo(State::IDLE);
                 break;
             }
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
@@ -658,12 +564,10 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::GUARD: {
-            // 检查更高优先级任务
             if (shouldInterruptForResurrectionOrSupply() || checkBaseCritical()) {
                 transitionTo(State::IDLE);
                 break;
             }
-            // 警戒期间也尝试搜索攻击目标，若发现则退出警戒
             PriorityTargetResult ptarget = selectPriorityTarget();
             if (ptarget.valid) {
                 current_enemy_id_ = ptarget.enemy_id;
@@ -674,23 +578,20 @@ DecisionOutput DecisionManager::executeDecision() {
                 }
                 break;
             }
-            // 固定时间后重返 IDLE 重新全面评估（避免永远警戒）
             double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= 5.0) {   // 警戒 5 秒后回 IDLE
+            if (elapsed >= 5.0) {
                 transitionTo(State::IDLE);
                 break;
             }
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_LOW, POSTURE_DEFENSE, RAMP_OFF);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
         }
-        case State::RAMP_PROCESS:
-            transitionTo(State::IDLE);
-            break;
     }
 
+    output.target_needs_publishing = output.target_needs_publishing;
     output.control_msg = *blackboard_->getControlMsg();
     if (blackboard_->isControlUpdated()) {
         output.control_needs_publishing = true;

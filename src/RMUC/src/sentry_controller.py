@@ -68,17 +68,14 @@ class SentryController(Node):
         }
         
         self.gimbal_names = {
-            0: "打符模式",
+            0: "不动",
             1: "打人模式",
             2: "打前哨站模式",
-            3: "不动"
         }
         
         self.spin_names = {
-            0: "不动",
-            1: "低速转",
-            2: "变速转",
-            3: "高速转"
+            0: "不转",
+            1: "转动",
         }
         
         # 最后接收时间
@@ -122,8 +119,7 @@ class SentryController(Node):
             self.current_control = {
                 'gimbal_mode': msg.gimbal_mode,
                 'spin_mode': msg.spin_mode,
-                'posture': msg.posture,
-                'ramp_mode': msg.ramp_mode
+                'posture': msg.posture
             }
             self.last_control_time = time.time()
             
@@ -133,9 +129,8 @@ class SentryController(Node):
             gimbal_name = self.gimbal_names.get(gimbal, f"未知({gimbal})")
             spin = msg.spin_mode
             spin_name = self.spin_names.get(spin, f"未知({spin})")
-            ramp = "飞坡" if msg.ramp_mode == 1 else "不飞坡"
             
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 控制消息: {posture_name}, 云台:{gimbal_name}, 陀螺:{spin_name}, {ramp}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 控制消息: {posture_name}, 云台:{gimbal_name}, 陀螺:{spin_name}")
             
         except Exception as e:
             print(f"控制消息回调错误: {e}")

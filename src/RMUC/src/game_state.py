@@ -102,6 +102,8 @@ class GameState:
         
         # 自定义本机器人ID (0=红方, 1=蓝方)
         self.our_robot_id = 0
+        # 上次从文件成功写入的时间戳（用于避免旧文件覆盖新修改）
+        self.status_file_write_ts = 0.0
     
     def set_msg_interface(self, msg_interface):
         """设置消息接口"""
@@ -585,8 +587,13 @@ class GameState:
             current_status = self.to_dict()
             merged_status = {**existing_status, **current_status}
             os.makedirs("decision_messages", exist_ok=True)
-            with open(status_file, "w", encoding='utf-8') as f:
+            # 原子写入：先写入临时文件再替换
+            tmp_file = status_file + ".tmp"
+            with open(tmp_file, "w", encoding='utf-8') as f:
                 json.dump(merged_status, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, status_file)
         except Exception as e:
             print(f"保存状态文件时出错: {e}")
     
@@ -594,9 +601,20 @@ class GameState:
         try:
             status_file = os.path.join("decision_messages", "status.json")
             full_status = self.to_dict()
+            # 添加元信息：写入时间戳
+            import time as _time
+            ts = _time.time()
+            full_status['meta'] = {'write_ts': ts}
             os.makedirs("decision_messages", exist_ok=True)
-            with open(status_file, "w", encoding='utf-8') as f:
+            # 原子写入：先写入临时文件再替换，避免并发写入导致的 JSON 损坏
+            tmp_file = status_file + ".tmp"
+            with open(tmp_file, "w", encoding='utf-8') as f:
                 json.dump(full_status, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, status_file)
+            # 记录写入时间戳，防止旧文件覆盖
+            self.status_file_write_ts = ts
         except Exception as e:
             print(f"保存完整状态到文件时出错: {e}")
     
@@ -607,6 +625,14 @@ class GameState:
             if os.path.exists(status_file):
                 with open(status_file, "r", encoding='utf-8') as f:
                     status = json.load(f)
+                # 检查写入时间戳，避免旧文件覆盖新内存状态
+                file_ts = 0.0
+                try:
+                    file_ts = float(status.get('meta', {}).get('write_ts', 0.0))
+                except Exception:
+                    file_ts = 0.0
+                if file_ts <= self.status_file_write_ts:
+                    return
                 
                 # 加载机器人血量、弹药（坐标不加载）
                 red_robots = status.get('red_robots', {})

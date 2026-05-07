@@ -206,9 +206,14 @@ class MessageInterface(Node):
             self.enemy_pub.publish(enemy_msg)
             self.game_state_pub.publish(game_msg)
             self.our_robot_pub.publish(our_msg)
+
+            # Debug: 打印发布的基地血量，便于排查文件同步/发布问题
+            try:
+                print(f"[MSG_INTERFACE] Published OurRobotState: robot_id={our_msg.robot_id}, base_hp={our_msg.base_hp}")
+            except Exception:
+                pass
             
-            # 保存到文件（用于调试）
-            self.save_to_file(game_state)
+            # 不再写入 status.json（避免与 MapUI/GameState 并发写冲突）
             
             # 可选打印频率
             # if self.message_count % 10 == 0:
@@ -259,8 +264,18 @@ class MessageInterface(Node):
                 }
             
             os.makedirs(self.output_dir, exist_ok=True)
-            with open(os.path.join(self.output_dir, "status.json"), "w", encoding='utf-8') as f:
+            # 添加写入时间戳，便于其他进程判断是否为最新修改
+            import time as _time
+            status['meta'] = {'write_ts': _time.time()}
+
+            # 原子写入 status.json，避免并发写入导致文件损坏
+            status_file = os.path.join(self.output_dir, "status.json")
+            tmp_file = status_file + ".tmp"
+            with open(tmp_file, "w", encoding='utf-8') as f:
                 json.dump(status, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, status_file)
                 
         except Exception as e:
             print(f"保存状态到文件时出错: {e}")

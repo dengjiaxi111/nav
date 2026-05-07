@@ -33,7 +33,6 @@ enum class State {
     OCCUPY_GAIN_POINT,
     MOVE_TO_FORTRESS,
     OCCUPY_FORTRESS,
-    RAMP_PROCESS,
     MOVE_TO_GUARD,      // 新增：移动到警戒点
     GUARD               // 新增：在警戒点留守
 };
@@ -82,7 +81,7 @@ private:
     void transitionTo(State new_state);
     std::string stateToString(State state) const;
 
-    bool handleRampProcess(DecisionOutput& output);
+    // ramp process removed
 
     // 固定警戒点坐标（cm）
     static constexpr double GUARD_X = 690.0;

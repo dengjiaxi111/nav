@@ -18,7 +18,6 @@ Blackboard::Blackboard()
     control_msg_->gimbal_mode = GIMBAL_IDLE;
     control_msg_->spin_mode = SPIN_OFF;
     control_msg_->posture = POSTURE_MOVE;
-    control_msg_->ramp_mode = RAMP_OFF;
     resetAllPublishStates();
 }
 
@@ -43,10 +42,7 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_fortress_occupy.y = config["red_fortress_occupy_y"].as<double>();
         config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"].as<double>();
         config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"].as<double>();
-        config_.red_ramp_point.x = config["red_ramp_point_x"].as<double>();
-        config_.red_ramp_point.y = config["red_ramp_point_y"].as<double>();
-        config_.blue_ramp_point.x = config["blue_ramp_point_x"].as<double>();
-        config_.blue_ramp_point.y = config["blue_ramp_point_y"].as<double>();
+        // ramp points removed from config
         config_.red_fortress_gain.x = config["red_fortress_gain_x"].as<double>();
         config_.red_fortress_gain.y = config["red_fortress_gain_y"].as<double>();
         config_.blue_fortress_gain.x = config["blue_fortress_gain_x"].as<double>();
@@ -129,9 +125,7 @@ geometry_msgs::msg::Point Blackboard::getBaseGainPoint() const {
 geometry_msgs::msg::Point Blackboard::getFortressOccupyPoint() const {
     return (robot_id_ == 1) ? config_.blue_fortress_occupy : config_.red_fortress_occupy;
 }
-geometry_msgs::msg::Point Blackboard::getRampPoint() const {
-    return (robot_id_ == 1) ? config_.blue_ramp_point : config_.red_ramp_point;
-}
+// ramp removed
 geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const {
     return (robot_id_ == 1) ? config_.blue_fortress_gain : config_.red_fortress_gain;
 }
@@ -177,6 +171,9 @@ void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     allowance_17mm = static_cast<double>(msg->allowance_17mm);
     our_base_hp = static_cast<double>(msg->base_hp);
     our_outpost_hp = static_cast<double>(msg->outpost_hp);
+
+    std::cout << "[BLACKBOARD] updateOurState: robot_id=" << static_cast<int>(msg->robot_id)
+              << ", our_base_hp=" << our_base_hp << std::endl;
 
     uint8_t old_id = robot_id_;
     robot_id_ = msg->robot_id;
@@ -255,10 +252,8 @@ void Blackboard::resetForNewMatch() {
     resurrection_flag = false;
     at_current_target = false;
     target_arrival_time = -1.0;
-    ramp_in_process = false;
-    ramp_mode_active = false;
-    deactivateRampLock();
-    updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE, RAMP_OFF);
+    // ramp removed
+    updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE);
     resetAllPublishStates();
 }
 
@@ -295,11 +290,10 @@ bool Blackboard::hasWaitedAtTarget(double wait_seconds) const {
     return (current_time - target_arrival_time) >= wait_seconds;
 }
 
-void Blackboard::updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode, uint8_t posture, uint8_t ramp_mode) {
+void Blackboard::updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode, uint8_t posture) {
     control_msg_->gimbal_mode = gimbal_mode;
     control_msg_->spin_mode = spin_mode;
     control_msg_->posture = posture;
-    control_msg_->ramp_mode = ramp_mode;
     setControlUpdated(true);
 }
 

@@ -143,14 +143,12 @@ private:
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>(ctrl);
         control_pub_->publish(*msg);
         // 可选打印
-        const char* gimbal_str[] = {"打符","打人","打前哨站","不动"};
-        const char* spin_str[] = {"不动","低速转","变速转","高速转"};
+        const char* gimbal_str[] = {"不动","打人","打前哨站"};
+        const char* spin_str[] = {"不转","转动"};
         const char* posture_str[] = {"","进攻姿态","防御姿态","移动姿态"};
-        const char* ramp_str[] = {"不飞坡","飞坡"};
         std::cout << "[CONTROL] " << gimbal_str[ctrl.gimbal_mode] << ", "
-                  << spin_str[ctrl.spin_mode] << ", "
-                  << posture_str[ctrl.posture] << ", "
-                  << ramp_str[ctrl.ramp_mode] << std::endl;
+              << spin_str[ctrl.spin_mode] << ", "
+              << posture_str[ctrl.posture] << std::endl;
     }
 
     void publishStopControl() {
@@ -159,7 +157,6 @@ private:
         msg->gimbal_mode = GIMBAL_IDLE;
         msg->spin_mode = SPIN_OFF;
         msg->posture = POSTURE_MOVE;
-        msg->ramp_mode = RAMP_OFF;
         control_pub_->publish(*msg);
         std::cout << "[CONTROL] 停止模式" << std::endl;
     }
