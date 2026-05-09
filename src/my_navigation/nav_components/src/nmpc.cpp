@@ -79,6 +79,14 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
     node_->declare_parameter("nmpc.vel_lag_tau", params_.vel_lag_tau);
     node_->declare_parameter("nmpc.omega_lag_tau", params_.omega_lag_tau);
+    node_->declare_parameter("nmpc.capacitor_limit.v_safe", params_.capacitor_v_safe);
+    node_->declare_parameter("nmpc.capacitor_limit.v_low", params_.capacitor_v_low);
+    node_->declare_parameter("nmpc.capacitor_limit.protect_scale",
+                             params_.capacitor_protect_scale);
+    node_->declare_parameter("nmpc.capacitor_limit.low_scale",
+                             params_.capacitor_low_scale);
+    node_->declare_parameter("nmpc.capacitor_limit.filter_alpha",
+                             params_.capacitor_filter_alpha);
 
     // 代价权重（运行时注入）
     node_->declare_parameter("nmpc.Q_position", params_.Q_position);
@@ -189,6 +197,24 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.vel_lag_tau = std::max(0.05, node_->get_parameter("nmpc.vel_lag_tau").as_double());
     params_.omega_lag_tau =
         std::max(0.05, node_->get_parameter("nmpc.omega_lag_tau").as_double());
+    params_.capacitor_v_safe =
+        node_->get_parameter("nmpc.capacitor_limit.v_safe").as_double();
+    params_.capacitor_v_low =
+        node_->get_parameter("nmpc.capacitor_limit.v_low").as_double();
+    params_.capacitor_protect_scale =
+        node_->get_parameter("nmpc.capacitor_limit.protect_scale").as_double();
+    params_.capacitor_low_scale =
+        node_->get_parameter("nmpc.capacitor_limit.low_scale").as_double();
+    params_.capacitor_filter_alpha =
+        node_->get_parameter("nmpc.capacitor_limit.filter_alpha").as_double();
+    params_.capacitor_v_low = std::max(0.0, params_.capacitor_v_low);
+    params_.capacitor_v_safe = std::max(params_.capacitor_v_low + 0.1,
+                                        params_.capacitor_v_safe);
+    params_.capacitor_low_scale = std::clamp(params_.capacitor_low_scale, 0.0, 1.0);
+    params_.capacitor_protect_scale =
+        std::clamp(params_.capacitor_protect_scale, params_.capacitor_low_scale, 1.0);
+    params_.capacitor_filter_alpha =
+        std::clamp(params_.capacitor_filter_alpha, 0.0, 1.0);
 
     params_.Q_position = node_->get_parameter("nmpc.Q_position").as_double();
     params_.Q_orientation = node_->get_parameter("nmpc.Q_orientation").as_double();
@@ -258,13 +284,28 @@ void NMPC::initialize(rclcpp::Node* node) {
     RCLCPP_INFO(node_->get_logger(), "NMPC: 订阅里程计话题 %s", odom_topic.c_str());
 
     std::string chassis_odom_topic =
-        node_->declare_parameter("nmpc.chassis_odom_topic", "/ChassisOdom");
+        node_->declare_parameter("nmpc.chassis_odom_topic", "/Odometry");
     chassis_odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
         chassis_odom_topic, rclcpp::SensorDataQoS(),
         std::bind(&NMPC::chassisOdomCallback, this, std::placeholders::_1));
     RCLCPP_INFO(node_->get_logger(),
         "NMPC: 订阅底盘观测话题 %s (仅调试，不参与控制)",
         chassis_odom_topic.c_str());
+
+    std::string capacitor_voltage_topic =
+        node_->declare_parameter("nmpc.capacitor_voltage_topic", "/ChassisOdom");
+    capacitor_odom_sub_ = node_->create_subscription<robots_msgs::msg::ChassisOdom>(
+        capacitor_voltage_topic, rclcpp::SensorDataQoS(),
+        std::bind(&NMPC::capacitorOdomCallback, this, std::placeholders::_1));
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC: 电容限幅订阅 %s, V_low=%.2f, V_safe=%.2f, scale=(%.2f/%.2f/1.00), hysteresis=%.2fV, filter_alpha=%.2f",
+        capacitor_voltage_topic.c_str(),
+        params_.capacitor_v_low,
+        params_.capacitor_v_safe,
+        params_.capacitor_low_scale,
+        params_.capacitor_protect_scale,
+        kCapacitorHysteresisVoltage,
+        params_.capacitor_filter_alpha);
     
     RCLCPP_INFO(node_->get_logger(), 
         "✓ NMPC Controller initialized (N=%d, T=%.2f s, dt=%.3f s)", 
@@ -514,6 +555,9 @@ nav_core::ControlResult NMPC::computeVelocity(
     
     cmd_vel.linear.x = v_cmd;
     cmd_vel.angular.z = omega_cmd;
+    applyCapacitorOutputLimit(dt, cmd_vel);
+    v_cmd = cmd_vel.linear.x;
+    omega_cmd = cmd_vel.angular.z;
 
     if (startup_pivot_phase_active_) {
         const bool started_tracking =
@@ -608,6 +652,8 @@ void NMPC::reset() {
     startup_align_active_ = false;
     startup_align_engaged_ = false;
     startup_align_heading_error_ = 0.0;
+    capacitor_limit_level_ = CapacitorLimitLevel::NORMAL;
+    capacitor_limit_scale_ = 1.0;
     
     // 重置 solver
     if (acados_ocp_capsule_) {
@@ -625,6 +671,125 @@ void NMPC::chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(odom_mutex_);
     latest_chassis_odom_ = *msg;
     chassis_odom_received_ = true;
+}
+
+void NMPC::capacitorOdomCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg) {
+    const double voltage = static_cast<double>(msg->capacitor_voltage);
+    if (!std::isfinite(voltage) || voltage < 0.0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    capacitor_voltage_raw_ = voltage;
+    if (!capacitor_voltage_received_) {
+        capacitor_voltage_filtered_ = voltage;
+        capacitor_voltage_received_ = true;
+        return;
+    }
+    capacitor_voltage_filtered_ +=
+        params_.capacitor_filter_alpha * (voltage - capacitor_voltage_filtered_);
+}
+
+double NMPC::getCapacitorLimitScale(double filtered_voltage) {
+    const auto previous_level = capacitor_limit_level_;
+
+    switch (capacitor_limit_level_) {
+        case CapacitorLimitLevel::NORMAL:
+            if (filtered_voltage < params_.capacitor_v_low) {
+                capacitor_limit_level_ = CapacitorLimitLevel::LOW;
+            } else if (filtered_voltage < params_.capacitor_v_safe) {
+                capacitor_limit_level_ = CapacitorLimitLevel::PROTECT;
+            }
+            break;
+        case CapacitorLimitLevel::PROTECT:
+            if (filtered_voltage < params_.capacitor_v_low) {
+                capacitor_limit_level_ = CapacitorLimitLevel::LOW;
+            } else if (filtered_voltage > params_.capacitor_v_safe + kCapacitorHysteresisVoltage) {
+                capacitor_limit_level_ = CapacitorLimitLevel::NORMAL;
+            }
+            break;
+        case CapacitorLimitLevel::LOW:
+            if (filtered_voltage > params_.capacitor_v_low + kCapacitorHysteresisVoltage) {
+                capacitor_limit_level_ = CapacitorLimitLevel::PROTECT;
+            }
+            break;
+    }
+
+    switch (capacitor_limit_level_) {
+        case CapacitorLimitLevel::NORMAL:
+            capacitor_limit_scale_ = 1.0;
+            break;
+        case CapacitorLimitLevel::PROTECT:
+            capacitor_limit_scale_ = params_.capacitor_protect_scale;
+            break;
+        case CapacitorLimitLevel::LOW:
+            capacitor_limit_scale_ = params_.capacitor_low_scale;
+            break;
+    }
+
+    if (previous_level != capacitor_limit_level_) {
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "NMPC 电容限幅档位切换: %d -> %d, Vcap=%.2fV, scale=%.2f",
+            static_cast<int>(previous_level),
+            static_cast<int>(capacitor_limit_level_),
+            filtered_voltage,
+            capacitor_limit_scale_);
+    }
+
+    return capacitor_limit_scale_;
+}
+
+double NMPC::applyCapacitorOutputLimit(
+    double dt,
+    geometry_msgs::msg::Twist& cmd_vel)
+{
+    double filtered_voltage = 0.0;
+    double raw_voltage = 0.0;
+    bool voltage_received = false;
+    {
+        std::lock_guard<std::mutex> lock(odom_mutex_);
+        filtered_voltage = capacitor_voltage_filtered_;
+        raw_voltage = capacitor_voltage_raw_;
+        voltage_received = capacitor_voltage_received_;
+    }
+
+    if (!voltage_received) {
+        return 1.0;
+    }
+    if (!std::isfinite(dt) || dt <= 0.0) {
+        dt = T_horizon_ / static_cast<double>(N_horizon_);
+    }
+
+    const double scale = getCapacitorLimitScale(filtered_voltage);
+    if (scale >= 0.999) {
+        return scale;
+    }
+
+    const double prev_v = last_state_.size() > 5 ? last_state_[5] : 0.0;
+    const double prev_w = last_state_.size() > 6 ? last_state_[6] : 0.0;
+    const double dv_limit = params_.max_linear_accel * scale * dt;
+    const double dw_limit = params_.max_angular_accel * scale * dt;
+
+    if (dv_limit >= 0.0) {
+        cmd_vel.linear.x = prev_v + std::clamp(cmd_vel.linear.x - prev_v,
+                                               -dv_limit, dv_limit);
+    }
+    if (dw_limit >= 0.0) {
+        cmd_vel.angular.z = prev_w + std::clamp(cmd_vel.angular.z - prev_w,
+                                                -dw_limit, dw_limit);
+    }
+
+    RCLCPP_INFO_THROTTLE(
+        node_->get_logger(), *node_->get_clock(), 1000,
+        "NMPC 电容限幅: Vraw=%.2fV, Vf=%.2fV, scale=%.2f, vx=%.2f, wz=%.2f",
+        raw_voltage,
+        filtered_voltage,
+        scale,
+        cmd_vel.linear.x,
+        cmd_vel.angular.z);
+
+    return scale;
 }
 
 rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
@@ -750,6 +915,21 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
             } else if (name == "nmpc.omega_lag_tau") {
                 params_.omega_lag_tau = p.as_double();
                 changed = true;
+            } else if (name == "nmpc.capacitor_limit.v_safe") {
+                params_.capacitor_v_safe = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.capacitor_limit.v_low") {
+                params_.capacitor_v_low = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.capacitor_limit.protect_scale") {
+                params_.capacitor_protect_scale = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.capacitor_limit.low_scale") {
+                params_.capacitor_low_scale = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.capacitor_limit.filter_alpha") {
+                params_.capacitor_filter_alpha = p.as_double();
+                changed = true;
             } else if (name == "nmpc.Q_position") {
                 params_.Q_position = p.as_double();
                 changed = true;
@@ -834,6 +1014,14 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
     params_.horizon_min_length = std::max(0.1, params_.horizon_min_length);
     params_.vel_lag_tau = std::max(0.05, params_.vel_lag_tau);
     params_.omega_lag_tau = std::max(0.05, params_.omega_lag_tau);
+    params_.capacitor_v_low = std::max(0.0, params_.capacitor_v_low);
+    params_.capacitor_v_safe = std::max(params_.capacitor_v_low + 0.1,
+                                        params_.capacitor_v_safe);
+    params_.capacitor_low_scale = std::clamp(params_.capacitor_low_scale, 0.0, 1.0);
+    params_.capacitor_protect_scale =
+        std::clamp(params_.capacitor_protect_scale, params_.capacitor_low_scale, 1.0);
+    params_.capacitor_filter_alpha =
+        std::clamp(params_.capacitor_filter_alpha, 0.0, 1.0);
 
     if (need_update_constraints && acados_ocp_capsule_) {
         updateNMPCParameters();
@@ -1010,10 +1198,12 @@ bool NMPC::applyStartupAlignmentGate(
     cmd_vel.angular.x = 0.0;
     cmd_vel.angular.y = 0.0;
     cmd_vel.angular.z = omega_cmd;
+    applyCapacitorOutputLimit(T_horizon_ / static_cast<double>(N_horizon_), cmd_vel);
+    omega_cmd = cmd_vel.angular.z;
 
-    last_state_[3] = 0.0;
+    last_state_[3] = cmd_vel.linear.x;
     last_state_[4] = omega_cmd;
-    last_state_[5] = 0.0;
+    last_state_[5] = cmd_vel.linear.x;
     last_state_[6] = omega_cmd;
     last_control_[0] = 0.0;
     last_control_[1] = 0.0;

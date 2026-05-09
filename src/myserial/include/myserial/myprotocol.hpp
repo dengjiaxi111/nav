@@ -168,7 +168,7 @@ namespace rm
     /**
      * @brief: slh: 整体的接收通信结构体
      */
-    //  96 Byte
+    // 接收帧长度由 WHOLE_GET_LEN = sizeof(WholeGetFrame) 决定
     struct __attribute__((__packed__)) WholeGetFrame
     {
         uint8_t _sof = HEADER;
@@ -272,6 +272,9 @@ namespace rm
         
         // 1B 底盘状态
         uint8_t _chassis_status = 0; 
+
+        // 4B 底盘电容电压，单位：V
+        float _capacitor_voltage = 0.0f;
         
         uint8_t _eof = TAIL;
 
@@ -339,6 +342,10 @@ namespace rm
             cout << "[腿长信息]" << endl;
             cout << "  Leg Length: " << leg_length << endl;
 
+            cout << "[底盘状态]" << endl;
+            cout << "  Chassis Status: " << static_cast<int>(_chassis_status) << endl;
+            cout << "  Capacitor Voltage: " << _capacitor_voltage << " V" << endl;
+
             cout << "==========================================================" << endl;
         }
 
@@ -399,6 +406,10 @@ namespace rm
 
             oss << "[腿长信息]" << std::endl;
             oss << "  Leg Length: " << leg_length << std::endl;
+
+            oss << "[底盘状态]" << std::endl;
+            oss << "  Chassis Status: " << static_cast<int>(_chassis_status) << std::endl;
+            oss << "  Capacitor Voltage: " << _capacitor_voltage << " V" << std::endl;
 
             oss << "==========================================================" << std::endl;
 

@@ -6,6 +6,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
+#include <robots_msgs/msg/chassis_odom.hpp>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -50,6 +51,12 @@ public:
     void reset() override;
 
 private:
+    enum class CapacitorLimitLevel {
+        NORMAL,
+        PROTECT,
+        LOW,
+    };
+
     // ========== 核心算法 ==========
     /**
      * @brief 求解 NMPC 优化问题
@@ -100,6 +107,11 @@ private:
     bool applyStartupAlignmentGate(
         const geometry_msgs::msg::PoseStamped& current_pose,
         geometry_msgs::msg::Twist& cmd_vel);
+
+    double applyCapacitorOutputLimit(
+        double dt,
+        geometry_msgs::msg::Twist& cmd_vel);
+    double getCapacitorLimitScale(double filtered_voltage);
 
     /**
      * @brief 基于路径几何切线计算起步对准目标航向。
@@ -160,6 +172,7 @@ private:
     
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void capacitorOdomCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg);
 
     rcl_interfaces::msg::SetParametersResult onParametersChanged(
         const std::vector<rclcpp::Parameter>& parameters);
@@ -250,6 +263,13 @@ private:
         // 底层闭环速度一阶滞后模型时间常数（秒）
         double vel_lag_tau = 0.6;
         double omega_lag_tau = 0.6;
+
+        // 电容电压保护：固定倍率 + 低通 + 滞回，现场主要只调这两个阈值
+        double capacitor_v_safe = 20.0;
+        double capacitor_v_low = 16.0;
+        double capacitor_protect_scale = 0.6;
+        double capacitor_low_scale = 0.3;
+        double capacitor_filter_alpha = 0.3;
     } params_;
     
     // ========== ROS 接口 ==========
@@ -258,6 +278,8 @@ private:
     // linear.x = cmd_vel.v, linear.y = /ChassisOdom.v, linear.z = v_pred_1step
     // angular.x = a_cmd, angular.y = tau_v, angular.z = v_cmd_state_pred_1step
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr speed_observation_pub_;
+
+    rclcpp::Subscription<robots_msgs::msg::ChassisOdom>::SharedPtr capacitor_odom_sub_;
 
     // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, v_cmd, omega_cmd]
     std::array<double, 7> predicted_stage1_state_{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
@@ -281,6 +303,15 @@ private:
     bool startup_align_active_ = false;
     bool startup_align_engaged_ = false;
     double startup_align_heading_error_ = 0.0;
+
+    // 电容输出限幅内部状态
+    static constexpr double kCapacitorHysteresisVoltage = 0.5;
+
+    bool capacitor_voltage_received_ = false;
+    double capacitor_voltage_raw_ = 0.0;
+    double capacitor_voltage_filtered_ = 0.0;
+    CapacitorLimitLevel capacitor_limit_level_ = CapacitorLimitLevel::NORMAL;
+    double capacitor_limit_scale_ = 1.0;
 };
 
 }  // namespace nav_components
