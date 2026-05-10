@@ -52,6 +52,7 @@ namespace small_point_lio {
         // Batch更新辅助函数
         void handle_once_original();  // 原始逐点更新逻辑
         void handle_once_batch();     // Batch更新逻辑
+        void flush_batch_points();    // 提交当前Batch
     };
 
 }// namespace small_point_lio

@@ -50,6 +50,7 @@ namespace small_point_lio {
         bool use_batch_update = true;   // 是否启用Batch更新模式
         int batch_point_size = 50;      // Batch中的点数（一次性更新的点数）
         int batch_max_points = 500;     // Batch最大累积点数
+        double batch_max_duration = 0.002;  // Batch最大时间跨度（秒）
         
         // 性能调试参数
         bool enable_performance_debug = false;  // 是否启用性能调试（打印各环节耗时）
