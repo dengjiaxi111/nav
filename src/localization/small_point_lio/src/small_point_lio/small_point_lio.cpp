@@ -216,6 +216,63 @@ namespace small_point_lio {
         }
     }
 
+    void SmallPointLio::flush_batch_points() {
+        if (batch_points_buffer.empty()) {
+            return;
+        }
+
+        // 更新时间到最后一个点的时间
+        time_current = batch_points_buffer.back().timestamp;
+
+        // 状态预测
+        {
+            static AccumulativeTimer acc_timer("B1.predict_state", 10000, parameters.enable_performance_debug);
+            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
+            estimator.kf.predict_state(time_current);
+        }
+
+        // 准备Batch数据
+        {
+            static AccumulativeTimer acc_timer("B2.prepare_batch_data", 10000, parameters.enable_performance_debug);
+            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
+            estimator.batch_points_lidar_frame.clear();
+            estimator.batch_points_timestamps.clear();
+            estimator.batch_points_lidar_frame.reserve(batch_points_buffer.size());
+            estimator.batch_points_timestamps.reserve(batch_points_buffer.size());
+
+            for (const auto &pt: batch_points_buffer) {
+                estimator.batch_points_lidar_frame.push_back(pt.position);
+                estimator.batch_points_timestamps.push_back(pt.timestamp);
+            }
+        }
+
+        // Batch更新
+        bool batch_update_success = false;
+        {
+            static AccumulativeTimer acc_timer("B3.update_point_batch", 10000, parameters.enable_performance_debug);
+            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
+            batch_update_success = estimator.kf.update_point_batch();
+        }
+
+        // 将Batch中能完成坐标转换的点添加到地图
+        if (batch_update_success && !estimator.batch_points_odom_frame.empty()) {
+            static AccumulativeTimer acc_timer("B4.map_add_points", 10000, parameters.enable_performance_debug);
+            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
+            for (const auto &pt_odom: estimator.batch_points_odom_frame) {
+                estimator.ivox->add_point(pt_odom);
+            }
+        }
+
+        // 发布高频里程计（如果启用）
+        if (parameters.publish_odometry_without_downsample) {
+            publish_odometry(time_current);
+        }
+
+        // 清空Batch缓存
+        batch_points_buffer.clear();
+        batch_point_count = 0;
+    }
+
     void SmallPointLio::handle_once_batch() {
         // 统计一帧点云的总用时（Batch模式）
         static AccumulativeTimer frame_timer("0.frame_total_batch", 10000, parameters.enable_performance_debug);
@@ -291,6 +348,11 @@ namespace small_point_lio {
                     continue;
                 }
                 
+                if (!batch_points_buffer.empty() && parameters.batch_max_duration > 0.0 &&
+                    point_lidar_frame.timestamp - batch_points_buffer.front().timestamp >= parameters.batch_max_duration) {
+                    flush_batch_points();
+                }
+
                 // 收集点到Batch缓存
                 batch_points_buffer.push_back(point_lidar_frame);
                 batch_point_count++;
@@ -301,61 +363,16 @@ namespace small_point_lio {
                     batch_point_count >= parameters.batch_max_points ||
                     preprocess.point_deque.empty()) {
                     
-                    if (!batch_points_buffer.empty()) {
-                        // 更新时间到最后一个点的时间
-                        time_current = batch_points_buffer.back().timestamp;
-                        
-                        // 状态预测
-                        {
-                            static AccumulativeTimer acc_timer("B1.predict_state", 10000, parameters.enable_performance_debug);
-                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
-                            estimator.kf.predict_state(time_current);
-                        }
-                        
-                        // 准备Batch数据
-                        {
-                            static AccumulativeTimer acc_timer("B2.prepare_batch_data", 10000, parameters.enable_performance_debug);
-                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
-                            estimator.batch_points_lidar_frame.clear();
-                            estimator.batch_points_timestamps.clear();
-                            estimator.batch_points_lidar_frame.reserve(batch_points_buffer.size());
-                            estimator.batch_points_timestamps.reserve(batch_points_buffer.size());
-                            
-                            for (const auto &pt : batch_points_buffer) {
-                                estimator.batch_points_lidar_frame.push_back(pt.position);
-                                estimator.batch_points_timestamps.push_back(pt.timestamp);
-                            }
-                        }
-                        
-                        // Batch更新
-                        {
-                            static AccumulativeTimer acc_timer("B3.update_point_batch", 10000, parameters.enable_performance_debug);
-                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
-                            estimator.kf.update_point_batch();
-                        }
-                        
-                        // 将Batch中能完成坐标转换的点添加到地图
-                        if (!estimator.batch_points_odom_frame.empty()) {
-                            static AccumulativeTimer acc_timer("B4.map_add_points", 10000, parameters.enable_performance_debug);
-                            ScopedTimer timer(acc_timer, parameters.enable_performance_debug);
-                            for (const auto &pt_odom : estimator.batch_points_odom_frame) {
-                                estimator.ivox->add_point(pt_odom);
-                            }
-                        }
-                        
-                        // 发布高频里程计（如果启用）
-                        if (parameters.publish_odometry_without_downsample) {
-                            publish_odometry(time_current);
-                        }
-                        
-                        // 清空Batch缓存
-                        batch_points_buffer.clear();
-                        batch_point_count = 0;
-                    }
+                    flush_batch_points();
                 }
                 
             } else {
                 // IMU更新（与原版完全相同）
+                if (!batch_points_buffer.empty()) {
+                    flush_batch_points();
+                    continue;
+                }
+
                 if (imu_msg.timestamp < time_current) {
                     preprocess.imu_deque.pop_front();
                     continue;
