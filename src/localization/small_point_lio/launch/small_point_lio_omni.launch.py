@@ -8,12 +8,22 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
 
     declare_use_sim_time = DeclareLaunchArgument(
-        'use_sim_time',
-        default_value='false',
-        description='使用仿真时间'
+        "use_sim_time",
+        default_value="false",
+        description="使用仿真时间"
+    )
+    declare_cloud_registered_topic = DeclareLaunchArgument(
+        "cloud_registered_topic",
+        default_value="/cloud_registered",
+        description="配准点云输出话题"
+    )
+    declare_source_odom_topic = DeclareLaunchArgument(
+        "source_odom_topic",
+        default_value="/Odometry",
+        description="LIO 里程计输出话题"
     )
 
-    # 腿车固定外参：base_link -> livox_frame。
+    # 全向轮车固定外参：base_link -> livox_frame。
     # 修改外参时，只改这里的 xyz/rpy；xyz 会同步传给 LIO 点云过滤。
     lidar_x = "0.2"
     lidar_y = "0.0"
@@ -31,8 +41,8 @@ def generate_launch_description():
             PathJoinSubstitution(
                 [
                     FindPackageShare("small_point_lio"),
-                    "config",                                                                                                                                                                                                                                                                              
-                    "mid360.yaml",
+                    "config",
+                    "mid360_omni.yaml",
                 ]
             ),
             {
@@ -41,15 +51,19 @@ def generate_launch_description():
                     float(lidar_y),
                     float(lidar_z),
                 ],
-                'use_sim_time': LaunchConfiguration('use_sim_time'),
-            }
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+            },
+        ],
+        remappings=[
+            ("/cloud_registered", LaunchConfiguration("cloud_registered_topic")),
+            ("/Odometry", LaunchConfiguration("source_odom_topic")),
         ],
     )
 
     static_base_link_to_livox_frame = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
-        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
         arguments=[
             "--x",
             lidar_x,
@@ -58,7 +72,7 @@ def generate_launch_description():
             "--z",
             lidar_z,
             "--roll",
-            lidar_roll,  # "-0.5236",
+            lidar_roll,
             "--pitch",
             lidar_pitch,
             "--yaw",
@@ -68,28 +82,12 @@ def generate_launch_description():
             "--child-frame-id",
             "livox_frame",
         ],
-        # arguments=[
-        #     "--x",
-        #     "0.06",
-        #     "--y",
-        #     "0.0",
-        #     "--z",
-        #     "0.2",
-        #     "--roll",
-        #     "-0.7854",# "-0.5236",川大为3.14159 
-        #     "--pitch",
-        #     "0.0",
-        #     "--yaw",
-        #     "0.0",
-        #     "--frame-id",
-        #     "base_link",
-        #     "--child-frame-id",
-        #     "livox_frame",
-        # ],
     )
 
     return LaunchDescription([
         declare_use_sim_time,
+        declare_cloud_registered_topic,
+        declare_source_odom_topic,
         small_point_lio_node,
         static_base_link_to_livox_frame
     ])

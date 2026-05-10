@@ -1,6 +1,6 @@
 # 全向轮底盘迁移到 navigation2026 框架说明
 
-本文记录将老全向轮车接入当前并联腿导航框架的迁移选择与实现边界。当前阶段只做设计说明，不修改源码。
+本文记录将老全向轮车接入当前并联腿导航框架的迁移选择、实现边界和阶段落地状态。当前已完成阶段一的全向车独立启动入口与参数 profile 分离，并完成阶段二的全向速度适配闭环第一版。
 
 ## 1. 迁移目标
 
@@ -61,6 +61,13 @@ NMPC 在 base_link_fake 中输出 (vx_fake = v, vy_fake = 0, wz)
 
 这是一种“虚拟坐标系带来的全向执行能力”，不是“真正的全向 NMPC”。它能让最终下发给电控的速度包含 `vx/vy`，但 NMPC 的预测轨迹仍假设机器人沿 `base_link_fake` 的 x 轴运动。
 
+关键理解：
+
+- `vy` 不是当前 NMPC 求解出来的。
+- `vy` 是把 `base_link_fake` 下的前进速度旋转到 `base_link` 后得到的投影。
+- 只要 `base_link_fake` 的 yaw 维护正确，且电控能正确执行 `base_link` 下的 `vx/vy/wz`，底盘就能运动起来并跟随路径。
+- 这套方案的路径跟随能力来自“虚拟车头对准路径 + 全向底盘执行投影速度”，不是来自 NMPC 内部的横向速度优化。
+
 ## 3. 推荐控制适配方案
 
 推荐采用最小且自洽的方案：保留当前 NMPC，只在输出层做坐标变换。
@@ -120,7 +127,42 @@ vy_base = v * sin(delta)
 
 这样即使 NMPC 只输出一个前进速度，最终给电控的速度也可以同时包含 `speed_x` 和 `speed_y`。
 
-### 3.3 是否要在 NMPC 后额外生成 vy_fake
+直观例子：
+
+```text
+delta = 0 deg:
+  v = 1.0 m/s -> vx_base = 1.0,   vy_base = 0.0
+
+delta = 90 deg:
+  v = 1.0 m/s -> vx_base = 0.0,   vy_base = 1.0
+
+delta = 45 deg:
+  v = 1.0 m/s -> vx_base = 0.707, vy_base = 0.707
+```
+
+因此，全向底盘最终收到 `vx/vy` 并不是因为 NMPC 原生支持全向，而是因为虚拟车头和 `base_link` 存在 yaw 差。
+
+### 3.3 为什么能跟随路径
+
+迁移后的控制闭环可以理解为：
+
+```text
+nav_server 当前位姿: map -> base_link_fake
+NMPC 控制对象:      base_link_fake
+NMPC 输出:          沿 base_link_fake 的 x 轴前进，并调节 base_link_fake 的 yaw
+适配层输出:         将该前进速度旋转到 base_link，得到 vx_base/vy_base
+电控执行:           根据 base_link 下速度驱动全向底盘
+```
+
+当 `base_link_fake` 的 x 轴被维护到接近路径切线方向时，NMPC 输出的 `linear.x` 就代表“沿路径方向走”。适配层把这个速度转成 `base_link` 下的 `vx/vy`，全向底盘执行后，机器人在地图中的实际运动方向仍然是 `base_link_fake` 的 x 轴方向，因此可以跟随路径。
+
+这要求三件事同时成立：
+
+- `nav_server.base_frame = base_link_fake`，让规划控制使用虚拟车头。
+- `base_link_fake` 和 `base_link` 的 TF yaw 差正确。
+- 电控收到的 `vx_base/vy_base/wz` 的坐标语义确实是 `base_link`。
+
+### 3.4 是否要在 NMPC 后额外生成 vy_fake
 
 不建议一开始就在 NMPC 输出后人为加很大的 `vy_fake`。
 
@@ -169,12 +211,19 @@ NMPC 看到的 `theta` 就是虚拟控制坐标系的 yaw。
 ```text
 map
   -> odom
-    -> base_link              # 你的约定中为云台/雷达相关 base
+    -> base_link              # 按当前迁移约定：云台/雷达侧速度参考系
       -> livox_frame
       -> base_link_fake       # 虚拟导航控制基座
 ```
 
-如果保留旧车 `base_link_static -> base_link_fake` 的做法，也必须保证整棵 TF 树连通，并且 `map -> base_link_fake` 能稳定查到。
+`base_link_fake` 不是一个独立机器人，也不应有独立平移。推荐它与 `base_link` 同原点，只差一个 yaw：
+
+```text
+translation(base_link -> base_link_fake) = [0, 0, 0]
+rotation(base_link -> base_link_fake)    = yaw(delta)
+```
+
+如果保留旧车 `base_link_static -> base_link_fake` 的做法，也必须保证整棵 TF 树连通，并且 `map -> base_link_fake` 能稳定查到。无论父节点叫 `base_link` 还是 `base_link_static`，工程语义都应该保持：`base_link_fake` 是挂在真实速度参考系上的虚拟车头。
 
 `base_link_fake` 的 yaw 可以沿用旧 `fake_vel_transform` 的思想：根据 NMPC 输出的 `angular.z` 积分得到虚拟 heading。需要确认：
 
@@ -182,6 +231,16 @@ map
 - `angular.z` 积分方向是否和 TF 正方向一致。
 - 积分系数是否仍需要类似 `fake_angular_speed_coefficient`。
 - 电控是否也消费同一个 `angular.z`，如果消费，虚拟 yaw 和实际底盘 yaw 的关系是否会长期漂移。
+
+最小实现逻辑：
+
+```text
+delta += omega_cmd * dt
+delta = normalize(delta)
+publish TF: base_link -> base_link_fake, yaw = delta
+```
+
+其中 `omega_cmd` 来自 NMPC 输出的 `cmd_vel_fake.angular.z`。如果实车发现虚拟车头转得比路径跟踪期望慢或快，可以再评估是否引入比例系数；但第一版建议先保持物理一致，即系数为 1.0。
 
 ## 5. 里程计反馈要求
 
@@ -317,20 +376,239 @@ nav_server:
 
 `allow_reverse` 是否开启取决于虚拟坐标策略。如果 `base_link_fake` 始终会转到路径方向，可以保持 `false`；如果希望虚拟坐标允许反向走，才开启 `true`。
 
-## 10. 最小迁移步骤
+当前已补齐的全向车专用文件：
 
-1. 准备老车专用 launch，让 `nav_server` 的 `cmd_vel` remap 到 `/cmd_vel_fake`。
-2. 启动全向速度适配层，订阅 `/cmd_vel_fake`，发布 `/cmd_vel`。
-3. 设置 `base_frame = base_link_fake`。
-4. 发布并验证 `map -> odom -> base_link -> base_link_fake` TF。
-5. 修改老车雷达/IMU/云台外参，使 `/cloud_registered` 与 TF 一致。
-6. 启动 ROG-Map，确认 `/rog_map/map_2d` frame、原点、障碍方向正确。
-7. 关闭所有特殊地形和腿长逻辑。
-8. 初期设置 `nmpc.odom_feedback_alpha = 0.0`，先验证开环命令方向。
-9. 在 RViz 中给短目标，观察 `/cmd_vel_fake` 与 `/cmd_vel`：
-   - `/cmd_vel_fake.linear.y` 可以为 0。
-   - `/cmd_vel.linear.x/y` 应随 `base_link_fake` 和 `base_link` 的夹角变化。
-10. 方向确认后，再逐步接入 `/Odometry/fake` 反馈。
+```text
+src/my_navigation/nav_bringup/launch/run_omni.launch.py
+src/my_navigation/nav_bringup/launch/navigation_omni.launch.py
+src/my_navigation/nav_bringup/scripts/omni_cmd_adapter.py
+src/my_navigation/nav_bringup/scripts/omni_stage3_check.py
+src/my_navigation/nav_bringup/config/nav_params_omni.yaml
+
+src/localization/small_point_lio/launch/small_point_lio_omni.launch.py
+src/localization/small_point_lio/config/mid360_omni.yaml
+
+src/localization/localization_initializer/config/initializer_omni.yaml
+
+src/mapping/rog_map_ros2_node/config/rog_map_omni.yaml
+src/mapping/rog_map_ros2_node/config/projector_omni.yaml
+src/mapping/rog_map_ros2_node/config/stair_detector_omni.yaml
+```
+
+全向车顶层启动入口默认使用这些 `_omni` 文件，并默认启动 `omni_cmd_adapter.py`。LIO 入口使用 `mid360_omni.yaml`，并在 `small_point_lio_omni.launch.py` 内固定写入 `base_link -> livox_frame` 外参；同一份 xyz 会由 launch 传给 LIO 的 `base_link_to_lidar_xyz` 参数，避免 TF 外参和 LIO 点云过滤外参不一致。
+
+## 10. 改造执行步骤
+
+阶段不宜太碎。下面按耦合关系合并成 5 个工程阶段：先把双车 profile 分开，再一次性打通全向模式的控制坐标和速度适配，然后迁移定位/ROG-Map，最后做实车闭环和性能恢复。
+
+### 阶段 1：双车 profile 与配置隔离
+
+目标：保护现有腿车链路，同时给全向轮建立独立启动入口。
+
+状态：已完成第一版文件分离。当前只新增/更新全向车入口和 `_omni` 参数文件，不改腿车默认入口。
+
+动作：
+
+- 保留当前腿车默认入口，例如 `run.launch.py`，或另建 `run_wheelleg.launch.py`。
+- 新增全向轮入口，例如 `run_omni.launch.py`，不建议一开始就只靠运行时参数热切。
+- 不直接覆盖腿车现有配置，新增全向轮专用配置：
+
+```text
+nav_params_omni.yaml
+mid360_omni.yaml
+initializer_omni.yaml
+rog_map_omni.yaml
+projector_omni.yaml
+stair_detector_omni.yaml
+```
+
+- 全向轮 launch 中传入 `nav_params_omni.yaml`，并默认启动 `omni_cmd_adapter`。
+
+验收：
+
+- 腿车原启动命令仍能启动原链路。
+- 全向轮有独立启动入口。
+- 两车配置文件互不覆盖，避免改全向轮时破坏腿车。
+
+### 阶段 2：全向控制适配闭环
+
+目标：一次性打通 `base_link_fake`、`/cmd_vel_fake -> /cmd_vel`、开环 NMPC 三件强耦合的事情，让底盘能按虚拟车头方向运动。
+
+状态：已完成第一版。当前实现不重建 NMPC 模型，而是在 `nav_bringup/scripts/omni_cmd_adapter.py` 中完成速度坐标转换、虚拟车头 TF 发布和 `/Odometry/fake` 生成。
+
+动作：
+
+- 在 `nav_params_omni.yaml` 中设置：
+
+```yaml
+base_frame: "base_link_fake"
+
+nmpc:
+  odom_topic: "/Odometry/fake"
+  odom_feedback_alpha: 0.0
+```
+
+- 关闭特殊地形相关逻辑：
+
+```yaml
+special_terrain:
+  enable_stair_layer: false
+  enable_stair_fsm: false
+  enable_stair_mode_detection: false
+  enable_fly_slope_mode_detection: false
+```
+
+- 将 `nav_server` 的 `cmd_vel` remap 到 `/cmd_vel_fake`。
+- 新增或迁移 `omni_cmd_adapter`：
+  - 订阅 `/cmd_vel_fake`。
+  - 维护并发布 `base_link -> base_link_fake` TF。
+  - 使用自身维护并发布的 yaw 差 `delta`。
+  - 发布 `/cmd_vel` 给 `myserial`。
+
+速度转换：
+
+```text
+vx_base = vx_fake * cos(delta) - vy_fake * sin(delta)
+vy_base = vx_fake * sin(delta) + vy_fake * cos(delta)
+wz_base = wz_fake
+```
+
+第一版保持：
+
+```text
+vx_fake = NMPC linear.x
+vy_fake = 0
+wz_fake = NMPC angular.z
+```
+
+- 同时生成 `/Odometry/fake`。第一版中 `odom_feedback_alpha` 先保持 `0.0`，因此 `/Odometry/fake` 主要用于观测和后续闭环验证；确认坐标语义正确后再逐步提高反馈权重。
+
+验收：
+
+- `tf2_echo map base_link_fake` 稳定输出。
+- `ros2 topic list` 中能看到 `/cmd_vel_fake`、`/cmd_vel`、`/Odometry/fake`。
+- 手动发布 `/cmd_vel_fake.linear.x = 1.0`：
+  - `delta = 0 deg` 时，`/cmd_vel` 主要为 `linear.x = 1.0`。
+  - `delta = 90 deg` 时，`/cmd_vel` 主要为 `linear.y = 1.0`。
+- `angular.z` 正方向和 `base_link_fake` yaw 增大方向一致。
+
+### 阶段 3：定位外参与 ROG-Map 动态层
+
+目标：把老车雷达/IMU/云台外参和动态障碍链路接到新框架里。
+
+状态：已完成第一版工程接线。`small_point_lio_omni.launch.py` 固定写入全向车 `base_link -> livox_frame` 外参；`run_omni.launch.py` 现在集中暴露以下关键入口：
+
+```text
+cloud_registered_topic
+source_odom_topic
+dynamic_layer_topic
+rog_map_frame
+enable_stage3_check
+```
+
+其中：
+
+- `small_point_lio_omni.launch.py` 发布 `base_link -> livox_frame`，并用同一份固定 xyz 给 LIO 设置 `base_link_to_lidar_xyz`。
+- `localization_initializer` 默认使用 `/cloud_registered`，通过 launch remapping 接到 `cloud_registered_topic`。
+- ROG-Map 默认使用 `/cloud_registered` 和 `/Odometry`，通过 launch remapping 接到 `cloud_registered_topic` 和 `source_odom_topic`。
+- `projector.topic_name` 由 `dynamic_layer_topic` 覆盖，`nav_server.dynamic_layer_topic` 同步使用同一个 topic。
+- `projector.frame_id` 由 `rog_map_frame` 覆盖，默认仍为 `odom`。
+- `omni_stage3_check.py` 可选启动，用于检查 TF 和关键 topic 是否连通。
+
+动作：
+
+- 修改老车专用 LIO 配置，例如 `mid360_omni.yaml`。
+- 修改雷达、IMU、云台相关静态/动态 TF。
+- 确认 `/cloud_registered` 的 frame 与 TF 树一致。
+- 确认 `map -> odom -> base_link -> base_link_fake` 连通。
+- 使用 `rog_map_omni.yaml` 和 `projector_omni.yaml`，输出 `/rog_map/map_2d`。
+- `nav_server` 保持：
+
+```yaml
+enable_dynamic_layer: true
+dynamic_layer_topic: "/rog_map/map_2d"
+```
+
+验收：
+
+- 静止时 `/Odometry` 不明显跳变。
+- RViz 中点云、机器人模型、地图方向一致。
+- `/rog_map/map_2d.header.frame_id` 与导航侧预期一致。
+- 机器人前方真实障碍在融合地图中出现在正确方向。
+
+可选检查命令：
+
+```bash
+ros2 launch nav_bringup run_omni.launch.py enable_stage3_check:=true
+```
+
+或者导航已经启动后单独运行：
+
+```bash
+ros2 run nav_bringup omni_stage3_check.py
+```
+
+检查脚本会确认：
+
+- `map <- odom`
+- `odom <- base_link`
+- `base_link <- base_link_fake`
+- `base_link <- livox_frame`
+- `map <- base_link_fake`
+- `/cloud_registered`
+- `/Odometry`
+- `/Odometry/fake`
+- `/rog_map/map_2d`
+
+### 阶段 4：低速实车路径跟随验证
+
+目标：用保守速度确认底盘能动起来并沿路径走。
+
+动作：
+
+- 限低速度和角速度，例如：
+
+```yaml
+nmpc:
+  max_linear_vel: 0.5
+  max_angular_vel: 1.0
+  odom_feedback_alpha: 0.0
+```
+
+- 在空旷区域给 1 到 2 米短目标。
+- 观察 `/cmd_vel_fake`、`/cmd_vel`、`map -> base_link_fake`、实际底盘运动方向。
+- 保持第一版不开大幅 `vy_fake` 横向补偿。
+
+验收：
+
+- `base_link_fake` 指向路径方向时，底盘实际运动方向与路径一致。
+- `delta` 不同角度下，底盘仍能朝 `base_link_fake` x 轴方向移动。
+- 机器人不会因为 TF 方向错误出现横着反走、绕圈或原地振荡。
+- 开启 ROG-Map 动态层后，新增障碍能影响规划或代价地图。
+
+### 阶段 5：反馈、速度和恢复逻辑收敛
+
+目标：主链路稳定后，再逐步提高闭环程度、速度和恢复可靠性。
+
+动作：
+
+- 逐步提高 `odom_feedback_alpha`：
+
+```text
+0.0 -> 0.2 -> 0.5
+```
+
+- 根据实车表现调整 `vel_lag_tau`、`omega_lag_tau`。
+- 再逐步提高 `max_linear_vel`、`max_angular_vel`。
+- 保持现有直退、旋转、弧线退恢复逻辑，确认它们经过适配层后仍能被电控正确执行。
+- 暂不引入全向横移恢复。主路径跟随稳定后，再考虑新增 `OmniEscapeRecovery`。
+
+验收：
+
+- 提高速度后路径跟随仍稳定。
+- 里程计反馈不会让 NMPC 出现拖拽、反向回正或频繁停车。
+- 恢复时 `/cmd_vel_fake` 到 `/cmd_vel` 的转换方向正确。
+- 恢复失败不会卡死在错误 TF 或错误模式中。
 
 ## 11. 验证清单
 

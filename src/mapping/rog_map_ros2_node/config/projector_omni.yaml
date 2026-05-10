@@ -1,0 +1,86 @@
+# Omni chassis 2D projector profile.
+#
+# The omni robot does not use dynamic leg-length or stair traversal by default.
+# Adjust robot_width/base_to_ground_default here for the omni chassis geometry.
+
+# ROS2 标准参数文件：Map2DProjector 参数
+#
+# 参数加载链路：
+#   launch/yaml -> integration_component(读取 projector.*) -> Map2DProjector(去前缀后读取)
+#
+# 重要说明（根据当前源码核对）：
+# 1) 推荐使用 `projector.base_to_ground_default`。
+# 2) 为兼容旧配置，代码仍支持 `projector.base_to_ground`（但建议后续迁移）。
+
+/**:
+  ros__parameters:
+    # === 机器人几何参数 ===
+    projector.robot_height: 0.8           # [m] 机器人本体高度（用于可通过高度判断）
+    projector.robot_width: 0.4            # [m] 机器人宽度（用于邻域/可通行性分析）
+    projector.base_to_ground_default: 0.15 # [m] base_link 到地面的默认距离（推荐键名）
+    projector.base_to_ground: 0.15         # [m] 兼容旧键名（仍可用，建议迁移到 base_to_ground_default）
+    projector.ground_tolerance: 0.08      # [m] 地面高度容差，抑制小起伏误判
+
+    # === 动态腿长相关 ===
+    projector.enable_dynamic_leg_length: false   # 是否通过 TF(base_link->wheel_frame)动态估计离地高度
+    projector.wheel_frame: "wheel_link"          # 动态腿长查询的轮子坐标系
+    projector.leg_length_min: 0.08               # [m] 动态腿长最小夹紧值
+    projector.leg_length_max: 0.25               # [m] 动态腿长最大夹紧值
+    projector.enable_leg_length_topic: false     # 是否直接订阅腿长，使用 base_to_ground = leg_length + offset
+    projector.leg_length_topic: "LegLength"      # 腿长反馈话题，来自 myserial
+    projector.leg_length_offset: 0.00            # [m] 结构偏置；开启直接腿长时叠加到 leg_length
+
+    # === 柱状高程分类阈值 ===
+    projector.slope_height_max: 0.2       # [m] 高度差低于该值倾向视作可通行坡/平面
+    projector.step_height_min: 0.10         # [m] 台阶高度下限（低于此值视作小起伏）
+    projector.step_height_max: 0.55         # [m] 台阶高度上限（高于此值倾向障碍）
+    projector.obstacle_height_min: 0.25     # [m] 障碍物高度下限
+    projector.high_occupancy_thresh: 0.85    # 占据率阈值（高占据柱体更偏向障碍判断）
+    projector.keep_step_cells: false        # 是否将台阶栅格保留为 STEP；false 时按 FREE 输出
+    projector.enable_obstacle_support_filter: true  # 是否启用 obstacle 邻域支持过滤
+    projector.obstacle_support_radius_cells: 1      # 邻域半径，1 表示 3x3
+    projector.obstacle_min_support_count: 2         # 包含自身在内的最小 obstacle 候选数量
+    projector.obstacle_support_max_height: 0.25     # [m] 仅对低矮/薄层 obstacle 候选启用过滤
+
+    # === 法向量/PCA判别参数 ===
+    projector.normal_z_slope_thresh: 0.75   # |nz| 阈值，越大越接近水平地面/缓坡
+    projector.normal_z_wall_thresh: 0.30    # |nz| 阈值，低于该值更接近垂直墙体
+    projector.normal_min_points: 4           # 每柱计算法向量所需最少点数
+    projector.planarity_thresh: 0.5          # 平面性阈值（PCA 特征值比）
+
+    # === 邻域/连通坡面过滤 ===
+    projector.enable_slope_region_filter: true       # 启用邻域PCA+连通域坡面识别
+    projector.slope_region_neighbor_radius: 2        # 邻域PCA半径，2 表示 5x5 栅格
+    projector.slope_region_min_points: 12            # 邻域内最少点数
+    projector.slope_region_min_cells: 8             # 连通坡面最少栅格数
+    projector.slope_region_max_angle_deg: 20.0       # 最大可通行坡角；40deg 对应 |nz|≈0.766
+    projector.slope_region_planarity_thresh: 0.65    # 邻域平面性阈值
+    projector.slope_region_neighbor_dz_margin: 0.025  # 相邻栅格高度连续余量
+
+    # === 地图范围/分辨率 ===
+    projector.map_range_x: 12.0              # [m] 机器人中心前后左右窗口 X 范围
+    projector.map_range_y: 10.0              # [m] 机器人中心前后左右窗口 Y 范围
+    projector.resolution: 0.05               # [m/cell] 2D 栅格分辨率
+
+    # === 3D查询高度窗口（相对机器人高度）===
+    projector.z_min_relative: -0.5           # [m] 查询框下边界（robot_z + 此值）
+    projector.z_max_relative: 2.0            # [m] 查询框上边界（robot_z + 此值）
+
+    # === PGM mask 清除层 ===
+    projector.enable_clear_mask_layer: false      # 启用后，黑色 mask 像素覆盖处的 2D 障碍会被清为 FREE
+    projector.clear_mask_yaml_path: ""            # YAML 路径，含 image/resolution/origin
+    projector.clear_mask_resolution: 0.05         # [m/pixel] mask 分辨率；YAML 模式会被 resolution 覆盖
+    projector.clear_mask_origin_x: 0.0            # [m] mask 左下角在 odom/map 中的 x；YAML 模式会被 origin[0] 覆盖
+    projector.clear_mask_origin_y: 0.0            # [m] mask 左下角在 odom/map 中的 y；YAML 模式会被 origin[1] 覆盖
+    projector.clear_mask_black_threshold: 10      # 像素值 <= 该阈值视作黑色清除像素
+
+    # === 发布配置 ===
+    projector.publish_rate: 20.0             # [Hz] 地图更新/发布频率
+    projector.frame_id: "odom"              # 输出 OccupancyGrid 坐标系
+    projector.topic_name: "/rog_map/map_2d" # 输出 2D 地图话题名
+
+    # === 兼容/调试项 ===
+    projector.input_cloud_topic: "/rog_map/inf_occ"   # 历史topic模式参数（当前直连 ROG-Map，预留兼容）
+    projector.enable_debug_log: false                  # 详细日志开关
+    projector.enable_step_debug_viz: false             # 台阶调试可视化开关
+    projector.step_debug_topic: "rog_map/step_debug"  # 台阶调试可视化话题

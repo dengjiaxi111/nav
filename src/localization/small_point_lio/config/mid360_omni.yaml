@@ -1,3 +1,10 @@
+# Omni chassis Small Point-LIO profile.
+#
+# Keep this file separate from mid360.yaml so the wheel-leg robot can keep its
+# current localization tuning. For the omni robot, update the lidar topics here.
+# The base_link -> livox_frame external calibration is defined in
+# launch/small_point_lio_omni.launch.py.
+
 small_point_lio:
     ros__parameters:
         lidar_topic: /livox/lidar_192_168_1_199                 # 点云话题名
