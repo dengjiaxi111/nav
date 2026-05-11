@@ -208,7 +208,15 @@ add_executable(lidar_roll_calibrator
   src/lidar_roll_calibrator.cpp
 )
 
+add_executable(base_height_calibrator
+  src/base_height_calibrator.cpp
+)
+
 target_link_libraries(lidar_roll_calibrator
+  ${PCL_LIBRARIES}
+)
+
+target_link_libraries(base_height_calibrator
   ${PCL_LIBRARIES}
 )
 
@@ -220,9 +228,18 @@ ament_target_dependencies(lidar_roll_calibrator
   livox_ros_driver2
 )
 
+ament_target_dependencies(base_height_calibrator
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  pcl_conversions
+  livox_ros_driver2
+)
+
 install(TARGETS 
   rog_map_node 
   lidar_roll_calibrator
+  base_height_calibrator
   rog_map_component 
   map_2d_projector_component
   stair_detector_component
