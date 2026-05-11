@@ -28,6 +28,7 @@ find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 find_package(rog_map REQUIRED)
 find_package(robots_msgs REQUIRED)
+find_package(livox_ros_driver2 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # 生成自定义消息
@@ -203,8 +204,25 @@ rclcpp_components_register_node(integration_component
   EXECUTABLE integration_node
 )
 
+add_executable(lidar_roll_calibrator
+  src/lidar_roll_calibrator.cpp
+)
+
+target_link_libraries(lidar_roll_calibrator
+  ${PCL_LIBRARIES}
+)
+
+ament_target_dependencies(lidar_roll_calibrator
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  pcl_conversions
+  livox_ros_driver2
+)
+
 install(TARGETS 
   rog_map_node 
+  lidar_roll_calibrator
   rog_map_component 
   map_2d_projector_component
   stair_detector_component
