@@ -95,10 +95,6 @@ public:
         declare_parameter("escape.preferred_search_distance", 1.0);
         declare_parameter("escape.preferred_search_half_angle", 0.35);
         declare_parameter("escape.enable_release_maneuver", true);
-        declare_parameter("escape.release_ignore_unknown", false);
-        declare_parameter("escape.release_initial_occupied_tolerance", 0.25);
-        declare_parameter("escape.release_require_esdf_improvement", true);
-        declare_parameter("escape.release_esdf_regression_tolerance", 0.02);
         declare_parameter("escape.backup_dist", 0.25);
         declare_parameter("escape.backup_vel", -0.20);
         declare_parameter("escape.backup_timeout", 1.8);
@@ -108,7 +104,6 @@ public:
         declare_parameter("escape.arc_backup_vel", -0.18);
         declare_parameter("escape.arc_backup_angular_vel", 0.45);
         declare_parameter("escape.arc_backup_timeout", 1.8);
-        declare_parameter("escape.arc_backup_safety_check_duration", 1.2);
         declare_parameter("escape.rotation_speed", 0.3);
         declare_parameter("escape.forward_speed", 0.15);
         declare_parameter("escape.yaw_tolerance", 0.1);
@@ -121,13 +116,6 @@ public:
         escape_preferred_search_distance_ = get_parameter("escape.preferred_search_distance").as_double();
         escape_preferred_search_half_angle_ = get_parameter("escape.preferred_search_half_angle").as_double();
         escape_enable_release_maneuver_ = get_parameter("escape.enable_release_maneuver").as_bool();
-        escape_release_ignore_unknown_ = get_parameter("escape.release_ignore_unknown").as_bool();
-        escape_release_initial_occupied_tolerance_ =
-            get_parameter("escape.release_initial_occupied_tolerance").as_double();
-        escape_release_require_esdf_improvement_ =
-            get_parameter("escape.release_require_esdf_improvement").as_bool();
-        escape_release_esdf_regression_tolerance_ =
-            get_parameter("escape.release_esdf_regression_tolerance").as_double();
         escape_backup_dist_ = get_parameter("escape.backup_dist").as_double();
         escape_backup_vel_ = get_parameter("escape.backup_vel").as_double();
         escape_backup_timeout_ = get_parameter("escape.backup_timeout").as_double();
@@ -139,8 +127,6 @@ public:
         escape_arc_backup_angular_vel_ =
             get_parameter("escape.arc_backup_angular_vel").as_double();
         escape_arc_backup_timeout_ = get_parameter("escape.arc_backup_timeout").as_double();
-        escape_arc_backup_safety_check_duration_ =
-            get_parameter("escape.arc_backup_safety_check_duration").as_double();
         escape_rotation_speed_ = get_parameter("escape.rotation_speed").as_double();
         escape_forward_speed_ = get_parameter("escape.forward_speed").as_double();
         escape_yaw_tolerance_ = get_parameter("escape.yaw_tolerance").as_double();
@@ -1421,10 +1407,10 @@ private:
         return cost >= 0 && cost < escape_trigger_costmap_threshold_;
     }
 
-    bool isEscapeTrajectorySafe(double linear_vel,
-                                double angular_vel,
-                                double duration_s,
-                                std::string* reason) const {
+    bool isEscapeReleaseMotionAllowed(double linear_vel,
+                                      double angular_vel,
+                                      double duration_s,
+                                      std::string* reason) const {
         auto costmap = map_manager_ ? map_manager_->getCostmap() : nullptr;
         if (!costmap) {
             if (reason) {
@@ -1432,9 +1418,6 @@ private:
             }
             return false;
         }
-        auto raw_map = escape_release_ignore_unknown_ && map_manager_
-            ? map_manager_->getFusedMap()
-            : nullptr;
 
         tf2::Quaternion q;
         tf2::fromMsg(current_pose_.pose.orientation, q);
@@ -1451,46 +1434,22 @@ private:
         double x = current_pose_.pose.position.x;
         double y = current_pose_.pose.position.y;
         double theta = yaw;
-        bool reached_unblocked_sample = false;
-        double best_esdf_dist = -std::numeric_limits<double>::infinity();
-        if (escape_release_require_esdf_improvement_ && map_manager_ && map_manager_->hasEsdf()) {
-            double gx = 0.0;
-            double gy = 0.0;
-            best_esdf_dist = map_manager_->getEsdfDistanceWithGradient(x, y, &gx, &gy);
-        }
 
-        auto set_failure_reason = [&](const char* label,
-                                      double sample_t,
-                                      double wx,
-                                      double wy,
-                                      int mx,
-                                      int my,
-                                      int idx,
-                                      int cost,
-                                      int raw_cost,
-                                      double esdf_dist) {
+        auto set_failure_reason = [&](double sample_t, double wx, double wy, int mx, int my) {
             if (!reason) {
                 return;
             }
 
             std::ostringstream oss;
-            oss << label
+            oss << "退让动作预测越出 costmap"
                 << " t=" << sample_t << "s"
                 << " world=(" << wx << ", " << wy << ")"
                 << " grid=(" << mx << ", " << my << ")"
-                << " idx=" << idx
-                << " costmap=" << cost
-                << " raw_fused=" << raw_cost
-                << " threshold=" << escape_trigger_costmap_threshold_
-                << " ignore_unknown=" << (escape_release_ignore_unknown_ ? "true" : "false")
-                << " esdf=" << esdf_dist
-                << " best_esdf=" << best_esdf_dist
-                << " esdf_trend_check="
-                << (escape_release_require_esdf_improvement_ ? "true" : "false");
+                << " duration=" << horizon << "s";
             *reason = oss.str();
         };
 
-        auto publish_failure_marker = [&](const char* label, double wx, double wy, int cost, int raw_cost) {
+        auto publish_failure_marker = [&](double wx, double wy) {
             if (!escape_debug_pub_) {
                 return;
             }
@@ -1541,37 +1500,11 @@ private:
             text.color.a = 0.95f;
 
             std::ostringstream text_ss;
-            text_ss << label << "\n"
-                    << "cost=" << cost << " raw=" << raw_cost;
+            text_ss << "out_of_costmap";
             text.text = text_ss.str();
             markers.markers.push_back(text);
 
             escape_debug_pub_->publish(markers);
-        };
-
-        auto occupied_sample_allowed_by_escape_trend = [&](double wx, double wy) {
-            if (!escape_release_require_esdf_improvement_ || !map_manager_ ||
-                !map_manager_->hasEsdf()) {
-                return true;
-            }
-
-            double gx = 0.0;
-            double gy = 0.0;
-            const double esdf_dist = map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
-            if (esdf_dist + escape_release_esdf_regression_tolerance_ < best_esdf_dist) {
-                return false;
-            }
-            best_esdf_dist = std::max(best_esdf_dist, esdf_dist);
-            return true;
-        };
-
-        auto current_esdf_for_log = [&](double wx, double wy) {
-            if (!map_manager_ || !map_manager_->hasEsdf()) {
-                return std::numeric_limits<double>::quiet_NaN();
-            }
-            double gx = 0.0;
-            double gy = 0.0;
-            return map_manager_->getEsdfDistanceWithGradient(wx, wy, &gx, &gy);
         };
 
         for (double t = 0.0; t <= horizon + 1e-6; t += dt) {
@@ -1582,93 +1515,9 @@ private:
             const int mx = static_cast<int>((x - origin_x) / resolution);
             const int my = static_cast<int>((y - origin_y) / resolution);
             if (mx < 0 || mx >= width || my < 0 || my >= height) {
-                publish_failure_marker("out_of_costmap", x, y, -999, -999);
-                set_failure_reason("退让轨迹越出 costmap",
-                                   t,
-                                   x,
-                                   y,
-                                   mx,
-                                   my,
-                                   -1,
-                                   -999,
-                                   -999,
-                                   current_esdf_for_log(x, y));
+                publish_failure_marker(x, y);
+                set_failure_reason(t, x, y, mx, my);
                 return false;
-            }
-
-            const int idx = my * width + mx;
-            const int8_t cost = costmap->data[idx];
-            const double dist_from_start =
-                std::hypot(x - current_pose_.pose.position.x,
-                           y - current_pose_.pose.position.y);
-            if (raw_map && raw_map->info.width == costmap->info.width &&
-                raw_map->info.height == costmap->info.height &&
-                idx < static_cast<int>(raw_map->data.size())) {
-                const int8_t raw_cost = raw_map->data[idx];
-                if (raw_cost >= escape_trigger_costmap_threshold_) {
-                    if (!reached_unblocked_sample &&
-                        dist_from_start <= escape_release_initial_occupied_tolerance_ &&
-                        occupied_sample_allowed_by_escape_trend(x, y)) {
-                        continue;
-                    }
-                    publish_failure_marker("raw_obstacle",
-                                           x,
-                                           y,
-                                           static_cast<int>(cost),
-                                           static_cast<int>(raw_cost));
-                    set_failure_reason("退让轨迹存在明确障碍区域",
-                                       t,
-                                       x,
-                                       y,
-                                       mx,
-                                       my,
-                                       idx,
-                                       static_cast<int>(cost),
-                                       static_cast<int>(raw_cost),
-                                       current_esdf_for_log(x, y));
-                    return false;
-                }
-                reached_unblocked_sample = true;
-                if (escape_release_require_esdf_improvement_ && map_manager_ &&
-                    map_manager_->hasEsdf()) {
-                    double gx = 0.0;
-                    double gy = 0.0;
-                    best_esdf_dist = std::max(
-                        best_esdf_dist, map_manager_->getEsdfDistanceWithGradient(x, y, &gx, &gy));
-                }
-            } else {
-                if (cost < 0 || cost >= escape_trigger_costmap_threshold_) {
-                    if (!reached_unblocked_sample &&
-                        dist_from_start <= escape_release_initial_occupied_tolerance_ &&
-                        occupied_sample_allowed_by_escape_trend(x, y)) {
-                        continue;
-                    }
-                    publish_failure_marker((cost < 0) ? "unknown" : "costmap_obstacle",
-                                           x,
-                                           y,
-                                           static_cast<int>(cost),
-                                           -999);
-                    set_failure_reason((cost < 0) ? "退让轨迹存在未知区域"
-                                                  : "退让轨迹存在障碍区域",
-                                       t,
-                                       x,
-                                       y,
-                                       mx,
-                                       my,
-                                       idx,
-                                       static_cast<int>(cost),
-                                       -999,
-                                       current_esdf_for_log(x, y));
-                    return false;
-                }
-                reached_unblocked_sample = true;
-                if (escape_release_require_esdf_improvement_ && map_manager_ &&
-                    map_manager_->hasEsdf()) {
-                    double gx = 0.0;
-                    double gy = 0.0;
-                    best_esdf_dist = std::max(
-                        best_esdf_dist, map_manager_->getEsdfDistanceWithGradient(x, y, &gx, &gy));
-                }
             }
         }
 
@@ -1726,8 +1575,8 @@ private:
             escape_phase_last_progress_dist_ = 0.0;
 
             std::string reason;
-            if (!isEscapeTrajectorySafe(linear_vel, angular_vel, safety_duration, &reason)) {
-                advanceEscapeReleasePhase(reason.empty() ? "安全检查失败" : reason.c_str());
+            if (!isEscapeReleaseMotionAllowed(linear_vel, angular_vel, safety_duration, &reason)) {
+                advanceEscapeReleasePhase(reason.empty() ? "退让动作保护检查失败" : reason.c_str());
                 return true;
             }
 
@@ -1765,8 +1614,8 @@ private:
         }
 
         std::string reason;
-        if (!isEscapeTrajectorySafe(linear_vel, angular_vel, 0.25, &reason)) {
-            advanceEscapeReleasePhase(reason.empty() ? "运行中安全检查失败" : reason.c_str());
+        if (!isEscapeReleaseMotionAllowed(linear_vel, angular_vel, 0.25, &reason)) {
+            advanceEscapeReleasePhase(reason.empty() ? "运行中退让动作保护检查失败" : reason.c_str());
             return true;
         }
 
@@ -2758,10 +2607,6 @@ private:
     double escape_preferred_search_distance_;  // 定向搜索距离
     double escape_preferred_search_half_angle_;  // 定向搜索半角(rad)
     bool escape_enable_release_maneuver_{true};  // 是否先执行退让释放动作
-    bool escape_release_ignore_unknown_{false};  // release 退让安全检查是否忽略 unknown
-    double escape_release_initial_occupied_tolerance_{0.25};  // 起始占据宽限距离
-    bool escape_release_require_esdf_improvement_{true};  // 起始占据宽限需满足 ESDF 不变差
-    double escape_release_esdf_regression_tolerance_{0.02};  // ESDF 趋势容差
     double escape_backup_dist_{0.25};       // 直退释放距离
     double escape_backup_vel_{-0.20};       // 直退释放速度
     double escape_backup_timeout_{1.8};     // 直退超时
@@ -2771,7 +2616,6 @@ private:
     double escape_arc_backup_vel_{-0.18};   // 弧线后退线速度
     double escape_arc_backup_angular_vel_{0.45};  // 弧线后退角速度幅值
     double escape_arc_backup_timeout_{1.8}; // 弧线后退超时
-    double escape_arc_backup_safety_check_duration_{1.2};  // 弧线安全预测时长
     double escape_rotation_speed_;          // 旋转速度
     double escape_forward_speed_;           // 前进速度
     double escape_yaw_tolerance_;           // 角度容差

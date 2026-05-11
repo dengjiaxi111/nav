@@ -501,10 +501,6 @@ nav_server:
 
       # 退让释放动作：车头顶障碍时先低速倒退/弧线倒退，再旋转找安全点
       enable_release_maneuver: true
-      release_ignore_unknown: false   # true 时脱困退让安全检查忽略 unknown，仅拒绝明确障碍；默认 false 更保守
-      release_initial_occupied_tolerance: 0.25 # 起点在障碍内时，退让开头允许连续占据采样的最大距离(m)
-      release_require_esdf_improvement: true   # 起始占据宽限段要求 ESDF 不变差，避免越退越深
-      release_esdf_regression_tolerance: 0.02  # ESDF 趋势容差(m)，小幅插值/噪声回退不判失败
       backup_dist: 0.25               # 直退释放距离(m)
       backup_vel: -0.5               # 直退释放速度(m/s)
       backup_timeout: 1.8             # 直退动作超时(s)
@@ -514,7 +510,6 @@ nav_server:
       arc_backup_vel: -0.9            # 弧线后退线速度(m/s)
       arc_backup_angular_vel: 2.5   # 弧线后退角速度幅值(rad/s)，先左后右
       arc_backup_timeout: 1.8         # 单个弧线后退动作超时(s)
-      arc_backup_safety_check_duration: 1.2 # 弧线轨迹安全预测时长(s)
       
       # 控制参数
       rotation_speed: 3.0             # 旋转角速度 (rad/s)
