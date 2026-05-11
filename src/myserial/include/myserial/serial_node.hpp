@@ -22,7 +22,6 @@
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"
-#include "std_msgs/msg/float64.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -110,10 +109,6 @@ public:
         stair_mode_sub_ = this->create_subscription<std_msgs::msg::UInt8>("stair_mode", 10,
             [this](const std_msgs::msg::UInt8::SharedPtr msg) {
                 _send_frame_._stair_mode = msg->data;
-            });
-        buff_yaw_diff_sub_ = this->create_subscription<std_msgs::msg::Float64>("/yaw_diff", 10,
-            [this](const std_msgs::msg::Float64::SharedPtr msg) {
-                _send_frame_._buff_yaw_diff_angle = int((msg->data) * 100);
             });
 
         // Publisher初始化
@@ -290,7 +285,6 @@ private:
     std::shared_ptr<rclcpp::Subscription<nav_msgs::msg::Path>> path_sub_;
     std::shared_ptr<rclcpp::Subscription<robots_msgs::msg::ModeCmd>> mode_sub_;
     std::shared_ptr<rclcpp::Subscription<sentry_decision::msg::SentryControl>> sentry_control_sub_;
-    std::shared_ptr<rclcpp::Subscription<std_msgs::msg::Float64>>    buff_yaw_diff_sub_;
 
     robots_msgs::msg::GameStatus game_status_;
     robots_msgs::msg::RobotStatus robot_status_;
@@ -307,9 +301,6 @@ private:
     bool on_court_ = false;
 
     rclcpp::Time last_cmd_vel_time_;
-
-    // 打符用
-    double buff_yaw_diff_;
 
     // RTT 测量相关
     bool enable_rtt_measure_;           // 是否启用 RTT 测量

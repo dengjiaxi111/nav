@@ -18,6 +18,8 @@ Blackboard::Blackboard()
     control_msg_->gimbal_mode = GIMBAL_IDLE;
     control_msg_->spin_mode = SPIN_OFF;
     control_msg_->posture = POSTURE_MOVE;
+    control_msg_->target_yaw_deg = 0.0;
+    control_msg_->target_yaw_valid = false;
     resetAllPublishStates();
 }
 
@@ -51,6 +53,10 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.central_highland_gain.y = config["central_highland_gain_y"].as<double>();
         config_.trapezoid_highland_gain.x = config["trapezoid_highland_gain_x"].as<double>();
         config_.trapezoid_highland_gain.y = config["trapezoid_highland_gain_y"].as<double>();
+        config_.red_enemy_outpost.x = config["red_enemy_outpost_x"] ? config["red_enemy_outpost_x"].as<double>() : 0.0;
+        config_.red_enemy_outpost.y = config["red_enemy_outpost_y"] ? config["red_enemy_outpost_y"].as<double>() : 0.0;
+        config_.blue_enemy_outpost.x = config["blue_enemy_outpost_x"] ? config["blue_enemy_outpost_x"].as<double>() : 0.0;
+        config_.blue_enemy_outpost.y = config["blue_enemy_outpost_y"] ? config["blue_enemy_outpost_y"].as<double>() : 0.0;
 
         // 行为参数
         config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
@@ -134,6 +140,9 @@ geometry_msgs::msg::Point Blackboard::getCentralHighlandGain() const {
 }
 geometry_msgs::msg::Point Blackboard::getTrapezoidHighlandGain() const {
     return config_.trapezoid_highland_gain;
+}
+geometry_msgs::msg::Point Blackboard::getEnemyOutpostPoint() const {
+    return (robot_id_ == 1) ? config_.blue_enemy_outpost : config_.red_enemy_outpost;
 }
 
 double Blackboard::getArrivalWaitTime() const { return config_.arrival_wait_time; }
@@ -294,6 +303,7 @@ void Blackboard::updateControlMsg(uint8_t gimbal_mode, uint8_t spin_mode, uint8_
     control_msg_->gimbal_mode = gimbal_mode;
     control_msg_->spin_mode = spin_mode;
     control_msg_->posture = posture;
+    control_msg_->target_yaw_valid = false;
     setControlUpdated(true);
 }
 

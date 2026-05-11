@@ -100,6 +100,7 @@ public:
     geometry_msgs::msg::Point getFortressGainPoint() const;
     geometry_msgs::msg::Point getCentralHighlandGain() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
+    geometry_msgs::msg::Point getEnemyOutpostPoint() const;
 
     // 参数 getter
     double getArrivalWaitTime() const;
@@ -227,6 +228,8 @@ private:
         geometry_msgs::msg::Point blue_fortress_gain;
         geometry_msgs::msg::Point central_highland_gain;
         geometry_msgs::msg::Point trapezoid_highland_gain;
+        geometry_msgs::msg::Point red_enemy_outpost;
+        geometry_msgs::msg::Point blue_enemy_outpost;
 
         double arrival_wait_time;
         double deviation_threshold;

@@ -34,6 +34,13 @@ central_highland_gain_y: 1092.0
 trapezoid_highland_gain_x: 430.0
 trapezoid_highland_gain_y: 1108.0
 
+# 敌方前哨站坐标（单位：cm）。red_enemy_outpost 表示我方红方时要打的敌方前哨站，
+# blue_enemy_outpost 表示我方蓝方时要打的敌方前哨站。未标定前保持 0 会禁用 yaw 发布。
+red_enemy_outpost_x: 0.0
+red_enemy_outpost_y: 0.0
+blue_enemy_outpost_x: 0.0
+blue_enemy_outpost_y: 0.0
+
 # ========== 行为参数 ==========
 arrival_wait_time: 1.0
 deviation_threshold: 50.0

@@ -1,6 +1,8 @@
 #include<iostream>
 #include<sstream>
 #include<iomanip>
+#include<algorithm>
+#include<cmath>
 #include "myserial/serial_node.hpp"
 
 namespace rm
@@ -511,16 +513,24 @@ void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryContr
     _send_frame_.setChassisMode(spin_mode);
     const uint8_t posture = (msg->posture > 3) ? 3 : msg->posture;
     _send_frame_._sentry_cmd = set_sentry_cmd_bits(_send_frame_._sentry_cmd, 21, 2, posture);
+    if (msg->target_yaw_valid && msg->gimbal_mode == 2 && msg->spin_mode == 0) {
+        const double yaw_deg = std::clamp(msg->target_yaw_deg, -180.0, 180.0);
+        _send_frame_._buff_yaw_diff_angle = static_cast<int16_t>(std::lround(yaw_deg * 100.0));
+    } else {
+        _send_frame_._buff_yaw_diff_angle = 0;
+    }
 
     RCLCPP_INFO_THROTTLE(
         this->get_logger(),
         *this->get_clock(),
         500,
-        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, sentry_cmd=0x%08X, auto_drive=%u",
+        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, yaw_valid=%u, yaw_x100=%d, sentry_cmd=0x%08X, auto_drive=%u",
         static_cast<unsigned>(msg->spin_mode),
         static_cast<unsigned>(_send_frame_.getChassisMode()),
         static_cast<unsigned>(_send_frame_.getGimbalMode()),
         static_cast<unsigned>(posture),
+        static_cast<unsigned>(msg->target_yaw_valid),
+        static_cast<int>(_send_frame_._buff_yaw_diff_angle),
         static_cast<unsigned>(_send_frame_._sentry_cmd),
         static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
 }
