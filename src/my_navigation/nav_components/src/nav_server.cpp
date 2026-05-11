@@ -1706,7 +1706,9 @@ private:
             const double arc_w = std::abs(escape_arc_backup_angular_vel_);
             angular_vel = (escape_phase_ == 1) ? arc_w : -arc_w;
             timeout_s = escape_arc_backup_timeout_;
-            safety_duration = escape_arc_backup_safety_check_duration_;
+            safety_duration = (std::abs(linear_vel) > 1e-6)
+                ? target_dist / std::abs(linear_vel)
+                : timeout_s;
         }
 
         if (target_dist <= 1e-6 || std::abs(linear_vel) <= 1e-6 || timeout_s <= 0.0) {
