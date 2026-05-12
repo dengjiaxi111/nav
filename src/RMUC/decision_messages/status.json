@@ -1,7 +1,7 @@
 {
   "game_state": {
     "stage": 4,
-    "stage_remaining_time": 365.8080577850342,
+    "stage_remaining_time": 358.22212982177734,
     "is_running": true,
     "competition_type": 1
   },
@@ -31,8 +31,8 @@
       "allowance": 0
     },
     "7": {
-      "x": 412.0,
-      "y": 754.0,
+      "x": 2122.0,
+      "y": 388.0,
       "hp": 400,
       "allowance": 300
     }
@@ -40,19 +40,19 @@
   "blue_robots": {
     "1": {
       "x": 2322,
-      "y": 386,
+      "y": 388,
       "hp": 200,
       "allowance": 0
     },
     "2": {
-      "x": 2398,
-      "y": 688,
+      "x": 2396,
+      "y": 696,
       "hp": 250,
       "allowance": 0
     },
     "3": {
-      "x": 2558,
-      "y": 624,
+      "x": 498,
+      "y": 900,
       "hp": 150,
       "allowance": 0
     },
@@ -71,7 +71,7 @@
   },
   "red_outpost_hp": 1500,
   "blue_outpost_hp": 1500,
-  "red_base_hp": 500,
+  "red_base_hp": 5000,
   "blue_base_hp": 5000,
   "red_gold_coins": 400,
   "blue_gold_coins": 400,
@@ -89,6 +89,6 @@
   },
   "our_robot_id": 0,
   "meta": {
-    "write_ts": 1778147209.4977534
+    "write_ts": 1778561724.0605145
   }
 }

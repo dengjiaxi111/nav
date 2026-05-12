@@ -33,8 +33,11 @@ enum class State {
     OCCUPY_GAIN_POINT,
     MOVE_TO_FORTRESS,
     OCCUPY_FORTRESS,
-    MOVE_TO_GUARD,      // 新增：移动到警戒点
-    GUARD               // 新增：在警戒点留守
+    MOVE_TO_GUARD,
+    GUARD,
+    MOVE_TO_ENEMY_FORTRESS,   // 新增：前往敌方堡垒
+    OCCUPY_ENEMY_FORTRESS,    // 新增：占领敌方堡垒
+    MOVE_TO_RAMP              // 新增：飞坡移动
 };
 
 struct PriorityTargetResult {
@@ -63,6 +66,11 @@ private:
     double last_state_entry_time_ = 0.0;
     std::string current_enemy_id_;
 
+    // 飞坡暂存
+    State pending_state_ = State::IDLE;
+    geometry_msgs::msg::Point pending_target_;
+    bool has_pending_state_ = false;
+
     // 辅助判断函数
     bool needSupply() const;
     bool shouldInterruptForResurrectionOrSupply() const;
@@ -70,8 +78,11 @@ private:
     bool checkOutpostDestroyed() const;
     bool checkFortressOccupy() const;
     bool checkGainPoint() const;
+    bool checkEnemyFortress() const;      // 是否可以占领敌方堡垒
+    bool needRamp(const geometry_msgs::msg::Point& target) const;   // 是否需要飞坡
 
     void updateHeroDeployFlag();
+    void updateMustOccupyFlag();         // 更新强制占领标志
 
     PriorityTargetResult selectPriorityTarget();
 
@@ -81,9 +92,6 @@ private:
     void transitionTo(State new_state);
     std::string stateToString(State state) const;
 
-    // ramp process removed
-
-    // 固定警戒点坐标（cm）
     static constexpr double GUARD_X = 690.0;
     static constexpr double GUARD_Y = 760.0;
 };

@@ -57,3 +57,9 @@ uint8 free_resurrection_available
 uint8 sentry_posture 
 # 己方能量机关是否能够进入正在激活状态：1 为当前可激活
 uint8 energy_mechanism_activatable 
+
+
+# 基地打开状态：0正常，1红方基地打开，2蓝方基地打开
+int8 baseopen
+# 前哨站被摧毁状态：0正常，1红方前哨站被摧毁，2蓝方前哨站被摧毁
+int8 outpoststate

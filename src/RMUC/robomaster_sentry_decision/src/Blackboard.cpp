@@ -44,7 +44,11 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_fortress_occupy.y = config["red_fortress_occupy_y"].as<double>();
         config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"].as<double>();
         config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"].as<double>();
-        // ramp points removed from config
+        // 重新启用飞坡点
+        config_.red_ramp.x = config["red_ramp_point_x"] ? config["red_ramp_point_x"].as<double>() : 1070.0;
+        config_.red_ramp.y = config["red_ramp_point_y"] ? config["red_ramp_point_y"].as<double>() : 94.0;
+        config_.blue_ramp.x = config["blue_ramp_point_x"] ? config["blue_ramp_point_x"].as<double>() : 1734.0;
+        config_.blue_ramp.y = config["blue_ramp_point_y"] ? config["blue_ramp_point_y"].as<double>() : 1388.0;
         config_.red_fortress_gain.x = config["red_fortress_gain_x"].as<double>();
         config_.red_fortress_gain.y = config["red_fortress_gain_y"].as<double>();
         config_.blue_fortress_gain.x = config["blue_fortress_gain_x"].as<double>();
@@ -58,6 +62,12 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.blue_enemy_outpost.x = config["blue_enemy_outpost_x"] ? config["blue_enemy_outpost_x"].as<double>() : 0.0;
         config_.blue_enemy_outpost.y = config["blue_enemy_outpost_y"] ? config["blue_enemy_outpost_y"].as<double>() : 0.0;
 
+        // 敌方堡垒占领点
+        config_.red_enemy_fortress.x = config["red_enemy_fortress_x"] ? config["red_enemy_fortress_x"].as<double>() : 2112.0;
+        config_.red_enemy_fortress.y = config["red_enemy_fortress_y"] ? config["red_enemy_fortress_y"].as<double>() : 754.0;
+        config_.blue_enemy_fortress.x = config["blue_enemy_fortress_x"] ? config["blue_enemy_fortress_x"].as<double>() : 694.0;
+        config_.blue_enemy_fortress.y = config["blue_enemy_fortress_y"] ? config["blue_enemy_fortress_y"].as<double>() : 756.0;
+
         // 行为参数
         config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
         config_.deviation_threshold = config["deviation_threshold"].as<double>();
@@ -70,7 +80,7 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.ammo_weight = config["ammo_weight"].as<double>();
         config_.base_weight = config["base_weight"].as<double>();
 
-        // 补给和机器人属性
+        // 补给阈值等
         config_.supply_threshold = config["supply_threshold"].as<double>();
         config_.max_hp = config["max_hp"].as<double>();
         config_.max_ammo = config["max_ammo"].as<double>();
@@ -94,6 +104,11 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.fortress_occupy_hp_ratio = config["fortress_occupy_hp_ratio"].as<double>();
         config_.half_map_x = config["half_map_x"].as<double>();
 
+        // 敌方堡垒占领参数
+        config_.enemy_fortress_occupy_time = config["enemy_fortress_occupy_time"] ? config["enemy_fortress_occupy_time"].as<double>() : 180.0;
+        config_.enemy_fortress_hp_threshold = config["enemy_fortress_hp_threshold"] ? config["enemy_fortress_hp_threshold"].as<double>() : 0.7;
+        config_.enemy_fortress_ammo_threshold = config["enemy_fortress_ammo_threshold"] ? config["enemy_fortress_ammo_threshold"].as<double>() : 0.7;
+
         // 优先级目标
         priority_targets_config_.clear();
         if (config["priority_targets"]) {
@@ -108,13 +123,12 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
             }
         }
 
-        std::cout << "[CONFIG] 成功加载配置文件: " << filepath << std::endl;
         return true;
     } catch (const YAML::Exception& e) {
-        std::cerr << "[CONFIG] YAML加载失败: " << e.what() << std::endl;
+        std::cerr << "[CONFIG] YAML loading failed: " << e.what() << std::endl;
         return false;
     } catch (const std::exception& e) {
-        std::cerr << "[CONFIG] 配置缺失: " << e.what() << std::endl;
+        std::cerr << "[CONFIG] Missing config: " << e.what() << std::endl;
         return false;
     }
 }
@@ -131,7 +145,12 @@ geometry_msgs::msg::Point Blackboard::getBaseGainPoint() const {
 geometry_msgs::msg::Point Blackboard::getFortressOccupyPoint() const {
     return (robot_id_ == 1) ? config_.blue_fortress_occupy : config_.red_fortress_occupy;
 }
-// ramp removed
+geometry_msgs::msg::Point Blackboard::getRampPoint() const {
+    return (robot_id_ == 1) ? config_.blue_ramp : config_.red_ramp;
+}
+geometry_msgs::msg::Point Blackboard::getEnemyFortressPoint() const {
+    return (robot_id_ == 1) ? config_.blue_enemy_fortress : config_.red_enemy_fortress;
+}
 geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const {
     return (robot_id_ == 1) ? config_.blue_fortress_gain : config_.red_fortress_gain;
 }
@@ -154,6 +173,9 @@ double Blackboard::getSupplyThreshold() const { return config_.supply_threshold;
 double Blackboard::getMaxHp() const { return config_.max_hp; }
 double Blackboard::getMaxAmmo() const { return config_.max_ammo; }
 double Blackboard::getHalfMapX() const { return config_.half_map_x; }
+double Blackboard::getEnemyFortressOccupyTime() const { return config_.enemy_fortress_occupy_time; }
+double Blackboard::getEnemyFortressHpThreshold() const { return config_.enemy_fortress_hp_threshold; }
+double Blackboard::getEnemyFortressAmmoThreshold() const { return config_.enemy_fortress_ammo_threshold; }
 double Blackboard::getHpWeight() const { return config_.hp_weight; }
 double Blackboard::getAmmoWeight() const { return config_.ammo_weight; }
 double Blackboard::getBaseWeight() const { return config_.base_weight; }
@@ -180,9 +202,6 @@ void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     allowance_17mm = static_cast<double>(msg->allowance_17mm);
     our_base_hp = static_cast<double>(msg->base_hp);
     our_outpost_hp = static_cast<double>(msg->outpost_hp);
-
-    std::cout << "[BLACKBOARD] updateOurState: robot_id=" << static_cast<int>(msg->robot_id)
-              << ", our_base_hp=" << our_base_hp << std::endl;
 
     uint8_t old_id = robot_id_;
     robot_id_ = msg->robot_id;
@@ -223,6 +242,10 @@ void Blackboard::updateEnemyState(const EnemyRobotState::SharedPtr msg) {
     update(enemy_infantry3, msg->enemy_infantry3_x, msg->enemy_infantry3_y, msg->enemy_infantry3_hp, msg->enemy_infantry3_allowance);
     update(enemy_infantry4, msg->enemy_infantry4_x, msg->enemy_infantry4_y, msg->enemy_infantry4_hp, msg->enemy_infantry4_allowance);
     update(enemy_sentry, msg->enemy_sentry_x, msg->enemy_sentry_y, msg->enemy_sentry_hp, msg->enemy_sentry_allowance);
+    // 敌方堡垒增益点占领状态（假设消息中有此字段，若无则置0）
+    // msg->enemy_fortress_gain_point_occupation 可能需要添加
+    // 此处直接赋0，若实际消息存在请替换为 msg->enemy_fortress_gain_point_occupation
+    enemy_fortress_gain_point_occupation = 0;
 }
 
 void Blackboard::updateGameState(const GameState::SharedPtr msg) {
@@ -247,6 +270,10 @@ void Blackboard::updateGameState(const GameState::SharedPtr msg) {
     central_highland_occupied_by_us = (msg->central_highland_occupation == 1);
     central_highland_occupied_by_enemy = (msg->central_highland_occupation == 2);
     updateGainPointStatus();
+
+    // 新增字段
+    base_open = msg->baseopen;
+    outpost_state = msg->outpoststate;
 }
 
 void Blackboard::updatePositionFromTF(double x_m, double y_m) {
@@ -255,13 +282,12 @@ void Blackboard::updatePositionFromTF(double x_m, double y_m) {
 }
 
 void Blackboard::resetForNewMatch() {
-    std::cout << "[SYSTEM] 重置比赛状态" << std::endl;
     resetCurrentBehavior();
     initialization_complete = false;
     resurrection_flag = false;
     at_current_target = false;
     target_arrival_time = -1.0;
-    // ramp removed
+    must_occupy_enemy_fortress = false;
     updateControlMsg(GIMBAL_IDLE, SPIN_OFF, POSTURE_MOVE);
     resetAllPublishStates();
 }
@@ -428,7 +454,6 @@ void Blackboard::updateGainPointStatus() {
 }
 
 void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
-    std::cout << "[SYSTEM] 机器人ID变化: " << (int)old_id << " -> " << (int)new_id << std::endl;
     setTargetPublished(false);
     initializeGainPoints();
 }

@@ -2,10 +2,9 @@
 #include <cmath>
 #include <algorithm>
 
-
 RegionManager::RegionManager() {
     geometry_msgs::msg::Point point;
-    
+
     // 初始化红方高地区域 (保持不变)
     red_highland_.vertices.clear();
     point.x = 328; point.y = 984; point.z = 0;
@@ -20,7 +19,7 @@ RegionManager::RegionManager() {
     red_highland_.vertices.push_back(point);
     point.x = 800; point.y = 992; point.z = 0;
     red_highland_.vertices.push_back(point);
-    
+
     // 初始化红方区域 (保持不变)
     red_region_.vertices.clear();
     point.x = 54; point.y = 996; point.z = 0;
@@ -57,7 +56,7 @@ RegionManager::RegionManager() {
     red_region_.vertices.push_back(point);
     point.x = 52; point.y = 328; point.z = 0;
     red_region_.vertices.push_back(point);
-    
+
     // 初始化中央区域 (保持不变)
     central_region_.vertices.clear();
     point.x = 1368; point.y = 1342; point.z = 0;
@@ -110,7 +109,7 @@ RegionManager::RegionManager() {
     central_region_.vertices.push_back(point);
     point.x = 1272; point.y = 1252; point.z = 0;
     central_region_.vertices.push_back(point);
-    
+
     // 初始化蓝方区域 (保持不变)
     blue_region_.vertices.clear();
     point.x = 2744; point.y = 1164; point.z = 0;
@@ -145,7 +144,7 @@ RegionManager::RegionManager() {
     blue_region_.vertices.push_back(point);
     point.x = 2746; point.y = 506; point.z = 0;
     blue_region_.vertices.push_back(point);
-    
+
     // 初始化蓝方高地区域 (保持不变)
     blue_highland_.vertices.clear();
     point.x = 2746; point.y = 506; point.z = 0;
@@ -160,8 +159,8 @@ RegionManager::RegionManager() {
     blue_highland_.vertices.push_back(point);
     point.x = 2570; point.y = 38; point.z = 0;
     blue_highland_.vertices.push_back(point);
-    
-    // 初始化英雄部署区域 (保持不变)
+
+    // 初始化英雄部署区域 (蓝方英雄部署区，即红方视角的敌方部署区)
     hero_deploy_zone_.vertices.clear();
     point.x = 2752; point.y = 942; point.z = 0;
     hero_deploy_zone_.vertices.push_back(point);
@@ -172,7 +171,18 @@ RegionManager::RegionManager() {
     point.x = 2194; point.y = 942; point.z = 0;
     hero_deploy_zone_.vertices.push_back(point);
 
-    // 初始化允许区域（新多边形）
+    // 初始化红方英雄部署区 (蓝方视角的敌方部署区)
+    red_hero_deploy_zone_.vertices.clear();
+    point.x = 48; point.y = 1454; point.z = 0;
+    red_hero_deploy_zone_.vertices.push_back(point);
+    point.x = 622; point.y = 1434; point.z = 0;
+    red_hero_deploy_zone_.vertices.push_back(point);
+    point.x = 614; point.y = 544; point.z = 0;
+    red_hero_deploy_zone_.vertices.push_back(point);
+    point.x = 56; point.y = 546; point.z = 0;
+    red_hero_deploy_zone_.vertices.push_back(point);
+
+    // 初始化允许区域（原有多边形）
     allowed_region_.vertices.clear();
     point.x = 84; point.y = 972; point.z = 0;
     allowed_region_.vertices.push_back(point);
@@ -203,18 +213,17 @@ RegionManager::RegionManager() {
 bool RegionManager::isPointInPolygon(const geometry_msgs::msg::Point& point, const Polygon& polygon) {
     int n = polygon.vertices.size();
     if (n < 3) return false;
-    
+
     bool inside = false;
     for (int i = 0, j = n - 1; i < n; j = i++) {
         if (((polygon.vertices[i].y > point.y) != (polygon.vertices[j].y > point.y)) &&
-            (point.x < (polygon.vertices[j].x - polygon.vertices[i].x) * 
-                      (point.y - polygon.vertices[i].y) / 
-                      (polygon.vertices[j].y - polygon.vertices[i].y) + 
+            (point.x < (polygon.vertices[j].x - polygon.vertices[i].x) *
+                      (point.y - polygon.vertices[i].y) /
+                      (polygon.vertices[j].y - polygon.vertices[i].y) +
                       polygon.vertices[i].x)) {
             inside = !inside;
         }
     }
-    
     return inside;
 }
 
@@ -251,7 +260,17 @@ bool RegionManager::isInBlueHighland(double x, double y) const {
 bool RegionManager::isInHeroDeployZone(double x, double y) const {
     geometry_msgs::msg::Point p;
     p.x = x; p.y = y; p.z = 0.0;
-    return isPointInPolygon(p, hero_deploy_zone_);
+    return isPointInPolygon(p, hero_deploy_zone_);  // 蓝方部署区
+}
+
+bool RegionManager::isInEnemyHeroDeployZone(double x, double y, int robot_id) const {
+    geometry_msgs::msg::Point p;
+    p.x = x; p.y = y; p.z = 0.0;
+    if (robot_id == 1) {  // 蓝方机器人，敌方为红方，使用红方部署区
+        return isPointInPolygon(p, red_hero_deploy_zone_);
+    } else {              // 红方机器人，敌方为蓝方，使用蓝方部署区
+        return isPointInPolygon(p, hero_deploy_zone_);
+    }
 }
 
 bool RegionManager::isInsideAllowedRegion(double x, double y) const {
@@ -306,7 +325,6 @@ std::string RegionManager::getRegionName(double x, double y) const {
 std::vector<geometry_msgs::msg::Point> RegionManager::calculateHexagonPoints(double center_x, double center_y, double radius) {
     std::vector<geometry_msgs::msg::Point> points;
     points.reserve(6);
-    
     for (int i = 0; i < 6; i++) {
         double angle = 60.0 * i * M_PI / 180.0;
         geometry_msgs::msg::Point p;
@@ -315,22 +333,21 @@ std::vector<geometry_msgs::msg::Point> RegionManager::calculateHexagonPoints(dou
         p.z = 0.0;
         points.push_back(p);
     }
-    
     return points;
 }
 
-geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x, double target_y, 
+geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x, double target_y,
                                                                double robot_x, double robot_y) const {
     auto hex_points = calculateHexagonPoints(target_x, target_y, 200.0);
     std::string target_region = getRegionName(target_x, target_y);
-    
+
     std::vector<geometry_msgs::msg::Point> same_region_points;
     for (const auto& point : hex_points) {
         if (getRegionName(point.x, point.y) == target_region) {
             same_region_points.push_back(point);
         }
     }
-    
+
     auto pickNearest = [&](const std::vector<geometry_msgs::msg::Point>& points) -> geometry_msgs::msg::Point {
         if (points.empty()) return geometry_msgs::msg::Point();
         geometry_msgs::msg::Point best = points[0];
@@ -341,10 +358,9 @@ geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x,
         }
         return best;
     };
-    
+
     if (!same_region_points.empty()) {
         return pickNearest(same_region_points);
     }
-    // 否则在所有六边形点中选择最近的
     return pickNearest(hex_points);
 }

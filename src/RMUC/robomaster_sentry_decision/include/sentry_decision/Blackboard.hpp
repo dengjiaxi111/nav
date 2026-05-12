@@ -42,7 +42,11 @@ enum class BehaviorType {
     OCCUPY_GAIN_POINT,
     MOVE_TO_FORTRESS,
     OCCUPY_FORTRESS,
-    RAMP_PROCESS
+    MOVE_TO_ENEMY_FORTRESS,
+    OCCUPY_ENEMY_FORTRESS,
+    MOVE_TO_RAMP,
+    MOVE_TO_GUARD,   
+    GUARD          
 };
 
 struct BehaviorInfo {
@@ -96,7 +100,8 @@ public:
     geometry_msgs::msg::Point getSupplyPoint() const;
     geometry_msgs::msg::Point getBaseGainPoint() const;
     geometry_msgs::msg::Point getFortressOccupyPoint() const;
-    // ramp removed: getRampPoint() removed
+    geometry_msgs::msg::Point getRampPoint() const;                 // 飞坡点
+    geometry_msgs::msg::Point getEnemyFortressPoint() const;        // 敌方堡垒占领点
     geometry_msgs::msg::Point getFortressGainPoint() const;
     geometry_msgs::msg::Point getCentralHighlandGain() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
@@ -112,6 +117,9 @@ public:
     double getMaxHp() const;
     double getMaxAmmo() const;
     double getHalfMapX() const;
+    double getEnemyFortressOccupyTime() const;
+    double getEnemyFortressHpThreshold() const;
+    double getEnemyFortressAmmoThreshold() const;
 
     double getHpWeight() const;
     double getAmmoWeight() const;
@@ -146,7 +154,7 @@ public:
     void updatePositionFromTF(double x_m, double y_m);
     void resetForNewMatch();
 
-    // 公共成员（状态机直接使用，符合省赛风格）
+    // 公共成员
     double current_hp = 400.0;
     double allowance_17mm = 300.0;
     double x = 0.0, y = 0.0;
@@ -175,6 +183,7 @@ public:
     EnemyInfo enemy_infantry4;
     EnemyInfo enemy_sentry;
 
+    // 场地占领状态
     bool base_gain_point_occupied = false;
     bool trapezoid_highland_occupied = false;
     bool fortress_gain_point_occupied_by_us = false;
@@ -183,6 +192,17 @@ public:
     bool central_highland_occupied_by_enemy = false;
     bool outpost_gain_point_occupied_by_us = false;
     bool outpost_gain_point_occupied_by_enemy = false;
+
+    // 新增：基地打开、前哨站状态、敌方堡垒增益点占领
+    int8_t base_open = 0;
+    int8_t outpost_state = 0;
+    uint8_t enemy_fortress_gain_point_occupation = 0;
+
+    // 强制占领敌方堡垒标志（英雄/工程死亡）
+    bool must_occupy_enemy_fortress = false;
+
+    // 机器人ID
+    uint8_t robot_id_ = 0;
 
     bool isAtTarget(const geometry_msgs::msg::Point& target, double tolerance = 50.0) const;
     void setTargetReached(bool reached);
@@ -210,8 +230,6 @@ public:
     EnemyInfo* getEnemyById(const std::string& id);
     const EnemyInfo* getEnemyById(const std::string& id) const;
 
-    // ramp removed: related fields and methods removed
-
 private:
     struct Config {
         geometry_msgs::msg::Point red_attack;
@@ -222,14 +240,16 @@ private:
         geometry_msgs::msg::Point blue_base_gain;
         geometry_msgs::msg::Point red_fortress_occupy;
         geometry_msgs::msg::Point blue_fortress_occupy;
-        geometry_msgs::msg::Point red_ramp_point;
-        geometry_msgs::msg::Point blue_ramp_point;
+        geometry_msgs::msg::Point red_ramp;
+        geometry_msgs::msg::Point blue_ramp;
         geometry_msgs::msg::Point red_fortress_gain;
         geometry_msgs::msg::Point blue_fortress_gain;
         geometry_msgs::msg::Point central_highland_gain;
         geometry_msgs::msg::Point trapezoid_highland_gain;
         geometry_msgs::msg::Point red_enemy_outpost;
         geometry_msgs::msg::Point blue_enemy_outpost;
+        geometry_msgs::msg::Point red_enemy_fortress;
+        geometry_msgs::msg::Point blue_enemy_fortress;
 
         double arrival_wait_time;
         double deviation_threshold;
@@ -266,10 +286,12 @@ private:
         double fortress_occupy_hp_ratio;
 
         double half_map_x;
+        double enemy_fortress_occupy_time;
+        double enemy_fortress_hp_threshold;
+        double enemy_fortress_ammo_threshold;
     } config_;
 
     std::shared_ptr<SentryControl> control_msg_;
-    uint8_t robot_id_ = 0;
     uint8_t last_stage_ = 0;
 
     std::vector<PriorityConfig> priority_targets_config_;

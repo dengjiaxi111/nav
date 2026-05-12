@@ -18,9 +18,11 @@ public:
     bool isInCentralRegion(double x, double y) const;
     bool isInBlueRegion(double x, double y) const;
     bool isInBlueHighland(double x, double y) const;
-    bool isInHeroDeployZone(double x, double y) const;
+    bool isInHeroDeployZone(double x, double y) const;   // 蓝方英雄部署区（红方视角的敌方部署区）
 
-    // 比赛许可区域
+    // 判断点是否在敌方英雄部署区（根据机器人的ID自动选择对应区域）
+    bool isInEnemyHeroDeployZone(double x, double y, int robot_id) const;
+
     bool isInsideAllowedRegion(double x, double y) const;
     geometry_msgs::msg::Point clampPointToAllowedRegion(const geometry_msgs::msg::Point& point) const;
 
@@ -31,6 +33,7 @@ public:
 
 private:
     Polygon red_highland_, red_region_, central_region_, blue_region_, blue_highland_, hero_deploy_zone_, allowed_region_;
+    Polygon red_hero_deploy_zone_;   // 红方英雄部署区（蓝方视角的敌方部署区）
     static bool isPointInPolygon(const geometry_msgs::msg::Point& point, const Polygon& polygon);
 };
 
