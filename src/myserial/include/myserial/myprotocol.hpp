@@ -22,6 +22,14 @@ namespace rm
     const uint8_t HEADER = 0x77;
     const uint8_t TAIL = 0x88;
 
+    struct __attribute__((__packed__)) RadarRobotInfo
+    {
+        uint16_t position_x = 0;
+        uint16_t position_y = 0;
+        uint16_t hp = 0;
+        uint16_t remaining_bullets = 0;
+    };
+
     /**
      * @brief: 整体的发送通信结构体
      */
@@ -80,7 +88,7 @@ namespace rm
         int8_t _delta_x[9] = {0};
         int8_t _delta_y[9] = {0};
         int16_t _buff_yaw_diff_angle = 0;
-        uint8_t _stair_mode = 0;  
+        uint8_t _stair_mode = 0;
         uint32_t _sentry_cmd = 0;
 
         uint8_t _eof = TAIL;
@@ -275,7 +283,21 @@ namespace rm
 
         // 4B 底盘电容电压，单位：V
         float _capacitor_voltage = 0.0f;
-        
+
+        // v1.2 全兵种扩展段
+        float our_engineer_x = 0.0f;
+        float our_engineer_y = 0.0f;
+        float our_standard3_x = 0.0f;
+        float our_standard3_y = 0.0f;
+        float our_standard4_x = 0.0f;
+        float our_standard4_y = 0.0f;
+        uint16_t our_hp_1 = 0;
+        uint16_t our_hp_2 = 0;
+        uint16_t our_hp_3 = 0;
+        uint16_t our_hp_4 = 0;
+        uint16_t our_hp_7 = 0;
+        RadarRobotInfo enemy_robot[5] = {};
+
         uint8_t _eof = TAIL;
 
         void print(void)
@@ -346,6 +368,19 @@ namespace rm
             cout << "  Chassis Status: " << static_cast<int>(_chassis_status) << endl;
             cout << "  Capacitor Voltage: " << _capacitor_voltage << " V" << endl;
 
+            cout << "[v1.2 全兵种扩展]" << endl;
+            cout << "  Our Engineer: (" << our_engineer_x << ", " << our_engineer_y << ")" << endl;
+            cout << "  Our Infantry3: (" << our_standard3_x << ", " << our_standard3_y << ")" << endl;
+            cout << "  Our Infantry4: (" << our_standard4_x << ", " << our_standard4_y << ")" << endl;
+            cout << "  Our HP: " << our_hp_1 << ", " << our_hp_2 << ", "
+                    << our_hp_3 << ", " << our_hp_4 << ", " << our_hp_7 << endl;
+            cout << "  Enemy Radar:";
+            for (const auto& robot : enemy_robot) {
+                cout << " (" << robot.position_x << ", " << robot.position_y
+                        << ", hp=" << robot.hp << ", ammo=" << robot.remaining_bullets << ")";
+            }
+            cout << endl;
+
             cout << "==========================================================" << endl;
         }
 
@@ -411,6 +446,19 @@ namespace rm
             oss << "  Chassis Status: " << static_cast<int>(_chassis_status) << std::endl;
             oss << "  Capacitor Voltage: " << _capacitor_voltage << " V" << std::endl;
 
+            oss << "[v1.2 全兵种扩展]" << std::endl;
+            oss << "  Our Engineer: (" << our_engineer_x << ", " << our_engineer_y << ")" << std::endl;
+            oss << "  Our Infantry3: (" << our_standard3_x << ", " << our_standard3_y << ")" << std::endl;
+            oss << "  Our Infantry4: (" << our_standard4_x << ", " << our_standard4_y << ")" << std::endl;
+            oss << "  Our HP: " << our_hp_1 << ", " << our_hp_2 << ", "
+                << our_hp_3 << ", " << our_hp_4 << ", " << our_hp_7 << std::endl;
+            oss << "  Enemy Radar:";
+            for (const auto& robot : enemy_robot) {
+                oss << " (" << robot.position_x << ", " << robot.position_y
+                    << ", hp=" << robot.hp << ", ammo=" << robot.remaining_bullets << ")";
+            }
+            oss << std::endl;
+
             oss << "==========================================================" << std::endl;
 
             return oss.str();
@@ -420,4 +468,7 @@ namespace rm
 
     const int WHOLE_SEND_LEN = sizeof(WholeSendFrame);
     const int WHOLE_GET_LEN = sizeof(WholeGetFrame);
+    static_assert(sizeof(RadarRobotInfo) == 8, "RadarRobotInfo must be 8 bytes");
+    static_assert(sizeof(WholeSendFrame) == 46, "WholeSendFrame must match navigation rec frame size");
+    static_assert(sizeof(WholeGetFrame) == 187, "WholeGetFrame must match navigation trans frame size");
 }

@@ -249,11 +249,13 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     game_status_.my_outpost_hp = msg._my_outpost_HP;
     game_status_.my_base_hp = msg._my_base_HP;
 
-    game_status_.enemy_1_robot_hp = msg._enemy_1_robot_HP;
-    game_status_.enemy_2_robot_hp = msg._enemy_2_robot_HP;
-    game_status_.enemy_3_robot_hp = msg._enemy_3_robot_HP;
-    game_status_.enemy_4_robot_hp = msg._enemy_4_robot_HP;
-    game_status_.enemy_7_robot_hp = msg._enemy_7_robot_HP;
+    game_status_.our_hero_x = msg.our_hero_x;
+    game_status_.our_hero_y = msg.our_hero_y;
+    game_status_.enemy_1_robot_hp = msg.enemy_robot[0].hp;
+    game_status_.enemy_2_robot_hp = msg.enemy_robot[1].hp;
+    game_status_.enemy_3_robot_hp = msg.enemy_robot[2].hp;
+    game_status_.enemy_4_robot_hp = msg.enemy_robot[3].hp;
+    game_status_.enemy_7_robot_hp = msg.enemy_robot[4].hp;
     game_status_.enemy_outpost_hp = msg._enemy_outpost_HP;
     game_status_.enemy_base_hp = msg._enemy_base_HP;
 
@@ -339,7 +341,11 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     our_state_.robot_id   = to_decision_team_id(msg._robot_id);
     our_state_.current_hp = msg._my_HP;
     our_state_.max_hp     = 400;
-    our_state_.sentry_hp  = msg._my_HP;
+    our_state_.hero_hp    = msg.our_hp_1;
+    our_state_.engineer_hp = msg.our_hp_2;
+    our_state_.infantry3_hp = msg.our_hp_3;
+    our_state_.infantry4_hp = msg.our_hp_4;
+    our_state_.sentry_hp  = msg.our_hp_7;
     our_state_.outpost_hp = msg._my_outpost_HP;
     our_state_.base_hp    = msg._my_base_HP;
     our_state_.x          = msg._x;
@@ -355,16 +361,37 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     our_state_.rfid_status = msg._rfid_status;
     our_state_.hero_x = msg.our_hero_x;
     our_state_.hero_y = msg.our_hero_y;
+    our_state_.engineer_x = msg.our_engineer_x;
+    our_state_.engineer_y = msg.our_engineer_y;
+    our_state_.infantry3_x = msg.our_standard3_x;
+    our_state_.infantry3_y = msg.our_standard3_y;
+    our_state_.infantry4_x = msg.our_standard4_x;
+    our_state_.infantry4_y = msg.our_standard4_y;
 
     our_state_pub_->publish(our_state_);
 
     // ---------- EnemyRobotState ----------
-    // 串口当前只提供敌方血量；敌方全局位置和发弹量没有对应字段，保持默认值。
-    enemy_state_.enemy_hero_hp = msg._enemy_1_robot_HP;
-    enemy_state_.enemy_engineer_hp = msg._enemy_2_robot_HP;
-    enemy_state_.enemy_infantry3_hp = msg._enemy_3_robot_HP;
-    enemy_state_.enemy_infantry4_hp = msg._enemy_4_robot_HP;
-    enemy_state_.enemy_sentry_hp = msg._enemy_7_robot_HP;
+    enemy_state_.enemy_hero_x = static_cast<float>(msg.enemy_robot[0].position_x);
+    enemy_state_.enemy_hero_y = static_cast<float>(msg.enemy_robot[0].position_y);
+    enemy_state_.enemy_engineer_x = static_cast<float>(msg.enemy_robot[1].position_x);
+    enemy_state_.enemy_engineer_y = static_cast<float>(msg.enemy_robot[1].position_y);
+    enemy_state_.enemy_infantry3_x = static_cast<float>(msg.enemy_robot[2].position_x);
+    enemy_state_.enemy_infantry3_y = static_cast<float>(msg.enemy_robot[2].position_y);
+    enemy_state_.enemy_infantry4_x = static_cast<float>(msg.enemy_robot[3].position_x);
+    enemy_state_.enemy_infantry4_y = static_cast<float>(msg.enemy_robot[3].position_y);
+    enemy_state_.enemy_sentry_x = static_cast<float>(msg.enemy_robot[4].position_x);
+    enemy_state_.enemy_sentry_y = static_cast<float>(msg.enemy_robot[4].position_y);
+
+    enemy_state_.enemy_hero_hp = msg.enemy_robot[0].hp;
+    enemy_state_.enemy_engineer_hp = msg.enemy_robot[1].hp;
+    enemy_state_.enemy_infantry3_hp = msg.enemy_robot[2].hp;
+    enemy_state_.enemy_infantry4_hp = msg.enemy_robot[3].hp;
+    enemy_state_.enemy_sentry_hp = msg.enemy_robot[4].hp;
+
+    enemy_state_.enemy_hero_allowance = msg.enemy_robot[0].remaining_bullets;
+    enemy_state_.enemy_infantry3_allowance = msg.enemy_robot[2].remaining_bullets;
+    enemy_state_.enemy_infantry4_allowance = msg.enemy_robot[3].remaining_bullets;
+    enemy_state_.enemy_sentry_allowance = msg.enemy_robot[4].remaining_bullets;
 
     enemy_state_pub_->publish(enemy_state_);
 
