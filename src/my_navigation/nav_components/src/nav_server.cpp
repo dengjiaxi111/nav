@@ -100,10 +100,6 @@ public:
         declare_parameter("escape.backup_timeout", 1.8);
         declare_parameter("escape.backup_min_progress", 0.03);
         declare_parameter("escape.backup_progress_timeout", 0.8);
-        declare_parameter("escape.arc_backup_dist", 0.25);
-        declare_parameter("escape.arc_backup_vel", -0.18);
-        declare_parameter("escape.arc_backup_angular_vel", 0.45);
-        declare_parameter("escape.arc_backup_timeout", 1.8);
         declare_parameter("escape.rotation_speed", 0.3);
         declare_parameter("escape.forward_speed", 0.15);
         declare_parameter("escape.yaw_tolerance", 0.1);
@@ -122,11 +118,6 @@ public:
         escape_backup_min_progress_ = get_parameter("escape.backup_min_progress").as_double();
         escape_backup_progress_timeout_ =
             get_parameter("escape.backup_progress_timeout").as_double();
-        escape_arc_backup_dist_ = get_parameter("escape.arc_backup_dist").as_double();
-        escape_arc_backup_vel_ = get_parameter("escape.arc_backup_vel").as_double();
-        escape_arc_backup_angular_vel_ =
-            get_parameter("escape.arc_backup_angular_vel").as_double();
-        escape_arc_backup_timeout_ = get_parameter("escape.arc_backup_timeout").as_double();
         escape_rotation_speed_ = get_parameter("escape.rotation_speed").as_double();
         escape_forward_speed_ = get_parameter("escape.forward_speed").as_double();
         escape_yaw_tolerance_ = get_parameter("escape.yaw_tolerance").as_double();
@@ -189,9 +180,8 @@ public:
         RCLCPP_INFO(get_logger(), "escape.search_radius: %.1f m", escape_search_radius_);
         RCLCPP_INFO(get_logger(), "escape.preferred_search_distance: %.2f m", escape_preferred_search_distance_);
         RCLCPP_INFO(get_logger(), "escape.preferred_search_half_angle: %.2f rad", escape_preferred_search_half_angle_);
-        RCLCPP_INFO(get_logger(), "escape.release_maneuver: %d, backup=%.2fm %.2fm/s, arc=%.2fm %.2fm/s %.2frad/s",
-                    escape_enable_release_maneuver_, escape_backup_dist_, escape_backup_vel_,
-                    escape_arc_backup_dist_, escape_arc_backup_vel_, escape_arc_backup_angular_vel_);
+        RCLCPP_INFO(get_logger(), "escape.release_maneuver: %d, backup=%.2fm %.2fm/s",
+                    escape_enable_release_maneuver_, escape_backup_dist_, escape_backup_vel_);
         RCLCPP_INFO(get_logger(), "escape.rotation_speed: %.2f rad/s", escape_rotation_speed_);
         RCLCPP_INFO(get_logger(), "escape.forward_speed: %.2f m/s", escape_forward_speed_);
         RCLCPP_INFO(get_logger(), "========================================");
@@ -1365,6 +1355,8 @@ private:
         escape_target_y_ = -1.0;
         escape_phase_ = escape_enable_release_maneuver_ ? 0 : 3;
         escape_drive_direction_ = 1;
+        escape_release_direction_ = -1;
+        escape_release_direction_initialized_ = false;
         escape_phase_initialized_ = false;
         escape_active_release_phase_ = -1;
         escape_phase_start_time_ = std::chrono::steady_clock::now();
@@ -1405,6 +1397,41 @@ private:
         const int idx = my * width + mx;
         const int8_t cost = costmap->data[idx];
         return cost >= 0 && cost < escape_trigger_costmap_threshold_;
+    }
+
+    void selectEscapeReleaseDirection() {
+        if (escape_release_direction_initialized_) {
+            return;
+        }
+        escape_release_direction_initialized_ = true;
+        escape_release_direction_ = -1;
+
+        if (!findSafeEscapeTarget(false)) {
+            RCLCPP_WARN(get_logger(),
+                        "释放方向候选脱困点搜索失败，默认使用后退释放动作");
+            escape_target_x_ = -1.0;
+            escape_target_y_ = -1.0;
+            return;
+        }
+
+        tf2::Quaternion q;
+        tf2::fromMsg(current_pose_.pose.orientation, q);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        const double dx = escape_target_x_ - current_pose_.pose.position.x;
+        const double dy = escape_target_y_ - current_pose_.pose.position.y;
+        const double forward_projection = dx * std::cos(yaw) + dy * std::sin(yaw);
+        escape_release_direction_ = (forward_projection >= 0.0) ? 1 : -1;
+
+        RCLCPP_WARN(get_logger(),
+                    "释放方向候选脱困点: (%.2f, %.2f), projection=%.2fm, 使用%s释放；"
+                    "释放后将重新搜索最终脱困点",
+                    escape_target_x_, escape_target_y_, forward_projection,
+                    (escape_release_direction_ > 0 ? "前进" : "后退"));
+
+        escape_target_x_ = -1.0;
+        escape_target_y_ = -1.0;
     }
 
     bool isEscapeReleaseMotionAllowed(double linear_vel,
@@ -1529,10 +1556,7 @@ private:
         RCLCPP_WARN(get_logger(), "脱困退让阶段%d结束: %s", escape_phase_, reason);
         escape_phase_initialized_ = false;
         escape_active_release_phase_ = -1;
-        escape_phase_++;
-        if (escape_phase_ > 2) {
-            escape_phase_ = 3;
-        }
+        escape_phase_ = 3;
     }
 
     bool runEscapeReleasePhase() {
@@ -1542,23 +1566,13 @@ private:
         }
 
         double target_dist = escape_backup_dist_;
-        double linear_vel = -std::abs(escape_backup_vel_);
+        double linear_vel =
+            static_cast<double>(escape_release_direction_) * std::abs(escape_backup_vel_);
         double angular_vel = 0.0;
         double timeout_s = escape_backup_timeout_;
         double safety_duration = (std::abs(linear_vel) > 1e-6)
             ? std::max(0.1, target_dist / std::abs(linear_vel))
             : timeout_s;
-
-        if (escape_phase_ == 1 || escape_phase_ == 2) {
-            target_dist = escape_arc_backup_dist_;
-            linear_vel = -std::abs(escape_arc_backup_vel_);
-            const double arc_w = std::abs(escape_arc_backup_angular_vel_);
-            angular_vel = (escape_phase_ == 1) ? arc_w : -arc_w;
-            timeout_s = escape_arc_backup_timeout_;
-            safety_duration = (std::abs(linear_vel) > 1e-6)
-                ? target_dist / std::abs(linear_vel)
-                : timeout_s;
-        }
 
         if (target_dist <= 1e-6 || std::abs(linear_vel) <= 1e-6 || timeout_s <= 0.0) {
             advanceEscapeReleasePhase("参数禁用");
@@ -2002,7 +2016,8 @@ private:
             return;
         }
 
-        if (escape_phase_ >= 0 && escape_phase_ <= 2) {
+        if (escape_phase_ == 0) {
+            selectEscapeReleaseDirection();
             if (runEscapeReleasePhase()) {
                 return;
             }
@@ -2183,23 +2198,29 @@ private:
     }
     
     // 搜索安全脱困点：先在 base_link ±X 方向小角度范围定向搜索，再回退到环形搜索
-    bool findSafeEscapeTarget() {
+    bool findSafeEscapeTarget(bool verbose = true) {
         if (findDirectionalEscapeTarget()) {
             return true;
         }
 
-        RCLCPP_WARN(get_logger(),
-                    "定向搜索未命中，回退到环形搜索 (radius=%.2fm)",
-                    escape_search_radius_);
+        if (verbose) {
+            RCLCPP_WARN(get_logger(),
+                        "定向搜索未命中，回退到环形搜索 (radius=%.2fm)",
+                        escape_search_radius_);
+        }
 
         if (!map_manager_ || !map_manager_->hasEsdf()) {
-            RCLCPP_ERROR(get_logger(), "ESDF 地图不可用，无法搜索安全点");
+            if (verbose) {
+                RCLCPP_ERROR(get_logger(), "ESDF 地图不可用，无法搜索安全点");
+            }
             return false;
         }
-        
+
         auto costmap = map_manager_->getCostmap();
         if (!costmap) {
-            RCLCPP_ERROR(get_logger(), "Costmap 不可用");
+            if (verbose) {
+                RCLCPP_ERROR(get_logger(), "Costmap 不可用");
+            }
             return false;
         }
         
@@ -2272,10 +2293,13 @@ private:
             }
         }
         
-        RCLCPP_ERROR(get_logger(), 
-            "❌ 搜索失败: 检查了%d个格子, 无满足条件的点 (最大ESDF=%.3fm < %.2fm或cost>=99)",
-            checked_cells, max_esdf_found, escape_target_safe_esdf_);
-        
+        if (verbose) {
+            RCLCPP_ERROR(get_logger(),
+                         "❌ 搜索失败: 检查了%d个格子, 无满足条件的点 "
+                         "(最大ESDF=%.3fm < %.2fm或cost>=99)",
+                         checked_cells, max_esdf_found, escape_target_safe_esdf_);
+        }
+
         return false;
     }
     
@@ -2612,10 +2636,6 @@ private:
     double escape_backup_timeout_{1.8};     // 直退超时
     double escape_backup_min_progress_{0.03};  // 退让最小有效进展
     double escape_backup_progress_timeout_{0.8};  // 退让无进展超时
-    double escape_arc_backup_dist_{0.25};   // 弧线后退释放距离
-    double escape_arc_backup_vel_{-0.18};   // 弧线后退线速度
-    double escape_arc_backup_angular_vel_{0.45};  // 弧线后退角速度幅值
-    double escape_arc_backup_timeout_{1.8}; // 弧线后退超时
     double escape_rotation_speed_;          // 旋转速度
     double escape_forward_speed_;           // 前进速度
     double escape_yaw_tolerance_;           // 角度容差
@@ -2631,8 +2651,10 @@ private:
     // 脱困相关状态
     double escape_target_x_ = -1.0;  // 脱困目标点 X（-1表示未设置）
     double escape_target_y_ = -1.0;  // 脱困目标点 Y
-    int escape_phase_ = 0;  // 脱困阶段：0=直退,1=左弧退,2=右弧退,3=找点,4=旋转,5=驶向目标
+    int escape_phase_ = 0;  // 脱困阶段：0=直线释放,3=找点,4=旋转,5=驶向目标
     int escape_drive_direction_ = 1;  // 脱困驱动方向：1=前进, -1=倒车
+    int escape_release_direction_ = -1;  // 释放动作方向：1=前进, -1=后退
+    bool escape_release_direction_initialized_ = false;
     bool escape_phase_initialized_ = false;
     int escape_active_release_phase_ = -1;
     geometry_msgs::msg::PoseStamped escape_phase_start_pose_;

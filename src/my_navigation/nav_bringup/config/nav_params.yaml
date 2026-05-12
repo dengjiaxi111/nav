@@ -499,17 +499,13 @@ nav_server:
       preferred_search_distance: 1.0  # 优先沿车体前后方向搜索安全点的最大距离(m)
       preferred_search_half_angle: 0.2 # 定向搜索半角(rad)
 
-      # 退让释放动作：车头顶障碍时先低速倒退/弧线倒退，再旋转找安全点
+      # 释放动作：先按候选脱困点方位直线前进/后退一小段，再重新搜索最终脱困点
       enable_release_maneuver: true
-      backup_dist: 0.25               # 直退释放距离(m)
-      backup_vel: -0.5               # 直退释放速度(m/s)
-      backup_timeout: 1.8             # 直退动作超时(s)
+      backup_dist: 0.25               # 直线释放距离(m)
+      backup_vel: -0.5                # 直线释放速度幅值(m/s)，符号会被忽略，由脱困点方位决定前进/后退
+      backup_timeout: 1.8             # 直线释放动作超时(s)
       backup_min_progress: 0.03       # 退让阶段最小有效位移(m)
       backup_progress_timeout: 2.0    # 无有效位移超过该时间则切换下一退让动作(s)
-      arc_backup_dist: 0.3           # 弧线后退释放距离(m)
-      arc_backup_vel: -0.9            # 弧线后退线速度(m/s)
-      arc_backup_angular_vel: 2.5   # 弧线后退角速度幅值(rad/s)，先左后右
-      arc_backup_timeout: 1.8         # 单个弧线后退动作超时(s)
       
       # 控制参数
       rotation_speed: 3.0             # 旋转角速度 (rad/s)
