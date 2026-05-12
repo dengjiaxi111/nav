@@ -24,6 +24,7 @@ private:
     std::string pcd_path_;
     std::string output_path_;
     std::string leveled_full_output_path_;
+    std::string level_method_;
     std::string level_height_origin_mode_;
     bool auto_level_;
     bool require_auto_level_;
@@ -35,6 +36,15 @@ private:
     double level_early_stop_below_first_m_;
     double level_ground_percentile_;
     double ground_normal_threshold_;
+    double manual_level_roll1_;
+    double manual_level_pitch1_;
+    double manual_level_yaw1_;
+    double manual_level_roll2_;
+    double manual_level_pitch2_;
+    double manual_level_yaw2_;
+    double manual_level_x_;
+    double manual_level_y_;
+    double manual_level_z_;
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud1_;
@@ -51,13 +61,85 @@ private:
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_;
     pcl::PCDWriter writer;
 
-    bool levelPointCloudWithGroundPlane()
+    bool applyManualExtrinsicTransform()
     {
-        if (!auto_level_) {
-            RCLCPP_INFO(this->get_logger(), "auto_level disabled, keeping original PCD frame");
-            return true;
+        if (!cloud_ || cloud_->empty()) {
+            RCLCPP_ERROR(this->get_logger(), "manual_extrinsic failed: input cloud is empty");
+            return false;
         }
 
+        Eigen::Affine3d transform1 = Eigen::Affine3d::Identity();
+        transform1.rotate(
+            Eigen::AngleAxisd(manual_level_roll1_, Eigen::Vector3d::UnitX()) *
+            Eigen::AngleAxisd(manual_level_pitch1_, Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(manual_level_yaw1_, Eigen::Vector3d::UnitZ()));
+
+        Eigen::Affine3d transform2 = Eigen::Affine3d::Identity();
+        transform2.rotate(
+            Eigen::AngleAxisd(manual_level_roll2_, Eigen::Vector3d::UnitX()) *
+            Eigen::AngleAxisd(manual_level_pitch2_, Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(manual_level_yaw2_, Eigen::Vector3d::UnitZ()));
+
+        Eigen::Affine3d transform3 = Eigen::Affine3d::Identity();
+        transform3.translate(Eigen::Vector3d(manual_level_x_, manual_level_y_, manual_level_z_));
+
+        // Keep the old behavior: cloud -> transform1 -> transform2 -> transform3.
+        Eigen::Affine3d combined = transform3 * transform2 * transform1;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::transformPointCloud(*cloud_, *transformed, combined);
+        *cloud_ = *transformed;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "manual_extrinsic applied: rpy1=[%.4f, %.4f, %.4f], rpy2=[%.4f, %.4f, %.4f], xyz=[%.4f, %.4f, %.4f]",
+            manual_level_roll1_, manual_level_pitch1_, manual_level_yaw1_,
+            manual_level_roll2_, manual_level_pitch2_, manual_level_yaw2_,
+            manual_level_x_, manual_level_y_, manual_level_z_);
+
+        if (!leveled_full_output_path_.empty()) {
+            if (writer.write<pcl::PointXYZ>(leveled_full_output_path_, *cloud_, false) < 0) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "failed to write manual-transformed full PCD: %s",
+                    leveled_full_output_path_.c_str());
+            } else {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "manual-transformed full PCD written: %s",
+                    leveled_full_output_path_.c_str());
+            }
+        }
+
+        return true;
+    }
+
+    bool preprocessPointCloudFrame()
+    {
+        std::string method = level_method_;
+        if (method.empty()) {
+            method = auto_level_ ? "auto" : "none";
+        }
+
+        if (method == "none") {
+            RCLCPP_INFO(this->get_logger(), "level_method=none, keeping original PCD frame");
+            return true;
+        }
+        if (method == "auto") {
+            return levelPointCloudWithGroundPlane();
+        }
+        if (method == "manual_extrinsic") {
+            return applyManualExtrinsicTransform();
+        }
+
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "unknown level_method '%s' (expected: none, auto, manual_extrinsic)",
+            method.c_str());
+        return false;
+    }
+
+    bool levelPointCloudWithGroundPlane()
+    {
         if (!cloud_ || cloud_->empty()) {
             RCLCPP_ERROR(this->get_logger(), "auto_level failed: input cloud is empty");
             return false;
@@ -293,6 +375,7 @@ public:
         this->declare_parameter<std::string>("pcd_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/rmul_2025.pcd");
         this->declare_parameter<std::string>("output_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/object.pcd");
         this->declare_parameter<std::string>("leveled_full_output_path", "");
+        this->declare_parameter<std::string>("level_method", "");
         this->declare_parameter<std::string>("level_height_origin_mode", "selected_plane");
         this->declare_parameter<bool>("auto_level", true);
         this->declare_parameter<bool>("require_auto_level", false);
@@ -304,9 +387,19 @@ public:
         this->declare_parameter<double>("level_early_stop_below_first_m", 0.10);
         this->declare_parameter<double>("level_ground_percentile", 0.02);
         this->declare_parameter<double>("ground_normal_threshold", 0.70);
+        this->declare_parameter<double>("manual_level_roll1", 0.5);
+        this->declare_parameter<double>("manual_level_pitch1", 0.0);
+        this->declare_parameter<double>("manual_level_yaw1", 0.0);
+        this->declare_parameter<double>("manual_level_roll2", 0.0);
+        this->declare_parameter<double>("manual_level_pitch2", 0.0);
+        this->declare_parameter<double>("manual_level_yaw2", -1.5708);
+        this->declare_parameter<double>("manual_level_x", 0.2);
+        this->declare_parameter<double>("manual_level_y", 0.0);
+        this->declare_parameter<double>("manual_level_z", 0.05);
         this->get_parameter("pcd_path", pcd_path_);
         this->get_parameter("output_path", output_path_);
         this->get_parameter("leveled_full_output_path", leveled_full_output_path_);
+        this->get_parameter("level_method", level_method_);
         this->get_parameter("level_height_origin_mode", level_height_origin_mode_);
         this->get_parameter("auto_level", auto_level_);
         this->get_parameter("require_auto_level", require_auto_level_);
@@ -318,6 +411,15 @@ public:
         this->get_parameter("level_early_stop_below_first_m", level_early_stop_below_first_m_);
         this->get_parameter("level_ground_percentile", level_ground_percentile_);
         this->get_parameter("ground_normal_threshold", ground_normal_threshold_);
+        this->get_parameter("manual_level_roll1", manual_level_roll1_);
+        this->get_parameter("manual_level_pitch1", manual_level_pitch1_);
+        this->get_parameter("manual_level_yaw1", manual_level_yaw1_);
+        this->get_parameter("manual_level_roll2", manual_level_roll2_);
+        this->get_parameter("manual_level_pitch2", manual_level_pitch2_);
+        this->get_parameter("manual_level_yaw2", manual_level_yaw2_);
+        this->get_parameter("manual_level_x", manual_level_x_);
+        this->get_parameter("manual_level_y", manual_level_y_);
+        this->get_parameter("manual_level_z", manual_level_z_);
         if (pcl::io::loadPCDFile<pcl::PointXYZ>(pcd_path_, *cloud_) == -1) 
         {
             PCL_ERROR("Couldn't read file \n");
@@ -325,12 +427,12 @@ public:
         }
         RCLCPP_INFO(this->get_logger(), "file read");
 
-        if (!levelPointCloudWithGroundPlane()) {
+        if (!preprocessPointCloudFrame()) {
             if (require_auto_level_) {
-                RCLCPP_ERROR(this->get_logger(), "auto_level is required; aborting");
+                RCLCPP_ERROR(this->get_logger(), "level preprocessing is required; aborting");
                 return;
             }
-            RCLCPP_WARN(this->get_logger(), "auto_level failed; continuing with original PCD");
+            RCLCPP_WARN(this->get_logger(), "level preprocessing failed; continuing with original PCD");
         }
 
         ne_.setInputCloud(cloud_);

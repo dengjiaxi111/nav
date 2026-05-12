@@ -11,15 +11,17 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 #存放pcd文件的路径
-                'pcd_path': '/home/li/navigation2026/2025RMUC_real.pcd',
+                'pcd_path': '/home/li/navigation2026/src/tools/pcd_transform/RMUC_final.pcd',
                 #pcd文件输出路径
                 'output_path': '/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd',
+                # none: 不旋转; auto: 平面拟合自动旋平; manual_extrinsic: 使用旧的固定外参旋转
+                'level_method': 'manual_extrinsic',
                 # 自动拟合主地面平面并旋平：保证后续PGM沿真实竖直方向投影
-                'auto_level': True,
+                'auto_level': False,
                 # true时旋平失败直接中止，避免继续生成歪图
-                'require_auto_level': True,
+                'require_auto_level': False,
                 # 旋平后把拟合地面平均高度平移到z=0
-                'translate_ground_to_zero': True,
+                'translate_ground_to_zero': False,
                 # 旋转用平面找水平，高度原点用点云低分位数，避免选中天花板时把天花板当z=0
                 'level_height_origin_mode': 'low_percentile',
                 'level_ground_percentile': 0.02,
@@ -31,6 +33,16 @@ def generate_launch_description():
                 'level_min_plane_inliers': 1000,
                 # 若后续候选比第一个大平面低超过该阈值，认为已找到地面并提前停止
                 'level_early_stop_below_first_m': 0.10,
+                # manual_extrinsic 模式参数，默认恢复旧实现的三段变换
+                'manual_level_roll1': 0.5,
+                'manual_level_pitch1': 0.0,
+                'manual_level_yaw1': 0.0,
+                'manual_level_roll2': 0.0,
+                'manual_level_pitch2': 0.0,
+                'manual_level_yaw2': -1.5708,
+                'manual_level_x': 0.2,
+                'manual_level_y': 0.0,
+                'manual_level_z': 0.05,
                 # 保存旋平后的完整点云，方便RViz检查；PGM仍使用去地面后的output_path
                 'leveled_full_output_path': '/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
             }])
