@@ -90,12 +90,14 @@ void DecisionManager::updateMustOccupyFlag() {
 
 bool DecisionManager::needRamp(const geometry_msgs::msg::Point& target) const {
     double half = blackboard_->getHalfMapX();
-    bool robot_in_red = (blackboard_->x < half);
-    bool target_in_blue = (target.x > half);
-    bool robot_in_blue = (blackboard_->x > half);
-    bool target_in_red = (target.x < half);
-    bool cross = (robot_in_red && target_in_blue) || (robot_in_blue && target_in_red);
-    if (!cross) return false;
+    bool to_enemy_half = false;
+    if (blackboard_->robot_id_ == 1) { // 蓝方：己方半区 x > half，对方半区 target.x < half
+        to_enemy_half = (blackboard_->x > half) && (target.x < half);
+    } else {                           // 红方：己方半区 x < half，对方半区 target.x > half
+        to_enemy_half = (blackboard_->x < half) && (target.x > half);
+    }
+    if (!to_enemy_half) return false;
+    // 中央区域内不飞坡
     if (region_manager_->isInCentralRegion(blackboard_->x, blackboard_->y)) {
         return false;
     }
@@ -117,12 +119,11 @@ PriorityTargetResult DecisionManager::selectPriorityTarget() {
         bool available = false;
 
         if (cfg.type == "hero_deploy") {
-            // 只要敌方英雄在部署区且可见，立即返回，忽略阈值
             if (blackboard_->enemy_hero.visible && blackboard_->enemy_hero.hp > 0 &&
                 blackboard_->hero_in_deploy_zone) {
                 result.enemy_id = "hero";
                 result.type = "hero_deploy";
-                result.score = 1.0;  // 强制高分
+                result.score = 1.0;
                 result.valid = true;
                 return result;
             }

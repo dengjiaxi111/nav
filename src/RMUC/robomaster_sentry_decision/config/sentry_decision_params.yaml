@@ -8,8 +8,8 @@ blue_attack_y: 468.0
 
 red_supply_x: 176.0
 red_supply_y: 262.0
-blue_supply_x: 176.0
-blue_supply_y: 262.0
+blue_supply_x: 2578.0
+blue_supply_y: 1214.0
 
 # 基地防御点（红方为(408,808)，蓝方为(2398,688)）
 red_base_gain_x: 408.0
