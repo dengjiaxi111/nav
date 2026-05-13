@@ -89,18 +89,8 @@ void DecisionManager::updateMustOccupyFlag() {
 }
 
 bool DecisionManager::needRamp(const geometry_msgs::msg::Point& target) const {
-    double half = blackboard_->getHalfMapX();
-    bool to_enemy_half = false;
-    if (blackboard_->robot_id_ == 1) {
-        to_enemy_half = (blackboard_->x > half) && (target.x < half);
-    } else {
-        to_enemy_half = (blackboard_->x < half) && (target.x > half);
-    }
-    if (!to_enemy_half) return false;
-    if (region_manager_->isInCentralRegion(blackboard_->x, blackboard_->y)) {
-        return false;
-    }
-    return true;
+    // 直接前往目标点，不再使用飞坡点作为跨半场中转
+    return false;
 }
 
 geometry_msgs::msg::Point DecisionManager::selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const {
