@@ -264,7 +264,7 @@ void DecisionManager::transitionTo(State new_state) {
             break;
         case State::INIT_MOVE:
             blackboard_->startBehavior(BehaviorType::INIT_MOVE, blackboard_->getAttackPoint(), 0.0);
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_ATTACK:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
