@@ -232,6 +232,95 @@ RegionManager::RegionManager() {
     red_engineer_mining_zone_.vertices.push_back(point);
     point.x = 1304; point.y = 712; point.z = 0;
     red_engineer_mining_zone_.vertices.push_back(point);
+
+    // ========== 新增：禁用区域（目标点不可落入） ==========
+    // 多边形 A
+    forbidden_zones_.clear();
+    Polygon polyA; polyA.vertices.clear();
+    point.x = 1298; point.y = 948; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1472; point.y = 892; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1648; point.y = 712; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1652; point.y = 672; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1512; point.y = 540; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1346; point.y = 590; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1162; point.y = 770; point.z = 0; polyA.vertices.push_back(point);
+    point.x = 1158; point.y = 808; point.z = 0; polyA.vertices.push_back(point);
+    forbidden_zones_.push_back(polyA);
+
+    // 多边形 B
+    Polygon polyB; polyB.vertices.clear();
+    point.x = 1334; point.y = 232; point.z = 0; polyB.vertices.push_back(point);
+    point.x = 1542; point.y = 236; point.z = 0; polyB.vertices.push_back(point);
+    point.x = 1566; point.y = 38; point.z = 0; polyB.vertices.push_back(point);
+    point.x = 1266; point.y = 38; point.z = 0; polyB.vertices.push_back(point);
+    point.x = 1270; point.y = 148; point.z = 0; polyB.vertices.push_back(point);
+    point.x = 1336; point.y = 156; point.z = 0; polyB.vertices.push_back(point);
+    forbidden_zones_.push_back(polyB);
+
+    // 多边形 C
+    Polygon polyC; polyC.vertices.clear();
+    point.x = 1262; point.y = 1242; point.z = 0; polyC.vertices.push_back(point);
+    point.x = 1254; point.y = 1442; point.z = 0; polyC.vertices.push_back(point);
+    point.x = 1542; point.y = 1446; point.z = 0; polyC.vertices.push_back(point);
+    point.x = 1544; point.y = 1342; point.z = 0; polyC.vertices.push_back(point);
+    point.x = 1474; point.y = 1334; point.z = 0; polyC.vertices.push_back(point);
+    point.x = 1480; point.y = 1254; point.z = 0; polyC.vertices.push_back(point);
+    forbidden_zones_.push_back(polyC);
+
+    // 多边形 D
+    Polygon polyD; polyD.vertices.clear();
+    point.x = 270; point.y = 832; point.z = 0; polyD.vertices.push_back(point);
+    point.x = 216; point.y = 794; point.z = 0; polyD.vertices.push_back(point);
+    point.x = 216; point.y = 696; point.z = 0; polyD.vertices.push_back(point);
+    point.x = 270; point.y = 652; point.z = 0; polyD.vertices.push_back(point);
+    point.x = 358; point.y = 680; point.z = 0; polyD.vertices.push_back(point);
+    point.x = 366; point.y = 798; point.z = 0; polyD.vertices.push_back(point);
+    point.x = 274; point.y = 850; point.z = 0; polyD.vertices.push_back(point);
+    forbidden_zones_.push_back(polyD);
+
+    // 多边形 E (纠正小数点为逗号：2526,838)
+    Polygon polyE; polyE.vertices.clear();
+    point.x = 2526; point.y = 838; point.z = 0; polyE.vertices.push_back(point);
+    point.x = 2438; point.y = 812; point.z = 0; polyE.vertices.push_back(point);
+    point.x = 2432; point.y = 694; point.z = 0; polyE.vertices.push_back(point);
+    point.x = 2530; point.y = 648; point.z = 0; polyE.vertices.push_back(point);
+    point.x = 2594; point.y = 694; point.z = 0; polyE.vertices.push_back(point);
+    point.x = 2592; point.y = 794; point.z = 0; polyE.vertices.push_back(point);
+    forbidden_zones_.push_back(polyE);
+
+    // 多边形 F（含若干点，修复格式）
+    Polygon polyF; polyF.vertices.clear();
+    point.x = 1756; point.y = 142; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2004; point.y = 492; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2280; point.y = 496; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2290; point.y = 516; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2336; point.y = 508; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2342; point.y = 440; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2282; point.y = 432; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2244; point.y = 334; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2338; point.y = 326; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2238; point.y = 310; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2202; point.y = 310; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2248; point.y = 440; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 2032; point.y = 440; point.z = 0; polyF.vertices.push_back(point);
+    point.x = 1820; point.y = 138; point.z = 0; polyF.vertices.push_back(point);
+    forbidden_zones_.push_back(polyF);
+
+    // 多边形 G
+    Polygon polyG; polyG.vertices.clear();
+    point.x = 1064; point.y = 1346; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 806; point.y = 988; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 466; point.y = 974; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 462; point.y = 1052; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 524; point.y = 1050; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 564; point.y = 1152; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 466; point.y = 1152; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 472; point.y = 1180; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 606; point.y = 1176; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 566; point.y = 1050; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 774; point.y = 1046; point.z = 0; polyG.vertices.push_back(point);
+    point.x = 994; point.y = 1354; point.z = 0; polyG.vertices.push_back(point);
+    forbidden_zones_.push_back(polyG);
 }
 
 bool RegionManager::isPointInPolygon(const geometry_msgs::msg::Point& point, const Polygon& polygon) {
@@ -249,6 +338,15 @@ bool RegionManager::isPointInPolygon(const geometry_msgs::msg::Point& point, con
         }
     }
     return inside;
+}
+
+bool RegionManager::isInForbiddenZone(double x, double y) const {
+    geometry_msgs::msg::Point p;
+    p.x = x; p.y = y; p.z = 0.0;
+    for (const auto& poly : forbidden_zones_) {
+        if (isPointInPolygon(p, poly)) return true;
+    }
+    return false;
 }
 
 bool RegionManager::isInRedHighland(double x, double y) const {
@@ -314,10 +412,11 @@ bool RegionManager::isInsideAllowedRegion(double x, double y) const {
 }
 
 geometry_msgs::msg::Point RegionManager::clampPointToAllowedRegion(const geometry_msgs::msg::Point& point) const {
-    if (isInsideAllowedRegion(point.x, point.y)) return point;
+    // 如果点已经在允许区域且不在禁区，则直接返回
+    if (isInsideAllowedRegion(point.x, point.y) && !isInForbiddenZone(point.x, point.y)) return point;
 
-    geometry_msgs::msg::Point best_proj;
-    double min_dist = 1e9;
+    // 否则，在允许区域的边界上寻找最近的候选点，优先返回不在禁区的点
+    std::vector<std::pair<double, geometry_msgs::msg::Point>> candidates;
     const auto& verts = allowed_region_.vertices;
     int n = verts.size();
     for (int i = 0; i < n; ++i) {
@@ -329,7 +428,8 @@ geometry_msgs::msg::Point RegionManager::clampPointToAllowedRegion(const geometr
         double len_sq = dx*dx + dy*dy;
         if (len_sq == 0) {
             double d = std::hypot(point.x - A.x, point.y - A.y);
-            if (d < min_dist) { min_dist = d; best_proj = A; }
+            geometry_msgs::msg::Point proj = A;
+            candidates.emplace_back(d, proj);
             continue;
         }
         double t = ((point.x - A.x)*dx + (point.y - A.y)*dy) / len_sq;
@@ -338,13 +438,24 @@ geometry_msgs::msg::Point RegionManager::clampPointToAllowedRegion(const geometr
         proj.x = A.x + t * dx;
         proj.y = A.y + t * dy;
         double d = std::hypot(point.x - proj.x, point.y - proj.y);
-        if (d < min_dist) {
-            min_dist = d;
-            best_proj = proj;
-        }
+        candidates.emplace_back(d, proj);
     }
-    return best_proj;
+
+    if (!candidates.empty()) {
+        std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
+        for (const auto& cand : candidates) {
+            const auto& p = cand.second;
+            // 接受不在禁区内的候选点
+            if (!isInForbiddenZone(p.x, p.y)) {
+                return p;
+            }
+        }
+        // 如果所有最近的边界投影都位于禁区内，返回距离最小的投影（保守回退）
+        return candidates.front().second;
+    }
+    return geometry_msgs::msg::Point();
 }
+
 
 std::string RegionManager::getRegionName(double x, double y) const {
     if (isInRedHighland(x, y)) return "red_highland";
@@ -378,7 +489,10 @@ geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x,
     std::vector<geometry_msgs::msg::Point> same_region_points;
     for (const auto& point : hex_points) {
         if (getRegionName(point.x, point.y) == target_region) {
-            same_region_points.push_back(point);
+            // 排除禁区内的候选点
+            if (!isInForbiddenZone(point.x, point.y)) {
+                same_region_points.push_back(point);
+            }
         }
     }
 
@@ -396,5 +510,12 @@ geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x,
     if (!same_region_points.empty()) {
         return pickNearest(same_region_points);
     }
+    // 若没有满足条件的同区域点，尝试从所有六边形点中排除禁区后选取
+    std::vector<geometry_msgs::msg::Point> non_forbidden_hex;
+    for (const auto& p : hex_points) {
+        if (!isInForbiddenZone(p.x, p.y)) non_forbidden_hex.push_back(p);
+    }
+    if (!non_forbidden_hex.empty()) return pickNearest(non_forbidden_hex);
+    // 最后回退到原始最近点（即使可能在禁区或越界），后续的 clamp 会进一步处理
     return pickNearest(hex_points);
 }

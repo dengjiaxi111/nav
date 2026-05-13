@@ -550,17 +550,6 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::IDLE);
                 break;
             }
-            bool outpost_destroyed = false;
-            if (blackboard_->robot_id_ == 1) {
-                outpost_destroyed = (blackboard_->outpost_state == 1);
-            } else {
-                outpost_destroyed = (blackboard_->outpost_state == 2);
-            }
-            if (outpost_destroyed) {
-                blackboard_->initialization_complete = true;
-                transitionTo(State::IDLE);
-                break;
-            }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getInitAttackDuration()) {
                 blackboard_->initialization_complete = true;

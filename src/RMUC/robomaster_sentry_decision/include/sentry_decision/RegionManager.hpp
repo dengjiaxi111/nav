@@ -31,7 +31,10 @@ public:
 
     std::string getRegionName(double x, double y) const;
 
-    static std::vector<geometry_msgs::msg::Point> calculateHexagonPoints(double center_x, double center_y, double radius = 200.0);
+    // 禁用区域判断
+    bool isInForbiddenZone(double x, double y) const;
+
+    static std::vector<geometry_msgs::msg::Point> calculateHexagonPoints(double center_x, double center_y, double radius = 80.0);
     geometry_msgs::msg::Point findSameRegionHexPoint(double target_x, double target_y, double robot_x, double robot_y) const;
 
 private:
@@ -39,6 +42,7 @@ private:
     Polygon red_hero_deploy_zone_;       // 红方英雄部署区（蓝方视角的敌方部署区）
     Polygon red_engineer_mining_zone_;    // 蓝方工程取矿区（红方视角的敌方蓝方工程取矿区）
     Polygon blue_engineer_mining_zone_;   // 红方工程取矿区（蓝方视角的敌方红方工程取矿区）
+    std::vector<Polygon> forbidden_zones_;
     static bool isPointInPolygon(const geometry_msgs::msg::Point& point, const Polygon& polygon);
 };
 

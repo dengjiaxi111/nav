@@ -1,8 +1,8 @@
 {
   "game_state": {
-    "stage": 4,
-    "stage_remaining_time": 372.1409590244293,
-    "is_running": true,
+    "stage": 0,
+    "stage_remaining_time": 420,
+    "is_running": false,
     "competition_type": 1
   },
   "red_robots": {
@@ -31,16 +31,16 @@
       "allowance": 0
     },
     "7": {
-      "x": 540.0,
-      "y": 635.2050807568877,
+      "x": 408,
+      "y": 808,
       "hp": 400,
       "allowance": 300
     }
   },
   "blue_robots": {
     "1": {
-      "x": 2486,
-      "y": 984,
+      "x": 2464,
+      "y": 638,
       "hp": 200,
       "allowance": 0
     },
@@ -51,8 +51,8 @@
       "allowance": 0
     },
     "3": {
-      "x": 440,
-      "y": 462,
+      "x": 2558,
+      "y": 624,
       "hp": 150,
       "allowance": 0
     },
@@ -89,6 +89,6 @@
   },
   "our_robot_id": 0,
   "meta": {
-    "write_ts": 1778642378.0030866
+    "write_ts": 1778662057.3920927
   }
 }
