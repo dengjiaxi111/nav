@@ -398,12 +398,13 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     enemy_state_.enemy_x = msg._enemy_x;
     enemy_state_.enemy_y = msg._enemy_y;
 
-    enemy_state_.enemy_supply_zone_occupation = (msg._event_data >> 2) & 0x01;
-    enemy_state_.enemy_central_highland_occupation = get_event_bits(msg._event_data, 7, 2);
-    enemy_state_.enemy_trapezoid_highland_occupation = get_event_bits(msg._event_data, 9, 2);
-    enemy_state_.enemy_fortress_gain_point_occupation = get_event_bits(msg._event_data, 25, 2);
-    enemy_state_.enemy_outpost_gain_point_occupation = get_event_bits(msg._event_data, 27, 2);
-    enemy_state_.enemy_base_gain_point_occupation = (msg._event_data >> 29) & 0x01;
+    // event_data reports our-side field events. Enemy-side field states are not available here.
+    enemy_state_.enemy_supply_zone_occupation = 0;
+    enemy_state_.enemy_central_highland_occupation = 0;
+    enemy_state_.enemy_trapezoid_highland_occupation = 0;
+    enemy_state_.enemy_fortress_gain_point_occupation = 0;
+    enemy_state_.enemy_outpost_gain_point_occupation = 0;
+    enemy_state_.enemy_base_gain_point_occupation = 0;
 
     enemy_state_pub_->publish(enemy_state_);
 
@@ -413,7 +414,9 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
         gs.competition_type     = msg._game_type;
         gs.stage                = msg._game_process;
         gs.stage_remaining_time = static_cast<double>(msg._stage_remain_time);
-        gs.supply_zone_occupation = msg._event_data & 0x01;
+        gs.supply_zone_no_overlap = msg._event_data & 0x01;
+        gs.supply_zone_overlap = 0;
+        gs.supply_zone_occupation = (msg._event_data >> 2) & 0x01;
         gs.energy_mechanism_status = get_event_bits(msg._event_data, 3, 4);
         gs.small_energy_mechanism_activation = get_event_bits(msg._event_data, 3, 2);
         gs.large_energy_mechanism_activation = get_event_bits(msg._event_data, 5, 2);
@@ -552,7 +555,7 @@ void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryContr
     _send_frame_.setChassisMode(spin_mode);
     const uint8_t posture = (msg->posture > 3) ? 3 : msg->posture;
     _send_frame_._sentry_cmd = set_sentry_cmd_bits(_send_frame_._sentry_cmd, 21, 2, posture);
-    if (msg->target_yaw_valid && msg->gimbal_mode == 2 && msg->spin_mode == 0) {
+    if (msg->target_yaw_valid) {
         const double yaw_deg = std::clamp(msg->target_yaw_deg, -180.0, 180.0);
         _send_frame_._buff_yaw_diff_angle = static_cast<int16_t>(std::lround(yaw_deg * 100.0));
     } else {
