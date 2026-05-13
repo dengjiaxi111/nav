@@ -393,6 +393,11 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     enemy_state_.enemy_infantry4_allowance = msg.enemy_robot[3].remaining_bullets;
     enemy_state_.enemy_sentry_allowance = msg.enemy_robot[4].remaining_bullets;
 
+    enemy_state_.base_yaw = static_cast<float>(msg._base_yaw / 180.0 * M_PI);
+    enemy_state_.enemy_id = msg._enemy_id;
+    enemy_state_.enemy_x = msg._enemy_x;
+    enemy_state_.enemy_y = msg._enemy_y;
+
     enemy_state_.enemy_supply_zone_occupation = (msg._event_data >> 2) & 0x01;
     enemy_state_.enemy_central_highland_occupation = get_event_bits(msg._event_data, 7, 2);
     enemy_state_.enemy_trapezoid_highland_occupation = get_event_bits(msg._event_data, 9, 2);
