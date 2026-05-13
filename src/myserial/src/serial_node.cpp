@@ -393,6 +393,27 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     enemy_state_.enemy_infantry4_allowance = msg.enemy_robot[3].remaining_bullets;
     enemy_state_.enemy_sentry_allowance = msg.enemy_robot[4].remaining_bullets;
 
+    if (log_radar_info_) {
+        const auto& r = msg.enemy_robot;
+        const bool any_radar =
+            r[0].position_x || r[0].position_y || r[0].hp || r[0].remaining_bullets ||
+            r[1].position_x || r[1].position_y || r[1].hp || r[1].remaining_bullets ||
+            r[2].position_x || r[2].position_y || r[2].hp || r[2].remaining_bullets ||
+            r[3].position_x || r[3].position_y || r[3].hp || r[3].remaining_bullets ||
+            r[4].position_x || r[4].position_y || r[4].hp || r[4].remaining_bullets;
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "[RADAR_RX] any=%u hero=(%u,%u hp=%u ammo=%u) engineer=(%u,%u hp=%u ammo=%u) infantry3=(%u,%u hp=%u ammo=%u) infantry4=(%u,%u hp=%u ammo=%u) sentry=(%u,%u hp=%u ammo=%u)",
+            static_cast<unsigned>(any_radar),
+            r[0].position_x, r[0].position_y, r[0].hp, r[0].remaining_bullets,
+            r[1].position_x, r[1].position_y, r[1].hp, r[1].remaining_bullets,
+            r[2].position_x, r[2].position_y, r[2].hp, r[2].remaining_bullets,
+            r[3].position_x, r[3].position_y, r[3].hp, r[3].remaining_bullets,
+            r[4].position_x, r[4].position_y, r[4].hp, r[4].remaining_bullets);
+    }
+
     enemy_state_.base_yaw = static_cast<float>(msg._base_yaw / 180.0 * M_PI);
     enemy_state_.enemy_id = msg._enemy_id;
     enemy_state_.enemy_x = msg._enemy_x;
