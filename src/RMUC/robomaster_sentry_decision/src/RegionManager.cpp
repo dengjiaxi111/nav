@@ -412,48 +412,8 @@ bool RegionManager::isInsideAllowedRegion(double x, double y) const {
 }
 
 geometry_msgs::msg::Point RegionManager::clampPointToAllowedRegion(const geometry_msgs::msg::Point& point) const {
-    // 如果点已经在允许区域且不在禁区，则直接返回
-    if (isInsideAllowedRegion(point.x, point.y) && !isInForbiddenZone(point.x, point.y)) return point;
-
-    // 否则，在允许区域的边界上寻找最近的候选点，优先返回不在禁区的点
-    std::vector<std::pair<double, geometry_msgs::msg::Point>> candidates;
-    const auto& verts = allowed_region_.vertices;
-    int n = verts.size();
-    for (int i = 0; i < n; ++i) {
-        int j = (i + 1) % n;
-        const auto& A = verts[i];
-        const auto& B = verts[j];
-        double dx = B.x - A.x;
-        double dy = B.y - A.y;
-        double len_sq = dx*dx + dy*dy;
-        if (len_sq == 0) {
-            double d = std::hypot(point.x - A.x, point.y - A.y);
-            geometry_msgs::msg::Point proj = A;
-            candidates.emplace_back(d, proj);
-            continue;
-        }
-        double t = ((point.x - A.x)*dx + (point.y - A.y)*dy) / len_sq;
-        t = std::max(0.0, std::min(1.0, t));
-        geometry_msgs::msg::Point proj;
-        proj.x = A.x + t * dx;
-        proj.y = A.y + t * dy;
-        double d = std::hypot(point.x - proj.x, point.y - proj.y);
-        candidates.emplace_back(d, proj);
-    }
-
-    if (!candidates.empty()) {
-        std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
-        for (const auto& cand : candidates) {
-            const auto& p = cand.second;
-            // 接受不在禁区内的候选点
-            if (!isInForbiddenZone(p.x, p.y)) {
-                return p;
-            }
-        }
-        // 如果所有最近的边界投影都位于禁区内，返回距离最小的投影（保守回退）
-        return candidates.front().second;
-    }
-    return geometry_msgs::msg::Point();
+    // 不再对目标点进行合法区域或禁区检查，直接返回原始目标点
+    return point;
 }
 
 
@@ -484,17 +444,6 @@ std::vector<geometry_msgs::msg::Point> RegionManager::calculateHexagonPoints(dou
 geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x, double target_y,
                                                                double robot_x, double robot_y) const {
     auto hex_points = calculateHexagonPoints(target_x, target_y, 200.0);
-    std::string target_region = getRegionName(target_x, target_y);
-
-    std::vector<geometry_msgs::msg::Point> same_region_points;
-    for (const auto& point : hex_points) {
-        if (getRegionName(point.x, point.y) == target_region) {
-            // 排除禁区内的候选点
-            if (!isInForbiddenZone(point.x, point.y)) {
-                same_region_points.push_back(point);
-            }
-        }
-    }
 
     auto pickNearest = [&](const std::vector<geometry_msgs::msg::Point>& points) -> geometry_msgs::msg::Point {
         if (points.empty()) return geometry_msgs::msg::Point();
@@ -507,15 +456,5 @@ geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x,
         return best;
     };
 
-    if (!same_region_points.empty()) {
-        return pickNearest(same_region_points);
-    }
-    // 若没有满足条件的同区域点，尝试从所有六边形点中排除禁区后选取
-    std::vector<geometry_msgs::msg::Point> non_forbidden_hex;
-    for (const auto& p : hex_points) {
-        if (!isInForbiddenZone(p.x, p.y)) non_forbidden_hex.push_back(p);
-    }
-    if (!non_forbidden_hex.empty()) return pickNearest(non_forbidden_hex);
-    // 最后回退到原始最近点（即使可能在禁区或越界），后续的 clamp 会进一步处理
     return pickNearest(hex_points);
 }
