@@ -44,7 +44,7 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_fortress_occupy.y = config["red_fortress_occupy_y"].as<double>();
         config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"].as<double>();
         config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"].as<double>();
-        // 重新启用飞坡点
+        // 飞坡点
         config_.red_ramp.x = config["red_ramp_point_x"] ? config["red_ramp_point_x"].as<double>() : 1070.0;
         config_.red_ramp.y = config["red_ramp_point_y"] ? config["red_ramp_point_y"].as<double>() : 94.0;
         config_.blue_ramp.x = config["blue_ramp_point_x"] ? config["blue_ramp_point_x"].as<double>() : 1734.0;
@@ -202,20 +202,6 @@ void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     allowance_17mm = static_cast<double>(msg->allowance_17mm);
     our_base_hp = static_cast<double>(msg->base_hp);
     our_outpost_hp = static_cast<double>(msg->outpost_hp);
-    our_hero_hp = static_cast<double>(msg->hero_hp);
-    our_engineer_hp = static_cast<double>(msg->engineer_hp);
-    our_infantry3_hp = static_cast<double>(msg->infantry3_hp);
-    our_infantry4_hp = static_cast<double>(msg->infantry4_hp);
-    our_sentry_hp = static_cast<double>(msg->sentry_hp);
-
-    our_hero_position.x = static_cast<double>(msg->hero_x) * 100.0;
-    our_hero_position.y = static_cast<double>(msg->hero_y) * 100.0;
-    our_engineer_position.x = static_cast<double>(msg->engineer_x) * 100.0;
-    our_engineer_position.y = static_cast<double>(msg->engineer_y) * 100.0;
-    our_infantry3_position.x = static_cast<double>(msg->infantry3_x) * 100.0;
-    our_infantry3_position.y = static_cast<double>(msg->infantry3_y) * 100.0;
-    our_infantry4_position.x = static_cast<double>(msg->infantry4_x) * 100.0;
-    our_infantry4_position.y = static_cast<double>(msg->infantry4_y) * 100.0;
 
     uint8_t old_id = robot_id_;
     robot_id_ = msg->robot_id;
@@ -256,12 +242,7 @@ void Blackboard::updateEnemyState(const EnemyRobotState::SharedPtr msg) {
     update(enemy_infantry3, msg->enemy_infantry3_x, msg->enemy_infantry3_y, msg->enemy_infantry3_hp, msg->enemy_infantry3_allowance);
     update(enemy_infantry4, msg->enemy_infantry4_x, msg->enemy_infantry4_y, msg->enemy_infantry4_hp, msg->enemy_infantry4_allowance);
     update(enemy_sentry, msg->enemy_sentry_x, msg->enemy_sentry_y, msg->enemy_sentry_hp, msg->enemy_sentry_allowance);
-    enemy_supply_zone_occupation = msg->enemy_supply_zone_occupation;
-    enemy_central_highland_occupation = msg->enemy_central_highland_occupation;
-    enemy_trapezoid_highland_occupation = msg->enemy_trapezoid_highland_occupation;
-    enemy_fortress_gain_point_occupation = msg->enemy_fortress_gain_point_occupation;
-    enemy_outpost_gain_point_occupation = msg->enemy_outpost_gain_point_occupation;
-    enemy_base_gain_point_occupation = msg->enemy_base_gain_point_occupation;
+    enemy_fortress_gain_point_occupation = 0; // 如果消息有该字段可替换
 }
 
 void Blackboard::updateGameState(const GameState::SharedPtr msg) {
@@ -287,14 +268,14 @@ void Blackboard::updateGameState(const GameState::SharedPtr msg) {
     central_highland_occupied_by_enemy = (msg->central_highland_occupation == 2);
     updateGainPointStatus();
 
-    // 新增字段
     base_open = msg->baseopen;
     outpost_state = msg->outpoststate;
 }
 
-void Blackboard::updatePositionFromTF(double x_m, double y_m) {
+void Blackboard::updatePositionFromTF(double x_m, double y_m, double yaw_rad) {
     x = x_m * 100.0;
     y = y_m * 100.0;
+    robot_yaw = yaw_rad;
 }
 
 void Blackboard::resetForNewMatch() {
@@ -473,3 +454,4 @@ void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
     setTargetPublished(false);
     initializeGainPoints();
 }
+

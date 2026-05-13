@@ -35,9 +35,10 @@ enum class State {
     OCCUPY_FORTRESS,
     MOVE_TO_GUARD,
     GUARD,
-    MOVE_TO_ENEMY_FORTRESS,   // 新增：前往敌方堡垒
-    OCCUPY_ENEMY_FORTRESS,    // 新增：占领敌方堡垒
-    MOVE_TO_RAMP              // 新增：飞坡移动
+    MOVE_TO_ENEMY_FORTRESS,
+    OCCUPY_ENEMY_FORTRESS,
+    MOVE_TO_RAMP,
+    MOVE_TO_SAFE_POINT       // 新增：飞坡后安全中转点
 };
 
 struct PriorityTargetResult {
@@ -71,6 +72,9 @@ private:
     geometry_msgs::msg::Point pending_target_;
     bool has_pending_state_ = false;
 
+    // 飞坡后的最终目标点
+    geometry_msgs::msg::Point final_target_;
+
     // 辅助判断函数
     bool needSupply() const;
     bool shouldInterruptForResurrectionOrSupply() const;
@@ -78,11 +82,14 @@ private:
     bool checkOutpostDestroyed() const;
     bool checkFortressOccupy() const;
     bool checkGainPoint() const;
-    bool checkEnemyFortress() const;      // 是否可以占领敌方堡垒
-    bool needRamp(const geometry_msgs::msg::Point& target) const;   // 是否需要飞坡
+    bool checkEnemyFortress() const;
+    bool needRamp(const geometry_msgs::msg::Point& target) const;
+
+    // 安全点选择
+    geometry_msgs::msg::Point selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const;
 
     void updateHeroDeployFlag();
-    void updateMustOccupyFlag();         // 更新强制占领标志
+    void updateMustOccupyFlag();
 
     PriorityTargetResult selectPriorityTarget();
 

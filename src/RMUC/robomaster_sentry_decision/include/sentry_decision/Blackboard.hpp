@@ -45,8 +45,9 @@ enum class BehaviorType {
     MOVE_TO_ENEMY_FORTRESS,
     OCCUPY_ENEMY_FORTRESS,
     MOVE_TO_RAMP,
-    MOVE_TO_GUARD,   
-    GUARD          
+    MOVE_TO_GUARD,
+    GUARD,
+    MOVE_TO_SAFE_POINT
 };
 
 struct BehaviorInfo {
@@ -100,8 +101,8 @@ public:
     geometry_msgs::msg::Point getSupplyPoint() const;
     geometry_msgs::msg::Point getBaseGainPoint() const;
     geometry_msgs::msg::Point getFortressOccupyPoint() const;
-    geometry_msgs::msg::Point getRampPoint() const;                 // 飞坡点
-    geometry_msgs::msg::Point getEnemyFortressPoint() const;        // 敌方堡垒占领点
+    geometry_msgs::msg::Point getRampPoint() const;
+    geometry_msgs::msg::Point getEnemyFortressPoint() const;
     geometry_msgs::msg::Point getFortressGainPoint() const;
     geometry_msgs::msg::Point getCentralHighlandGain() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
@@ -151,24 +152,16 @@ public:
     void updateOurState(const OurRobotState::SharedPtr msg);
     void updateEnemyState(const EnemyRobotState::SharedPtr msg);
     void updateGameState(const GameState::SharedPtr msg);
-    void updatePositionFromTF(double x_m, double y_m);
+    void updatePositionFromTF(double x_m, double y_m, double yaw_rad);
     void resetForNewMatch();
 
     // 公共成员
     double current_hp = 400.0;
     double allowance_17mm = 300.0;
     double x = 0.0, y = 0.0;
+    double robot_yaw = 0.0;           // 机器人在地图系下的偏航角（弧度）
     double our_base_hp = 5000.0;
     double our_outpost_hp = 1500.0;
-    double our_hero_hp = 0.0;
-    double our_engineer_hp = 0.0;
-    double our_infantry3_hp = 0.0;
-    double our_infantry4_hp = 0.0;
-    double our_sentry_hp = 0.0;
-    geometry_msgs::msg::Point our_hero_position;
-    geometry_msgs::msg::Point our_engineer_position;
-    geometry_msgs::msg::Point our_infantry3_position;
-    geometry_msgs::msg::Point our_infantry4_position;
     uint8_t stage = 0;
     double stage_remaining_time = 420.0;
     double current_time = 0.0;
@@ -192,7 +185,6 @@ public:
     EnemyInfo enemy_infantry4;
     EnemyInfo enemy_sentry;
 
-    // 场地占领状态
     bool base_gain_point_occupied = false;
     bool trapezoid_highland_occupied = false;
     bool fortress_gain_point_occupied_by_us = false;
@@ -202,20 +194,12 @@ public:
     bool outpost_gain_point_occupied_by_us = false;
     bool outpost_gain_point_occupied_by_enemy = false;
 
-    // 新增：基地打开、前哨站状态、敌方堡垒增益点占领
     int8_t base_open = 0;
     int8_t outpost_state = 0;
-    uint8_t enemy_supply_zone_occupation = 0;
-    uint8_t enemy_central_highland_occupation = 0;
-    uint8_t enemy_trapezoid_highland_occupation = 0;
     uint8_t enemy_fortress_gain_point_occupation = 0;
-    uint8_t enemy_outpost_gain_point_occupation = 0;
-    uint8_t enemy_base_gain_point_occupation = 0;
 
-    // 强制占领敌方堡垒标志（英雄/工程死亡）
     bool must_occupy_enemy_fortress = false;
 
-    // 机器人ID
     uint8_t robot_id_ = 0;
 
     bool isAtTarget(const geometry_msgs::msg::Point& target, double tolerance = 50.0) const;

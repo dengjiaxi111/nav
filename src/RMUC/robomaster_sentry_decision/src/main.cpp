@@ -5,6 +5,8 @@
 #include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 #include "decision_messages/msg/our_robot_state.hpp"
 #include "decision_messages/msg/enemy_robot_state.hpp"
 #include "decision_messages/msg/game_state.hpp"
@@ -53,12 +55,14 @@ public:
             publish_interval_ms = 100;
         }
 
-        our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
-            "/decision_messages/OurRobotState", 10,
-            std::bind(&SentryDecisionNode::ourStateCallback, this, std::placeholders::_1));
+        // 订阅原始 EnemyRobotState（包含裁判系统数据和视觉锁敌原始数据）
         enemy_state_sub_ = this->create_subscription<decision_messages::msg::EnemyRobotState>(
             "/decision_messages/EnemyRobotState", 10,
             std::bind(&SentryDecisionNode::enemyStateCallback, this, std::placeholders::_1));
+
+        our_state_sub_ = this->create_subscription<decision_messages::msg::OurRobotState>(
+            "/decision_messages/OurRobotState", 10,
+            std::bind(&SentryDecisionNode::ourStateCallback, this, std::placeholders::_1));
         game_state_sub_ = this->create_subscription<decision_messages::msg::GameState>(
             "/decision_messages/GameState", 10,
             std::bind(&SentryDecisionNode::gameStateCallback, this, std::placeholders::_1));
@@ -66,7 +70,10 @@ public:
         target_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>("/sentry/target_position", 10);
         control_pub_ = this->create_publisher<sentry_decision::msg::SentryControl>("/sentry/control", 10);
 
-        // 单一主循环，发布周期100ms
+        // 修正：发布融合后的敌人坐标到新话题，避免自己订阅自己
+        corrected_enemy_pub_ = this->create_publisher<decision_messages::msg::EnemyRobotState>(
+            "/decision_messages/EnemyRobotState_fused", 10);
+
         timer_ = this->create_wall_timer(std::chrono::milliseconds(publish_interval_ms),
                                          std::bind(&SentryDecisionNode::decisionLoop, this));
     }
@@ -75,9 +82,57 @@ private:
     void ourStateCallback(const decision_messages::msg::OurRobotState::SharedPtr msg) {
         decision_manager_->updateOurState(msg);
     }
+
     void enemyStateCallback(const decision_messages::msg::EnemyRobotState::SharedPtr msg) {
-        decision_manager_->updateEnemyState(msg);
+        auto corrected_msg = std::make_shared<decision_messages::msg::EnemyRobotState>(*msg);
+
+        // 视觉锁敌数据有效时，解算地图坐标并更新对应敌人字段
+        if (msg->enemy_id > 0 && msg->enemy_x != 0.0 && msg->enemy_y != 0.0) {
+            auto blackboard = decision_manager_->getBlackboard();
+            double robot_x = blackboard->x / 100.0;   // 米
+            double robot_y = blackboard->y / 100.0;
+            double robot_yaw = blackboard->robot_yaw;
+            double base_yaw = msg->base_yaw;
+            double e_x = msg->enemy_x;
+            double e_y = msg->enemy_y;
+
+            auto [x_map, y_map] = gimbalToMap(robot_x, robot_y, robot_yaw, base_yaw, e_x, e_y);
+            double x_cm = x_map * 100.0;
+            double y_cm = y_map * 100.0;
+
+            switch (msg->enemy_id) {
+                case 1:
+                    corrected_msg->enemy_hero_x = x_cm;
+                    corrected_msg->enemy_hero_y = y_cm;
+                    break;
+                case 2:
+                    corrected_msg->enemy_engineer_x = x_cm;
+                    corrected_msg->enemy_engineer_y = y_cm;
+                    break;
+                case 3:
+                    corrected_msg->enemy_infantry3_x = x_cm;
+                    corrected_msg->enemy_infantry3_y = y_cm;
+                    break;
+                case 4:
+                    corrected_msg->enemy_infantry4_x = x_cm;
+                    corrected_msg->enemy_infantry4_y = y_cm;
+                    break;
+                case 7:
+                    corrected_msg->enemy_sentry_x = x_cm;
+                    corrected_msg->enemy_sentry_y = y_cm;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // 用修正后的数据更新黑板（决策核心）
+        decision_manager_->updateEnemyState(corrected_msg);
+
+        // 发布融合后的消息到独立话题，供其他节点使用
+        corrected_enemy_pub_->publish(*corrected_msg);
     }
+
     void gameStateCallback(const decision_messages::msg::GameState::SharedPtr msg) {
         decision_manager_->updateGameState(msg);
         if (msg->stage == STAGE_BATTLE && !game_started_) {
@@ -91,7 +146,17 @@ private:
         try {
             auto t = tf_buffer_.lookupTransform("map", "base_link", tf2::TimePointZero);
             auto blackboard = decision_manager_->getBlackboard();
-            blackboard->updatePositionFromTF(t.transform.translation.x, t.transform.translation.y);
+            double x_m = t.transform.translation.x;
+            double y_m = t.transform.translation.y;
+            // 提取 yaw (弧度)
+            tf2::Quaternion q(
+                t.transform.rotation.x,
+                t.transform.rotation.y,
+                t.transform.rotation.z,
+                t.transform.rotation.w);
+            double roll, pitch, yaw;
+            tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+            blackboard->updatePositionFromTF(x_m, y_m, yaw);
             return true;
         } catch (const tf2::TransformException& ex) {
             return false;
@@ -105,8 +170,6 @@ private:
 
             if (game_started_) {
                 auto blackboard = decision_manager_->getBlackboard();
-                
-                // 处理控制指令（保持100ms发布）
                 const bool should_stream_outpost_yaw =
                     output.control_msg.gimbal_mode == GIMBAL_OUTPOST &&
                     output.control_msg.spin_mode == SPIN_OFF;
@@ -115,16 +178,12 @@ private:
                     blackboard->setControlPublished(true);
                 }
 
-                // 处理目标点发布（差异化频率）
                 if (output.target_needs_publishing && (output.target_position.x != 0 || output.target_position.y != 0)) {
                     geometry_msgs::msg::Point new_target = output.target_position;
                     bool same_point = (std::abs(new_target.x - last_published_target_x_) < 0.01 &&
                                        std::abs(new_target.y - last_published_target_y_) < 0.01);
                     rclcpp::Time now = this->now();
-
-                    // 不同点立即发布（当前100ms周期直接发）；相同点需间隔5秒
-                    if (!same_point || 
-                        (now.seconds() - last_target_publish_time_ > 5.0)) {
+                    if (!same_point || (now.seconds() - last_target_publish_time_ > 5.0)) {
                         publishTarget(new_target);
                         last_published_target_x_ = new_target.x;
                         last_published_target_y_ = new_target.y;
@@ -170,6 +229,23 @@ private:
         msg->target_yaw_deg = 0.0;
         msg->target_yaw_valid = false;
         control_pub_->publish(*msg);
+    }
+
+    std::pair<double, double> gimbalToMap(
+        double robot_x, double robot_y, double robot_yaw,
+        double base_yaw, double enemy_x_g, double enemy_y_g)
+    {
+        double cb = std::cos(base_yaw);
+        double sb = std::sin(base_yaw);
+        double x_ch = cb * enemy_x_g - sb * enemy_y_g;
+        double y_ch = sb * enemy_x_g + cb * enemy_y_g;
+
+        double cr = std::cos(robot_yaw);
+        double sr = std::sin(robot_yaw);
+        double x_map = cr * x_ch - sr * y_ch + robot_x;
+        double y_map = sr * x_ch + cr * y_ch + robot_y;
+
+        return {x_map, y_map};
     }
 
     static double normalizeAngle(double angle) {
@@ -219,6 +295,7 @@ private:
     rclcpp::Subscription<decision_messages::msg::GameState>::SharedPtr game_state_sub_;
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr target_pub_;
     rclcpp::Publisher<sentry_decision::msg::SentryControl>::SharedPtr control_pub_;
+    rclcpp::Publisher<decision_messages::msg::EnemyRobotState>::SharedPtr corrected_enemy_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
 
     std::shared_ptr<DecisionManager> decision_manager_;
@@ -227,7 +304,6 @@ private:
     tf2_ros::Buffer tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-    // 目标点发布频率控制
     double last_target_publish_time_;
     double last_published_target_x_;
     double last_published_target_y_;

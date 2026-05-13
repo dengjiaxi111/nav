@@ -1,7 +1,7 @@
 {
   "game_state": {
     "stage": 4,
-    "stage_remaining_time": 367.0060603618622,
+    "stage_remaining_time": 372.1409590244293,
     "is_running": true,
     "competition_type": 1
   },
@@ -31,16 +31,16 @@
       "allowance": 0
     },
     "7": {
-      "x": 717.5559501283067,
-      "y": 731.3980191207921,
+      "x": 540.0,
+      "y": 635.2050807568877,
       "hp": 400,
       "allowance": 300
     }
   },
   "blue_robots": {
     "1": {
-      "x": 2378,
-      "y": 370,
+      "x": 2486,
+      "y": 984,
       "hp": 200,
       "allowance": 0
     },
@@ -51,8 +51,8 @@
       "allowance": 0
     },
     "3": {
-      "x": 2558,
-      "y": 624,
+      "x": 440,
+      "y": 462,
       "hp": 150,
       "allowance": 0
     },
@@ -71,7 +71,7 @@
   },
   "red_outpost_hp": 1500,
   "blue_outpost_hp": 1500,
-  "red_base_hp": 500,
+  "red_base_hp": 5000,
   "blue_base_hp": 5000,
   "red_gold_coins": 400,
   "blue_gold_coins": 400,
@@ -79,7 +79,7 @@
     "supply_zone_occupation": 0,
     "central_highland_occupation": 0,
     "trapezoid_highland_occupation": 0,
-    "fortress_gain_point_occupation": 1,
+    "fortress_gain_point_occupation": 0,
     "outpost_gain_point_occupation": 0,
     "base_gain_point_occupation": 1
   },
@@ -89,6 +89,6 @@
   },
   "our_robot_id": 0,
   "meta": {
-    "write_ts": 1778588646.9155436
+    "write_ts": 1778642378.0030866
   }
 }

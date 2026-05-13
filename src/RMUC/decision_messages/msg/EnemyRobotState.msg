@@ -134,3 +134,13 @@ float32 enemy_sentry_attack_buff
 
 # 对方哨兵机器人当前姿态
 uint8 enemy_sentry_posture 
+
+
+# 视觉锁敌要用
+# 当前云台相对底盘的角度
+float32 base_yaw 
+uint8 enemy_id
+# 相对于当前云台坐标系的x（米）
+float32 enemy_x 
+# 相对于当前云台坐标系的y（米）
+float32 enemy_y 

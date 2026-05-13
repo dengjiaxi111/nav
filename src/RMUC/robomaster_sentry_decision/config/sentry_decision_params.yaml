@@ -23,10 +23,10 @@ blue_fortress_occupy_x: 2118.0
 blue_fortress_occupy_y: 744.0
 
 # 飞坡点（红方从红区到蓝区经过此点，蓝方从蓝区到红区经过下一点）
-red_ramp_point_x: 1070.0
-red_ramp_point_y: 94.0
-blue_ramp_point_x: 1734.0
-blue_ramp_point_y: 1388.0
+red_ramp_point_x: 954.9540
+red_ramp_point_y: 90.0
+blue_ramp_point_x: 1860.0
+blue_ramp_point_y: 1390.0
 
 red_fortress_gain_x: 690.0
 red_fortress_gain_y: 746.0

@@ -91,17 +91,80 @@ void DecisionManager::updateMustOccupyFlag() {
 bool DecisionManager::needRamp(const geometry_msgs::msg::Point& target) const {
     double half = blackboard_->getHalfMapX();
     bool to_enemy_half = false;
-    if (blackboard_->robot_id_ == 1) { // 蓝方：己方半区 x > half，对方半区 target.x < half
+    if (blackboard_->robot_id_ == 1) {
         to_enemy_half = (blackboard_->x > half) && (target.x < half);
-    } else {                           // 红方：己方半区 x < half，对方半区 target.x > half
+    } else {
         to_enemy_half = (blackboard_->x < half) && (target.x > half);
     }
     if (!to_enemy_half) return false;
-    // 中央区域内不飞坡
     if (region_manager_->isInCentralRegion(blackboard_->x, blackboard_->y)) {
         return false;
     }
     return true;
+}
+
+geometry_msgs::msg::Point DecisionManager::selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const {
+    geometry_msgs::msg::Point safe;
+    double min_x, max_x, min_y, max_y;
+    if (robot_id == 1) { // 蓝方
+        min_x = 654; max_x = 846;
+        min_y = 1308; max_y = 1414;
+    } else {             // 红方
+        min_x = 2016; max_x = 2224;
+        min_y = 92; max_y = 204;
+    }
+
+    const double step = 20.0;
+    const double safe_dist = 50.0;
+    std::vector<geometry_msgs::msg::Point> candidates;
+    std::vector<geometry_msgs::msg::Point> same_y_candidates;
+
+    for (double x = min_x; x <= max_x; x += step) {
+        for (double y = min_y; y <= max_y; y += step) {
+            if (x < min_x || x > max_x || y < min_y || y > max_y) continue;
+            bool occupied = false;
+            auto checkEnemy = [&](const EnemyInfo& enemy) {
+                if (enemy.visible && enemy.hp > 0) {
+                    double dx = x - enemy.x;
+                    double dy = y - enemy.y;
+                    if (std::sqrt(dx*dx + dy*dy) < safe_dist) occupied = true;
+                }
+            };
+            checkEnemy(blackboard_->enemy_hero);
+            checkEnemy(blackboard_->enemy_engineer);
+            checkEnemy(blackboard_->enemy_infantry3);
+            checkEnemy(blackboard_->enemy_infantry4);
+            checkEnemy(blackboard_->enemy_sentry);
+            if (occupied) continue;
+
+            geometry_msgs::msg::Point pt;
+            pt.x = x; pt.y = y; pt.z = 0;
+            candidates.push_back(pt);
+            if (std::abs(y - ramp_point.y) < step/2.0) {
+                same_y_candidates.push_back(pt);
+            }
+        }
+    }
+
+    if (!same_y_candidates.empty()) {
+        double best_dist = 1e9;
+        for (const auto& p : same_y_candidates) {
+            double d = std::hypot(p.x - ramp_point.x, p.y - ramp_point.y);
+            if (d < best_dist) { best_dist = d; safe = p; }
+        }
+        return safe;
+    }
+    if (!candidates.empty()) {
+        double best_dist = 1e9;
+        for (const auto& p : candidates) {
+            double d = std::hypot(p.x - ramp_point.x, p.y - ramp_point.y);
+            if (d < best_dist) { best_dist = d; safe = p; }
+        }
+        return safe;
+    }
+    safe.x = (min_x + max_x)/2.0;
+    safe.y = (min_y + max_y)/2.0;
+    return safe;
 }
 
 void DecisionManager::updateHeroDeployFlag() {
@@ -237,6 +300,10 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         }
+        case State::MOVE_TO_SAFE_POINT: {
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        }
         case State::MOVE_TO_ENEMY_FORTRESS: {
             geometry_msgs::msg::Point target = blackboard_->getEnemyFortressPoint();
             target = region_manager_->clampPointToAllowedRegion(target);
@@ -346,6 +413,7 @@ std::string DecisionManager::stateToString(State state) const {
         case State::MOVE_TO_ENEMY_FORTRESS: return "MOVE_TO_ENEMY_FORTRESS";
         case State::OCCUPY_ENEMY_FORTRESS: return "OCCUPY_ENEMY_FORTRESS";
         case State::MOVE_TO_RAMP: return "MOVE_TO_RAMP";
+        case State::MOVE_TO_SAFE_POINT: return "MOVE_TO_SAFE_POINT";
         default: return "UNKNOWN";
     }
 }
@@ -369,6 +437,8 @@ DecisionOutput DecisionManager::executeDecision() {
             output.control_needs_publishing = true;
             blackboard_->setControlUpdated(false);
         }
+        // 即使非比赛阶段也更新标志位
+        output.control_msg.avoidengineer_flag = 0; // 非比赛阶段强制为0
         return output;
     }
 
@@ -508,27 +578,42 @@ DecisionOutput DecisionManager::executeDecision() {
             if (blackboard_->isAtTarget(ramp_target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    if (has_pending_state_) {
-                        State saved_state = pending_state_;
-                        geometry_msgs::msg::Point saved_target = pending_target_;
-                        has_pending_state_ = false;
-                        transitionTo(saved_state);
-                        if (saved_state == State::MOVE_TO_ATTACK_HERO || saved_state == State::MOVE_TO_ATTACK_ROBOT ||
-                            saved_state == State::MOVE_TO_GAIN_POINT || saved_state == State::MOVE_TO_ENEMY_FORTRESS ||
-                            saved_state == State::MOVE_TO_GUARD || saved_state == State::MOVE_TO_BASE_DEFENSE) {
-                            blackboard_->startBehavior(
-                                (saved_state == State::MOVE_TO_ATTACK_HERO) ? BehaviorType::MOVE_TO_ATTACK_HERO :
-                                (saved_state == State::MOVE_TO_ATTACK_ROBOT) ? BehaviorType::MOVE_TO_ATTACK_ROBOT :
-                                (saved_state == State::MOVE_TO_GAIN_POINT) ? BehaviorType::MOVE_TO_GAIN_POINT :
-                                (saved_state == State::MOVE_TO_ENEMY_FORTRESS) ? BehaviorType::MOVE_TO_ENEMY_FORTRESS :
-                                (saved_state == State::MOVE_TO_GUARD) ? BehaviorType::MOVE_TO_GUARD : BehaviorType::MOVE_TO_BASE_DEFENSE,
-                                saved_target, 0.0);
-                        }
-                    }
+                    geometry_msgs::msg::Point safe = selectSafePoint(ramp_target, blackboard_->robot_id_);
+                    final_target_ = pending_target_;
+                    transitionTo(State::MOVE_TO_SAFE_POINT);
+                    blackboard_->startBehavior(BehaviorType::MOVE_TO_SAFE_POINT, safe, 0.0);
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
                 output.target_position = ramp_target;
+                output.target_needs_publishing = true;
+            }
+            break;
+        }
+        case State::MOVE_TO_SAFE_POINT: {
+            auto safe_target = blackboard_->current_behavior.target;
+            if (blackboard_->isAtTarget(safe_target, blackboard_->getDeviationThreshold())) {
+                if (!blackboard_->at_current_target) {
+                    blackboard_->setTargetReached(true);
+                    transitionTo(pending_state_);
+                    if (pending_state_ == State::MOVE_TO_ATTACK_HERO || pending_state_ == State::MOVE_TO_ATTACK_ROBOT) {
+                        BehaviorType bt = (pending_state_ == State::MOVE_TO_ATTACK_HERO) ?
+                                          BehaviorType::MOVE_TO_ATTACK_HERO : BehaviorType::MOVE_TO_ATTACK_ROBOT;
+                        blackboard_->startBehavior(bt, final_target_, 0.0);
+                    } else if (pending_state_ == State::MOVE_TO_GAIN_POINT) {
+                        blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, final_target_, 0.0);
+                    } else if (pending_state_ == State::MOVE_TO_ENEMY_FORTRESS) {
+                        blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, final_target_, 0.0);
+                    } else if (pending_state_ == State::MOVE_TO_GUARD) {
+                        blackboard_->startBehavior(BehaviorType::MOVE_TO_GUARD, final_target_, 0.0);
+                    } else if (pending_state_ == State::MOVE_TO_BASE_DEFENSE) {
+                        blackboard_->startBehavior(BehaviorType::MOVE_TO_BASE_DEFENSE, final_target_, 0.0);
+                    }
+                    has_pending_state_ = false;
+                }
+            } else {
+                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                output.target_position = safe_target;
                 output.target_needs_publishing = true;
             }
             break;
@@ -803,6 +888,16 @@ DecisionOutput DecisionManager::executeDecision() {
             }
             break;
         }
+    }
+
+    // ========== 避让工程标志位更新 ==========
+    // 工程必须可见且存活才判断
+    if (blackboard_->enemy_engineer.visible && blackboard_->enemy_engineer.hp > 0) {
+        bool in_zone = region_manager_->isInEnemyEngineerMiningZone(
+            blackboard_->enemy_engineer.x, blackboard_->enemy_engineer.y, blackboard_->robot_id_);
+        blackboard_->getControlMsg()->avoidengineer_flag = in_zone ? 1 : 0;
+    } else {
+        blackboard_->getControlMsg()->avoidengineer_flag = 0;
     }
 
     output.target_needs_publishing = output.target_needs_publishing;

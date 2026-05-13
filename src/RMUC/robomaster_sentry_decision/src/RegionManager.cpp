@@ -5,7 +5,8 @@
 RegionManager::RegionManager() {
     geometry_msgs::msg::Point point;
 
-    // 初始化红方高地区域 (保持不变)
+    // ========== 原有区域初始化（保持不变） ==========
+    // 红方高地区域
     red_highland_.vertices.clear();
     point.x = 328; point.y = 984; point.z = 0;
     red_highland_.vertices.push_back(point);
@@ -20,7 +21,7 @@ RegionManager::RegionManager() {
     point.x = 800; point.y = 992; point.z = 0;
     red_highland_.vertices.push_back(point);
 
-    // 初始化红方区域 (保持不变)
+    // 红方区域
     red_region_.vertices.clear();
     point.x = 54; point.y = 996; point.z = 0;
     red_region_.vertices.push_back(point);
@@ -57,7 +58,7 @@ RegionManager::RegionManager() {
     point.x = 52; point.y = 328; point.z = 0;
     red_region_.vertices.push_back(point);
 
-    // 初始化中央区域 (保持不变)
+    // 中央区域
     central_region_.vertices.clear();
     point.x = 1368; point.y = 1342; point.z = 0;
     central_region_.vertices.push_back(point);
@@ -110,7 +111,7 @@ RegionManager::RegionManager() {
     point.x = 1272; point.y = 1252; point.z = 0;
     central_region_.vertices.push_back(point);
 
-    // 初始化蓝方区域 (保持不变)
+    // 蓝方区域
     blue_region_.vertices.clear();
     point.x = 2744; point.y = 1164; point.z = 0;
     blue_region_.vertices.push_back(point);
@@ -145,7 +146,7 @@ RegionManager::RegionManager() {
     point.x = 2746; point.y = 506; point.z = 0;
     blue_region_.vertices.push_back(point);
 
-    // 初始化蓝方高地区域 (保持不变)
+    // 蓝方高地区域
     blue_highland_.vertices.clear();
     point.x = 2746; point.y = 506; point.z = 0;
     blue_highland_.vertices.push_back(point);
@@ -160,7 +161,7 @@ RegionManager::RegionManager() {
     point.x = 2570; point.y = 38; point.z = 0;
     blue_highland_.vertices.push_back(point);
 
-    // 初始化英雄部署区域 (蓝方英雄部署区，即红方视角的敌方部署区)
+    // 英雄部署区域 (蓝方英雄部署区，红方视角的敌方部署区)
     hero_deploy_zone_.vertices.clear();
     point.x = 2752; point.y = 942; point.z = 0;
     hero_deploy_zone_.vertices.push_back(point);
@@ -171,7 +172,7 @@ RegionManager::RegionManager() {
     point.x = 2194; point.y = 942; point.z = 0;
     hero_deploy_zone_.vertices.push_back(point);
 
-    // 初始化红方英雄部署区 (蓝方视角的敌方部署区)
+    // 红方英雄部署区 (蓝方视角的敌方部署区)
     red_hero_deploy_zone_.vertices.clear();
     point.x = 48; point.y = 1454; point.z = 0;
     red_hero_deploy_zone_.vertices.push_back(point);
@@ -182,7 +183,7 @@ RegionManager::RegionManager() {
     point.x = 56; point.y = 546; point.z = 0;
     red_hero_deploy_zone_.vertices.push_back(point);
 
-    // 初始化允许区域（原有多边形）
+    // 允许区域
     allowed_region_.vertices.clear();
     point.x = 84; point.y = 972; point.z = 0;
     allowed_region_.vertices.push_back(point);
@@ -208,6 +209,29 @@ RegionManager::RegionManager() {
     allowed_region_.vertices.push_back(point);
     point.x = 88; point.y = 466; point.z = 0;
     allowed_region_.vertices.push_back(point);
+
+    // ========== 新增：工程取矿区 ==========
+    // 蓝方工程取矿区（红方视角的敌方蓝方工程取矿区）: (1520,764) (1596,698) (1496,596) (1382,636)
+    blue_engineer_mining_zone_.vertices.clear();
+    point.x = 1520; point.y = 764; point.z = 0;
+    blue_engineer_mining_zone_.vertices.push_back(point);
+    point.x = 1596; point.y = 698; point.z = 0;
+    blue_engineer_mining_zone_.vertices.push_back(point);
+    point.x = 1496; point.y = 596; point.z = 0;
+    blue_engineer_mining_zone_.vertices.push_back(point);
+    point.x = 1382; point.y = 636; point.z = 0;
+    blue_engineer_mining_zone_.vertices.push_back(point);
+
+    // 红方工程取矿区（蓝方视角的敌方红方工程取矿区）: (1426,848) (1314,890) (1220,792) (1304,712)
+    red_engineer_mining_zone_.vertices.clear();
+    point.x = 1426; point.y = 848; point.z = 0;
+    red_engineer_mining_zone_.vertices.push_back(point);
+    point.x = 1314; point.y = 890; point.z = 0;
+    red_engineer_mining_zone_.vertices.push_back(point);
+    point.x = 1220; point.y = 792; point.z = 0;
+    red_engineer_mining_zone_.vertices.push_back(point);
+    point.x = 1304; point.y = 712; point.z = 0;
+    red_engineer_mining_zone_.vertices.push_back(point);
 }
 
 bool RegionManager::isPointInPolygon(const geometry_msgs::msg::Point& point, const Polygon& polygon) {
@@ -260,7 +284,7 @@ bool RegionManager::isInBlueHighland(double x, double y) const {
 bool RegionManager::isInHeroDeployZone(double x, double y) const {
     geometry_msgs::msg::Point p;
     p.x = x; p.y = y; p.z = 0.0;
-    return isPointInPolygon(p, hero_deploy_zone_);  // 蓝方部署区
+    return isPointInPolygon(p, hero_deploy_zone_);
 }
 
 bool RegionManager::isInEnemyHeroDeployZone(double x, double y, int robot_id) const {
@@ -270,6 +294,16 @@ bool RegionManager::isInEnemyHeroDeployZone(double x, double y, int robot_id) co
         return isPointInPolygon(p, red_hero_deploy_zone_);
     } else {              // 红方机器人，敌方为蓝方，使用蓝方部署区
         return isPointInPolygon(p, hero_deploy_zone_);
+    }
+}
+
+bool RegionManager::isInEnemyEngineerMiningZone(double x, double y, int robot_id) const {
+    geometry_msgs::msg::Point p;
+    p.x = x; p.y = y; p.z = 0.0;
+    if (robot_id == 1) {  // 蓝方，敌方工程为红方工程，使用红方取矿区
+        return isPointInPolygon(p, red_engineer_mining_zone_);
+    } else {              // 红方，敌方工程为蓝方工程，使用蓝方取矿区
+        return isPointInPolygon(p, blue_engineer_mining_zone_);
     }
 }
 
