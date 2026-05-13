@@ -393,6 +393,13 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     enemy_state_.enemy_infantry4_allowance = msg.enemy_robot[3].remaining_bullets;
     enemy_state_.enemy_sentry_allowance = msg.enemy_robot[4].remaining_bullets;
 
+    enemy_state_.enemy_supply_zone_occupation = (msg._event_data >> 2) & 0x01;
+    enemy_state_.enemy_central_highland_occupation = get_event_bits(msg._event_data, 7, 2);
+    enemy_state_.enemy_trapezoid_highland_occupation = get_event_bits(msg._event_data, 9, 2);
+    enemy_state_.enemy_fortress_gain_point_occupation = get_event_bits(msg._event_data, 25, 2);
+    enemy_state_.enemy_outpost_gain_point_occupation = get_event_bits(msg._event_data, 27, 2);
+    enemy_state_.enemy_base_gain_point_occupation = (msg._event_data >> 29) & 0x01;
+
     enemy_state_pub_->publish(enemy_state_);
 
     // ---------- GameState ----------

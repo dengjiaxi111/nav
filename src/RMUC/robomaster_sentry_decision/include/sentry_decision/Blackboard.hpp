@@ -160,6 +160,15 @@ public:
     double x = 0.0, y = 0.0;
     double our_base_hp = 5000.0;
     double our_outpost_hp = 1500.0;
+    double our_hero_hp = 0.0;
+    double our_engineer_hp = 0.0;
+    double our_infantry3_hp = 0.0;
+    double our_infantry4_hp = 0.0;
+    double our_sentry_hp = 0.0;
+    geometry_msgs::msg::Point our_hero_position;
+    geometry_msgs::msg::Point our_engineer_position;
+    geometry_msgs::msg::Point our_infantry3_position;
+    geometry_msgs::msg::Point our_infantry4_position;
     uint8_t stage = 0;
     double stage_remaining_time = 420.0;
     double current_time = 0.0;
@@ -196,7 +205,12 @@ public:
     // 新增：基地打开、前哨站状态、敌方堡垒增益点占领
     int8_t base_open = 0;
     int8_t outpost_state = 0;
+    uint8_t enemy_supply_zone_occupation = 0;
+    uint8_t enemy_central_highland_occupation = 0;
+    uint8_t enemy_trapezoid_highland_occupation = 0;
     uint8_t enemy_fortress_gain_point_occupation = 0;
+    uint8_t enemy_outpost_gain_point_occupation = 0;
+    uint8_t enemy_base_gain_point_occupation = 0;
 
     // 强制占领敌方堡垒标志（英雄/工程死亡）
     bool must_occupy_enemy_fortress = false;

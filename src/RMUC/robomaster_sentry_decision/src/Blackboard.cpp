@@ -202,6 +202,20 @@ void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     allowance_17mm = static_cast<double>(msg->allowance_17mm);
     our_base_hp = static_cast<double>(msg->base_hp);
     our_outpost_hp = static_cast<double>(msg->outpost_hp);
+    our_hero_hp = static_cast<double>(msg->hero_hp);
+    our_engineer_hp = static_cast<double>(msg->engineer_hp);
+    our_infantry3_hp = static_cast<double>(msg->infantry3_hp);
+    our_infantry4_hp = static_cast<double>(msg->infantry4_hp);
+    our_sentry_hp = static_cast<double>(msg->sentry_hp);
+
+    our_hero_position.x = static_cast<double>(msg->hero_x) * 100.0;
+    our_hero_position.y = static_cast<double>(msg->hero_y) * 100.0;
+    our_engineer_position.x = static_cast<double>(msg->engineer_x) * 100.0;
+    our_engineer_position.y = static_cast<double>(msg->engineer_y) * 100.0;
+    our_infantry3_position.x = static_cast<double>(msg->infantry3_x) * 100.0;
+    our_infantry3_position.y = static_cast<double>(msg->infantry3_y) * 100.0;
+    our_infantry4_position.x = static_cast<double>(msg->infantry4_x) * 100.0;
+    our_infantry4_position.y = static_cast<double>(msg->infantry4_y) * 100.0;
 
     uint8_t old_id = robot_id_;
     robot_id_ = msg->robot_id;
@@ -242,10 +256,12 @@ void Blackboard::updateEnemyState(const EnemyRobotState::SharedPtr msg) {
     update(enemy_infantry3, msg->enemy_infantry3_x, msg->enemy_infantry3_y, msg->enemy_infantry3_hp, msg->enemy_infantry3_allowance);
     update(enemy_infantry4, msg->enemy_infantry4_x, msg->enemy_infantry4_y, msg->enemy_infantry4_hp, msg->enemy_infantry4_allowance);
     update(enemy_sentry, msg->enemy_sentry_x, msg->enemy_sentry_y, msg->enemy_sentry_hp, msg->enemy_sentry_allowance);
-    // 敌方堡垒增益点占领状态（假设消息中有此字段，若无则置0）
-    // msg->enemy_fortress_gain_point_occupation 可能需要添加
-    // 此处直接赋0，若实际消息存在请替换为 msg->enemy_fortress_gain_point_occupation
-    enemy_fortress_gain_point_occupation = 0;
+    enemy_supply_zone_occupation = msg->enemy_supply_zone_occupation;
+    enemy_central_highland_occupation = msg->enemy_central_highland_occupation;
+    enemy_trapezoid_highland_occupation = msg->enemy_trapezoid_highland_occupation;
+    enemy_fortress_gain_point_occupation = msg->enemy_fortress_gain_point_occupation;
+    enemy_outpost_gain_point_occupation = msg->enemy_outpost_gain_point_occupation;
+    enemy_base_gain_point_occupation = msg->enemy_base_gain_point_occupation;
 }
 
 void Blackboard::updateGameState(const GameState::SharedPtr msg) {
