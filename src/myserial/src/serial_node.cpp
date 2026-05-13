@@ -555,7 +555,7 @@ void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryContr
     _send_frame_.setChassisMode(spin_mode);
     const uint8_t posture = (msg->posture > 3) ? 3 : msg->posture;
     _send_frame_._sentry_cmd = set_sentry_cmd_bits(_send_frame_._sentry_cmd, 21, 2, posture);
-    if (msg->target_yaw_valid) {
+    if (msg->target_yaw_valid && msg->gimbal_mode == 2 && msg->spin_mode == 0) {
         const double yaw_deg = std::clamp(msg->target_yaw_deg, -180.0, 180.0);
         _send_frame_._buff_yaw_diff_angle = static_cast<int16_t>(std::lround(yaw_deg * 100.0));
     } else {

@@ -167,11 +167,17 @@ private:
         try {
             updatePositionFromTF();
             DecisionOutput output = decision_manager_->executeDecision();
-            publishControl(output.control_msg, true);
-            auto blackboard = decision_manager_->getBlackboard();
-            blackboard->setControlPublished(true);
 
             if (game_started_) {
+                auto blackboard = decision_manager_->getBlackboard();
+                const bool should_stream_outpost_yaw =
+                    output.control_msg.gimbal_mode == GIMBAL_OUTPOST &&
+                    output.control_msg.spin_mode == SPIN_OFF;
+                if (output.control_needs_publishing || should_stream_outpost_yaw) {
+                    publishControl(output.control_msg);
+                    blackboard->setControlPublished(true);
+                }
+
                 if (output.target_needs_publishing && (output.target_position.x != 0 || output.target_position.y != 0)) {
                     geometry_msgs::msg::Point new_target = output.target_position;
                     bool same_point = (std::abs(new_target.x - last_published_target_x_) < 0.01 &&
@@ -185,6 +191,8 @@ private:
                         blackboard->setTargetPublished(true);
                     }
                 }
+            } else {
+                publishStopControl();
             }
         } catch (const std::exception& e) {
             // silent
@@ -254,9 +262,9 @@ private:
                   << std::endl;
     }
 
-    void publishControl(const sentry_decision::msg::SentryControl& ctrl, bool force_yaw = false) {
+    void publishControl(const sentry_decision::msg::SentryControl& ctrl) {
         auto msg = std::make_shared<sentry_decision::msg::SentryControl>(ctrl);
-        fillOutpostYawIfNeeded(*msg, force_yaw);
+        fillOutpostYawIfNeeded(*msg);
         control_pub_->publish(*msg);
         const char* gimbal_str[] = {"不动","打人","打前哨站","打基地"};
         const char* spin_str[] = {"不转","转动"};
@@ -271,7 +279,8 @@ private:
         msg->gimbal_mode = GIMBAL_IDLE;
         msg->spin_mode = SPIN_OFF;
         msg->posture = POSTURE_MOVE;
-        fillOutpostYawIfNeeded(*msg, true);
+        msg->target_yaw_deg = 0.0;
+        msg->target_yaw_valid = false;
         control_pub_->publish(*msg);
     }
 
@@ -323,10 +332,10 @@ private:
         }
     }
 
-    void fillOutpostYawIfNeeded(sentry_decision::msg::SentryControl& msg, bool force_fill = false) {
+    void fillOutpostYawIfNeeded(sentry_decision::msg::SentryControl& msg) {
         msg.target_yaw_valid = false;
         msg.target_yaw_deg = 0.0;
-        if (!force_fill && (msg.gimbal_mode != GIMBAL_OUTPOST || msg.spin_mode != SPIN_OFF)) return;
+        if (msg.gimbal_mode != GIMBAL_OUTPOST || msg.spin_mode != SPIN_OFF) return;
         double yaw_deg = 0.0;
         if (computeOutpostYawDeg(yaw_deg)) {
             msg.target_yaw_deg = yaw_deg;
