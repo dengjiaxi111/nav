@@ -438,6 +438,8 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::RESURRECTION_MOVE);
             } else if (needSupply()) {
                 transitionTo(State::MOVE_TO_SUPPLY);
+            } else if (!blackboard_->initialization_complete) {
+                transitionTo(State::INIT_MOVE);
             } else if (checkEnemyFortress()) {
                 geometry_msgs::msg::Point fort_target = blackboard_->getEnemyFortressPoint();
                 fort_target = region_manager_->clampPointToAllowedRegion(fort_target);
@@ -475,8 +477,6 @@ DecisionOutput DecisionManager::executeDecision() {
                 } else {
                     transitionTo(State::MOVE_TO_FORTRESS);
                 }
-            } else if (!blackboard_->initialization_complete) {
-                transitionTo(State::INIT_MOVE);
             } else {
                 PriorityTargetResult ptarget = selectPriorityTarget();
                 if (ptarget.valid) {
