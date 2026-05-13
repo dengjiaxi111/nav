@@ -279,8 +279,7 @@ private:
         msg->gimbal_mode = GIMBAL_IDLE;
         msg->spin_mode = SPIN_OFF;
         msg->posture = POSTURE_MOVE;
-        msg->target_yaw_deg = 0.0;
-        msg->target_yaw_valid = false;
+        fillOutpostYawIfNeeded(*msg, true);
         control_pub_->publish(*msg);
     }
 
@@ -332,10 +331,10 @@ private:
         }
     }
 
-    void fillOutpostYawIfNeeded(sentry_decision::msg::SentryControl& msg) {
+    void fillOutpostYawIfNeeded(sentry_decision::msg::SentryControl& msg, bool force_fill = false) {
         msg.target_yaw_valid = false;
         msg.target_yaw_deg = 0.0;
-        if (msg.gimbal_mode != GIMBAL_OUTPOST || msg.spin_mode != SPIN_OFF) return;
+        if (!force_fill && (msg.gimbal_mode != GIMBAL_OUTPOST || msg.spin_mode != SPIN_OFF)) return;
         double yaw_deg = 0.0;
         if (computeOutpostYawDeg(yaw_deg)) {
             msg.target_yaw_deg = yaw_deg;
