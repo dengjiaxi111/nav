@@ -269,7 +269,7 @@ void Blackboard::updateGameState(const GameState::SharedPtr msg) {
     updateGainPointStatus();
 
     base_open = msg->baseopen;
-    outpost_state = msg->outpoststate;
+    enemy_outpost_destroyed = (msg->outpoststate == 1);
 }
 
 void Blackboard::updatePositionFromTF(double x_m, double y_m, double yaw_rad) {

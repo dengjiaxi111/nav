@@ -61,5 +61,5 @@ uint8 energy_mechanism_activatable
 
 # 基地打开状态：0正常，1红方基地打开，2蓝方基地打开
 int8 baseopen
-# 前哨站被摧毁状态：0正常，1红方前哨站被摧毁，2蓝方前哨站被摧毁
-int8 outpoststate
+# 敌方前哨站摧毁状态：0=未摧毁，1=已摧毁
+uint8 outpoststate

@@ -195,7 +195,7 @@ public:
     bool outpost_gain_point_occupied_by_enemy = false;
 
     int8_t base_open = 0;
-    int8_t outpost_state = 0;
+    bool enemy_outpost_destroyed = false;  // 敌方前哨站是否已摧毁
     uint8_t enemy_fortress_gain_point_occupation = 0;
 
     bool must_occupy_enemy_fortress = false;

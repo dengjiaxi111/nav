@@ -540,6 +540,12 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::IDLE);
                 break;
             }
+            // 使用统一布尔值判断敌方前哨站是否被摧毁
+            if (blackboard_->enemy_outpost_destroyed) {
+                blackboard_->initialization_complete = true;
+                transitionTo(State::IDLE);
+                break;
+            }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getInitAttackDuration()) {
                 blackboard_->initialization_complete = true;
