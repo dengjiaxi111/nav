@@ -887,7 +887,9 @@ DecisionOutput DecisionManager::executeDecision() {
 
     output.target_needs_publishing = output.target_needs_publishing;
     output.control_msg = *blackboard_->getControlMsg();
-    if (blackboard_->isControlUpdated()) {
+    const bool executing_after_arrival =
+        blackboard_->current_behavior.state == BehaviorState::EXECUTING;
+    if (blackboard_->isControlUpdated() || executing_after_arrival) {
         output.control_needs_publishing = true;
         blackboard_->setControlUpdated(false);
     }
