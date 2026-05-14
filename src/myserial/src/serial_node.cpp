@@ -325,12 +325,14 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     // ----------------- 自瞄发送的敌人位置信息 -----------------
     enemypose_.enemy_num    = msg._enemy_id;
 
-    // 从imu系转换到当前的云台系
-    enemypose_.enemy_x      = cos(msg._base_yaw /180 * M_PI) * msg._enemy_x - sin(msg._base_yaw /180 * M_PI) * msg._enemy_y;
-    enemypose_.enemy_y     = sin(msg._base_yaw /180 * M_PI) * msg._enemy_x + cos(msg._base_yaw /180 * M_PI) * msg._enemy_y;
+    const double base_yaw_rad = msg._base_yaw / 180.0 * M_PI;
+    // _base_yaw 顺时针为正；ROS 平面坐标中 yaw 逆时针为正，因此这里使用 -base_yaw。
+    enemypose_.enemy_x = cos(base_yaw_rad) * msg._enemy_x + sin(base_yaw_rad) * msg._enemy_y;
+    enemypose_.enemy_y = -sin(base_yaw_rad) * msg._enemy_x + cos(base_yaw_rad) * msg._enemy_y;
     if(info_pub_){
         enemypose_pub_->publish(enemypose_);
     }
+    publish_locked_enemy_marker(msg._enemy_id, enemypose_.enemy_x, enemypose_.enemy_y);
 
     // ============================================================
     // 决策系统消息：直接从串口帧聚合，发布到 /decision_messages/*
@@ -466,6 +468,73 @@ void SerialNode::start_write_timer()
     timer_.expires_after(chrono::milliseconds(20));
     timer_.async_wait(asio::bind_executor(strand_,
         bind(&SerialNode::write_timer_callback, this, placeholders::_1)));
+}
+
+void SerialNode::publish_locked_enemy_marker(uint8_t enemy_id, float enemy_x_base, float enemy_y_base)
+{
+    visualization_msgs::msg::Marker marker;
+    marker.header.stamp = this->get_clock()->now();
+    marker.header.frame_id = "map";
+    marker.ns = "autoaim_locked_enemy";
+    marker.id = 0;
+
+    if (enemy_x_base == 0.0f && enemy_y_base == 0.0f) {
+        marker.action = visualization_msgs::msg::Marker::DELETE;
+        locked_enemy_marker_pub_->publish(marker);
+
+        marker.id = 1;
+        locked_enemy_marker_pub_->publish(marker);
+        return;
+    }
+
+    geometry_msgs::msg::PointStamped enemy_base;
+    enemy_base.header.stamp = rclcpp::Time(0);
+    enemy_base.header.frame_id = "base_link";
+    enemy_base.point.x = enemy_x_base;
+    enemy_base.point.y = enemy_y_base;
+    enemy_base.point.z = 0.25;
+
+    geometry_msgs::msg::PointStamped enemy_map;
+    try {
+        const auto map_to_base = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+        tf2::doTransform(enemy_base, enemy_map, map_to_base);
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Failed to transform autoaim locked enemy to map: %s",
+            ex.what());
+        return;
+    }
+
+    marker.header.stamp = enemy_map.header.stamp;
+    marker.type = visualization_msgs::msg::Marker::SPHERE;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.position = enemy_map.point;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = 0.45;
+    marker.scale.y = 0.45;
+    marker.scale.z = 0.45;
+    marker.color.r = 1.0;
+    marker.color.g = 0.1;
+    marker.color.b = 0.1;
+    marker.color.a = 0.9;
+    locked_enemy_marker_pub_->publish(marker);
+
+    visualization_msgs::msg::Marker text_marker = marker;
+    text_marker.id = 1;
+    text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    text_marker.pose.position.z += 0.55;
+    text_marker.scale.x = 0.0;
+    text_marker.scale.y = 0.0;
+    text_marker.scale.z = 0.35;
+    text_marker.color.r = 1.0;
+    text_marker.color.g = 1.0;
+    text_marker.color.b = 1.0;
+    text_marker.color.a = 1.0;
+    text_marker.text = "autoaim lock id=" + std::to_string(static_cast<int>(enemy_id));
+    locked_enemy_marker_pub_->publish(text_marker);
 }
 
 void SerialNode::write_timer_callback(const boost::system::error_code& ec)

@@ -19,9 +19,11 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "std_msgs/msg/u_int8.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -124,8 +126,11 @@ public:
         our_state_pub_   = this->create_publisher<decision_messages::msg::OurRobotState>("/decision_messages/OurRobotState", 10);
         enemy_state_pub_ = this->create_publisher<decision_messages::msg::EnemyRobotState>("/decision_messages/EnemyRobotState", 10);
         game_state_pub_  = this->create_publisher<decision_messages::msg::GameState>("/decision_messages/GameState", 10);
+        locked_enemy_marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/autoaim_locked_enemy_marker", 10);
 
         enemy_tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
         last_cmd_vel_time_ = this->get_clock()->now();
 
         // 初始化logger
@@ -231,6 +236,7 @@ private:
     void path_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg);
     void sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg);
+    void publish_locked_enemy_marker(uint8_t enemy_id, float enemy_x_base, float enemy_y_base);
 
     bool debug_flag_;
     bool log_radar_info_ = true;
@@ -275,6 +281,9 @@ private:
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::LegLength>>     leg_length_pub_;
     std::shared_ptr<rclcpp::Publisher<robots_msgs::msg::EnemyPose>>     enemypose_pub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> enemy_tf_pub_;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr locked_enemy_marker_pub_;
     // 决策系统消息发布者
     rclcpp::Publisher<decision_messages::msg::OurRobotState>::SharedPtr   our_state_pub_;
     rclcpp::Publisher<decision_messages::msg::EnemyRobotState>::SharedPtr enemy_state_pub_;
