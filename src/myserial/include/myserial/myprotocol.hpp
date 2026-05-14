@@ -297,6 +297,7 @@ namespace rm
         uint16_t our_hp_4 = 0;
         uint16_t our_hp_7 = 0;
         RadarRobotInfo enemy_robot[5] = {};
+        uint32_t radar_event_data = 0;
 
         uint8_t _eof = TAIL;
 
@@ -380,6 +381,7 @@ namespace rm
                         << ", hp=" << robot.hp << ", ammo=" << robot.remaining_bullets << ")";
             }
             cout << endl;
+            cout << "  Radar Event Data: 0x" << hex << radar_event_data << dec << endl;
 
             cout << "==========================================================" << endl;
         }
@@ -458,6 +460,7 @@ namespace rm
                     << ", hp=" << robot.hp << ", ammo=" << robot.remaining_bullets << ")";
             }
             oss << std::endl;
+            oss << "  Radar Event Data: 0x" << std::hex << radar_event_data << std::dec << std::endl;
 
             oss << "==========================================================" << std::endl;
 
@@ -470,5 +473,5 @@ namespace rm
     const int WHOLE_GET_LEN = sizeof(WholeGetFrame);
     static_assert(sizeof(RadarRobotInfo) == 8, "RadarRobotInfo must be 8 bytes");
     static_assert(sizeof(WholeSendFrame) == 46, "WholeSendFrame must match navigation rec frame size");
-    static_assert(sizeof(WholeGetFrame) == 187, "WholeGetFrame must match navigation trans frame size");
+    static_assert(sizeof(WholeGetFrame) == 191, "WholeGetFrame must match navigation trans frame size");
 }

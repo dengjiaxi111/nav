@@ -263,11 +263,11 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
 
     // 事件数据解析
     game_status_.external_supply_area_occupied = (msg._event_data) & 0x01;
-    game_status_.inner_supply_area_occupied = (msg._event_data >> 1) & 0x01;
+    game_status_.inner_supply_area_occupied = 0;
     game_status_.supply_area_occupied = (msg._event_data >> 2) & 0x01;
-    game_status_.our_small_buff_activated = (msg._event_data >> 3) & 0x01;
-    game_status_.our_big_buff_activated = (msg._event_data >> 4) & 0x01;
-    game_status_.our_fortress_status = (msg._event_data >> 23) & 0x03;
+    game_status_.our_small_buff_activated = get_event_bits(msg._event_data, 3, 2);
+    game_status_.our_big_buff_activated = get_event_bits(msg._event_data, 5, 2);
+    game_status_.our_fortress_status = get_event_bits(msg._event_data, 25, 2);
     if(info_pub_){
         game_pub_->publish(game_status_);
     }
@@ -421,13 +421,20 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     enemy_state_.enemy_x = msg._enemy_x;
     enemy_state_.enemy_y = msg._enemy_y;
 
-    // event_data reports our-side field events. Enemy-side field states are not available here.
-    enemy_state_.enemy_supply_zone_occupation = 0;
-    enemy_state_.enemy_central_highland_occupation = 0;
-    enemy_state_.enemy_trapezoid_highland_occupation = 0;
-    enemy_state_.enemy_fortress_gain_point_occupation = 0;
-    enemy_state_.enemy_outpost_gain_point_occupation = 0;
-    enemy_state_.enemy_base_gain_point_occupation = 0;
+    // radar_event_data reports enemy-side field events from radar 0x0301-0x02A0.
+    enemy_state_.enemy_supply_zone_occupation = get_event_bits(msg.radar_event_data, 0, 1);
+    enemy_state_.enemy_central_highland_occupation = get_event_bits(msg.radar_event_data, 1, 2);
+    enemy_state_.enemy_trapezoid_highland_occupation = get_event_bits(msg.radar_event_data, 3, 1);
+    enemy_state_.enemy_fortress_gain_point_occupation = get_event_bits(msg.radar_event_data, 4, 2);
+    enemy_state_.enemy_outpost_gain_point_occupation = get_event_bits(msg.radar_event_data, 6, 2);
+    enemy_state_.enemy_base_gain_point_occupation = get_event_bits(msg.radar_event_data, 8, 1);
+    enemy_state_.enemy_near_tunnel_before_ramp_card = get_event_bits(msg.radar_event_data, 9, 1);
+    enemy_state_.enemy_near_tunnel_after_ramp_card = get_event_bits(msg.radar_event_data, 10, 1);
+    enemy_state_.own_near_tunnel_before_ramp_card = get_event_bits(msg.radar_event_data, 11, 1);
+    enemy_state_.own_near_tunnel_after_ramp_card = get_event_bits(msg.radar_event_data, 12, 1);
+    enemy_state_.enemy_highland_upper_card = get_event_bits(msg.radar_event_data, 13, 1);
+    enemy_state_.enemy_ramp_upper_card = get_event_bits(msg.radar_event_data, 14, 1);
+    enemy_state_.enemy_road_upper_card = get_event_bits(msg.radar_event_data, 15, 1);
 
     enemy_state_pub_->publish(enemy_state_);
 
@@ -450,7 +457,7 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
         gs.center_gain_point_occupation = get_event_bits(msg._event_data, 23, 2);
         gs.fortress_gain_point_occupation = get_event_bits(msg._event_data, 25, 2);
         gs.outpost_gain_point_occupation = get_event_bits(msg._event_data, 27, 2);
-        gs.base_gain_point_occupation = (msg._event_data >> 29) & 0x01;
+        gs.base_gain_point_occupation = get_event_bits(msg._event_data, 29, 1);
         gs.exchanged_allowance = msg._sentry_info & 0x07FF;
         gs.free_resurrection_available = (msg._sentry_info >> 19) & 0x01;
         game_state_pub_->publish(gs);
