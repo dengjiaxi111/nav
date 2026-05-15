@@ -192,7 +192,8 @@ namespace rm
         /**
          * @brief: 接收自瞄相关数据 
          */
-        // 13B
+        // 14B
+        uint8_t _enemy_outpost_destroyed = 0; // 敌方前哨站是否死亡：0 正常，1 死亡
         float _base_yaw = 0; // 大小yaw偏角
         float leg_length =0;
         uint8_t _enemy_id = 0;
@@ -311,6 +312,7 @@ namespace rm
                     << "  " << static_cast<float>(_speed_w)/50 << " " << endl;
 
             cout << "[自瞄数据]" << endl;
+            cout << "  Enemy Outpost Destroyed: " << static_cast<int>(_enemy_outpost_destroyed) << endl;
             cout << "  Base Yaw: " << _base_yaw << " deg" << endl;
             cout << "  Enemy ID: " << static_cast<int>(_enemy_id)
                     << "  Pos: (" << static_cast<int>(_enemy_x)
@@ -397,6 +399,7 @@ namespace rm
             oss << "  Speed W: " << static_cast<float>(_speed_w/1000) << std::endl;
 
             oss << "[自瞄数据]" << std::endl;
+            oss << "  Enemy Outpost Destroyed: " << static_cast<int>(_enemy_outpost_destroyed) << std::endl;
             oss << "  Base Yaw: " << _base_yaw << " deg" << std::endl;
             oss << "  Enemy ID: " << static_cast<int>(_enemy_id) << " Pos: (" 
                 << static_cast<float>(_enemy_x) << ", " << static_cast<float>(_enemy_y) << ")" << std::endl;
@@ -473,5 +476,5 @@ namespace rm
     const int WHOLE_GET_LEN = sizeof(WholeGetFrame);
     static_assert(sizeof(RadarRobotInfo) == 8, "RadarRobotInfo must be 8 bytes");
     static_assert(sizeof(WholeSendFrame) == 46, "WholeSendFrame must match navigation rec frame size");
-    static_assert(sizeof(WholeGetFrame) == 191, "WholeGetFrame must match navigation trans frame size");
+    static_assert(sizeof(WholeGetFrame) == 192, "WholeGetFrame must match navigation trans frame size");
 }

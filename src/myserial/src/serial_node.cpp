@@ -459,6 +459,7 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
         gs.base_gain_point_occupation = get_event_bits(msg._event_data, 29, 1);
         gs.exchanged_allowance = msg._sentry_info & 0x07FF;
         gs.free_resurrection_available = (msg._sentry_info >> 19) & 0x01;
+        gs.outpoststate = msg._enemy_outpost_destroyed ? 1 : 0;
         game_state_pub_->publish(gs);
     }
     // ============================================================
