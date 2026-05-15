@@ -1,8 +1,8 @@
 #include "sentry_decision/DecisionManager.hpp"
 #include "sentry_decision/GameConstants.hpp"
+#include "sentry_decision/EnemyStateFusion.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
-#include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -26,6 +26,7 @@ public:
           game_started_(false),
           tf_buffer_(this->get_clock()),
           tf_listener_(std::make_shared<tf2_ros::TransformListener>(tf_buffer_)),
+          enemy_state_fusion_(tf_buffer_),
           last_target_publish_time_(0),
           last_published_target_x_(0.0),
           last_published_target_y_(0.0)
@@ -85,47 +86,7 @@ private:
 
     void enemyStateCallback(const decision_messages::msg::EnemyRobotState::SharedPtr msg) {
         auto corrected_msg = std::make_shared<decision_messages::msg::EnemyRobotState>(*msg);
-
-        // 视觉锁敌数据有效时，将 base_link 下的相对坐标直接变换到 map
-        if (msg->enemy_id > 0 && msg->enemy_x != 0.0 && msg->enemy_y != 0.0) {
-            geometry_msgs::msg::PointStamped enemy_in_base;
-            enemy_in_base.header.stamp = now();
-            enemy_in_base.header.frame_id = "base_link";
-            enemy_in_base.point.x = msg->enemy_x;
-            enemy_in_base.point.y = msg->enemy_y;
-            enemy_in_base.point.z = 0.0;
-
-            geometry_msgs::msg::PointStamped enemy_in_map;
-            if (transformPointToMap(enemy_in_base, enemy_in_map)) {
-                const double x_cm = enemy_in_map.point.x * 100.0;
-                const double y_cm = enemy_in_map.point.y * 100.0;
-
-                switch (msg->enemy_id) {
-                    case 1:
-                        corrected_msg->enemy_hero_x = x_cm;
-                        corrected_msg->enemy_hero_y = y_cm;
-                        break;
-                    case 2:
-                        corrected_msg->enemy_engineer_x = x_cm;
-                        corrected_msg->enemy_engineer_y = y_cm;
-                        break;
-                    case 3:
-                        corrected_msg->enemy_infantry3_x = x_cm;
-                        corrected_msg->enemy_infantry3_y = y_cm;
-                        break;
-                    case 4:
-                        corrected_msg->enemy_infantry4_x = x_cm;
-                        corrected_msg->enemy_infantry4_y = y_cm;
-                        break;
-                    case 7:
-                        corrected_msg->enemy_sentry_x = x_cm;
-                        corrected_msg->enemy_sentry_y = y_cm;
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
+        enemy_state_fusion_.applyVisualLockCorrection(*msg, now(), *corrected_msg);
 
         // 用修正后的数据更新黑板（决策核心）
         decision_manager_->updateEnemyState(corrected_msg);
@@ -292,28 +253,6 @@ private:
         return std::atan2(siny_cosp, cosy_cosp);
     }
 
-    bool transformPointToMap(const geometry_msgs::msg::PointStamped& point_in,
-                             geometry_msgs::msg::PointStamped& point_out) {
-        try {
-            const auto transform = tf_buffer_.lookupTransform("map", point_in.header.frame_id, tf2::TimePointZero);
-            const double base_x = transform.transform.translation.x;
-            const double base_y = transform.transform.translation.y;
-            const double base_yaw = yawFromQuaternion(transform.transform.rotation);
-
-            const double cos_yaw = std::cos(base_yaw);
-            const double sin_yaw = std::sin(base_yaw);
-
-            point_out.header.stamp = point_in.header.stamp;
-            point_out.header.frame_id = "map";
-            point_out.point.x = base_x + cos_yaw * point_in.point.x - sin_yaw * point_in.point.y;
-            point_out.point.y = base_y + sin_yaw * point_in.point.x + cos_yaw * point_in.point.y;
-            point_out.point.z = transform.transform.translation.z + point_in.point.z;
-            return true;
-        } catch (const tf2::TransformException& ex) {
-            return false;
-        }
-    }
-
     bool computeOutpostYawDeg(double& yaw_deg) {
         auto blackboard = decision_manager_->getBlackboard();
         const auto outpost = blackboard->getEnemyOutpostPoint();
@@ -357,6 +296,7 @@ private:
 
     tf2_ros::Buffer tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    EnemyStateFusion enemy_state_fusion_;
 
     double last_target_publish_time_;
     double last_published_target_x_;

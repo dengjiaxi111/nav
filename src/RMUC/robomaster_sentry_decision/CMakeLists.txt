@@ -36,6 +36,7 @@ add_library(sentry_decision_lib
   src/Models.cpp
   src/RegionManager.cpp
   src/DecisionManager.cpp
+  src/EnemyStateFusion.cpp
 )
 
 target_include_directories(sentry_decision_lib PUBLIC
