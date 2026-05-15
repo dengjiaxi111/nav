@@ -325,10 +325,9 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     // ----------------- 自瞄发送的敌人位置信息 -----------------
     enemypose_.enemy_num    = msg._enemy_id;
 
-    const double base_yaw_rad = msg._base_yaw / 180.0 * M_PI;
-    // _base_yaw 顺时针为正；ROS 平面坐标中 yaw 逆时针为正，因此这里使用 -base_yaw。
-    enemypose_.enemy_x = cos(base_yaw_rad) * msg._enemy_x + sin(base_yaw_rad) * msg._enemy_y;
-    enemypose_.enemy_y = -sin(base_yaw_rad) * msg._enemy_x + cos(base_yaw_rad) * msg._enemy_y;
+    // _enemy_x/_enemy_y 已经是 base_link 下的相对位置，直接用于发布和 RViz 显示。
+    enemypose_.enemy_x = msg._enemy_x;
+    enemypose_.enemy_y = msg._enemy_y;
     if(info_pub_){
         enemypose_pub_->publish(enemypose_);
     }
