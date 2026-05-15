@@ -127,6 +127,7 @@ namespace rm
             cout << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
             cout << "  Stair Mode: " << static_cast<int>(_stair_mode) << endl;
             cout << "  Sentry Cmd: 0x" << hex << _sentry_cmd << dec << endl;
+            cout << "  Avoid Engineer: " << static_cast<int>((_sentry_cmd >> 24) & 0x01) << endl;
 
             cout << "===========================================================" << endl;
         }
@@ -167,6 +168,7 @@ namespace rm
             oss << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
             oss << "  Stair Mode: " << static_cast<int>(_stair_mode) << std::endl;
             oss << "  Sentry Cmd: 0x" << std::hex << _sentry_cmd << std::dec << std::endl;
+            oss << "  Avoid Engineer: " << static_cast<int>((_sentry_cmd >> 24) & 0x01) << std::endl;
 
             oss << "===========================================================" << std::endl;
             return oss.str();
