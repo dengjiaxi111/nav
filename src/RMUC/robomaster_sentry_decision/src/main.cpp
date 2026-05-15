@@ -86,43 +86,44 @@ private:
     void enemyStateCallback(const decision_messages::msg::EnemyRobotState::SharedPtr msg) {
         auto corrected_msg = std::make_shared<decision_messages::msg::EnemyRobotState>(*msg);
 
-        // 视觉锁敌数据有效时，解算地图坐标并更新对应敌人字段
+        // 视觉锁敌数据有效时，将 base_link 下的相对坐标直接变换到 map
         if (msg->enemy_id > 0 && msg->enemy_x != 0.0 && msg->enemy_y != 0.0) {
-            auto blackboard = decision_manager_->getBlackboard();
-            double robot_x = blackboard->x / 100.0;   // 米
-            double robot_y = blackboard->y / 100.0;
-            double robot_yaw = blackboard->robot_yaw;
-            double base_yaw = msg->base_yaw;
-            double e_x = msg->enemy_x;
-            double e_y = msg->enemy_y;
+            geometry_msgs::msg::PointStamped enemy_in_base;
+            enemy_in_base.header.stamp = now();
+            enemy_in_base.header.frame_id = "base_link";
+            enemy_in_base.point.x = msg->enemy_x;
+            enemy_in_base.point.y = msg->enemy_y;
+            enemy_in_base.point.z = 0.0;
 
-            auto [x_map, y_map] = gimbalToMap(robot_x, robot_y, robot_yaw, base_yaw, e_x, e_y);
-            double x_cm = x_map * 100.0;
-            double y_cm = y_map * 100.0;
+            geometry_msgs::msg::PointStamped enemy_in_map;
+            if (transformPointToMap(enemy_in_base, enemy_in_map)) {
+                const double x_cm = enemy_in_map.point.x * 100.0;
+                const double y_cm = enemy_in_map.point.y * 100.0;
 
-            switch (msg->enemy_id) {
-                case 1:
-                    corrected_msg->enemy_hero_x = x_cm;
-                    corrected_msg->enemy_hero_y = y_cm;
-                    break;
-                case 2:
-                    corrected_msg->enemy_engineer_x = x_cm;
-                    corrected_msg->enemy_engineer_y = y_cm;
-                    break;
-                case 3:
-                    corrected_msg->enemy_infantry3_x = x_cm;
-                    corrected_msg->enemy_infantry3_y = y_cm;
-                    break;
-                case 4:
-                    corrected_msg->enemy_infantry4_x = x_cm;
-                    corrected_msg->enemy_infantry4_y = y_cm;
-                    break;
-                case 7:
-                    corrected_msg->enemy_sentry_x = x_cm;
-                    corrected_msg->enemy_sentry_y = y_cm;
-                    break;
-                default:
-                    break;
+                switch (msg->enemy_id) {
+                    case 1:
+                        corrected_msg->enemy_hero_x = x_cm;
+                        corrected_msg->enemy_hero_y = y_cm;
+                        break;
+                    case 2:
+                        corrected_msg->enemy_engineer_x = x_cm;
+                        corrected_msg->enemy_engineer_y = y_cm;
+                        break;
+                    case 3:
+                        corrected_msg->enemy_infantry3_x = x_cm;
+                        corrected_msg->enemy_infantry3_y = y_cm;
+                        break;
+                    case 4:
+                        corrected_msg->enemy_infantry4_x = x_cm;
+                        corrected_msg->enemy_infantry4_y = y_cm;
+                        break;
+                    case 7:
+                        corrected_msg->enemy_sentry_x = x_cm;
+                        corrected_msg->enemy_sentry_y = y_cm;
+                        break;
+                    default:
+                        break;
+                }
             }
         }
 
@@ -170,13 +171,8 @@ private:
 
             if (game_started_) {
                 auto blackboard = decision_manager_->getBlackboard();
-                const bool should_stream_outpost_yaw =
-                    output.control_msg.gimbal_mode == GIMBAL_OUTPOST &&
-                    output.control_msg.spin_mode == SPIN_OFF;
-                if (output.control_needs_publishing || should_stream_outpost_yaw) {
-                    publishControl(output.control_msg);
-                    blackboard->setControlPublished(true);
-                }
+                publishControl(output.control_msg);
+                blackboard->setControlPublished(true);
 
                 if (output.target_needs_publishing && (output.target_position.x != 0 || output.target_position.y != 0)) {
                     geometry_msgs::msg::Point new_target = output.target_position;
@@ -284,23 +280,6 @@ private:
         control_pub_->publish(*msg);
     }
 
-    std::pair<double, double> gimbalToMap(
-        double robot_x, double robot_y, double robot_yaw,
-        double base_yaw, double enemy_x_g, double enemy_y_g)
-    {
-        double cb = std::cos(base_yaw);
-        double sb = std::sin(base_yaw);
-        double x_ch = cb * enemy_x_g - sb * enemy_y_g;
-        double y_ch = sb * enemy_x_g + cb * enemy_y_g;
-
-        double cr = std::cos(robot_yaw);
-        double sr = std::sin(robot_yaw);
-        double x_map = cr * x_ch - sr * y_ch + robot_x;
-        double y_map = sr * x_ch + cr * y_ch + robot_y;
-
-        return {x_map, y_map};
-    }
-
     static double normalizeAngle(double angle) {
         while (angle > M_PI) angle -= 2.0 * M_PI;
         while (angle < -M_PI) angle += 2.0 * M_PI;
@@ -311,6 +290,28 @@ private:
         const double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
         const double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
         return std::atan2(siny_cosp, cosy_cosp);
+    }
+
+    bool transformPointToMap(const geometry_msgs::msg::PointStamped& point_in,
+                             geometry_msgs::msg::PointStamped& point_out) {
+        try {
+            const auto transform = tf_buffer_.lookupTransform("map", point_in.header.frame_id, tf2::TimePointZero);
+            const double base_x = transform.transform.translation.x;
+            const double base_y = transform.transform.translation.y;
+            const double base_yaw = yawFromQuaternion(transform.transform.rotation);
+
+            const double cos_yaw = std::cos(base_yaw);
+            const double sin_yaw = std::sin(base_yaw);
+
+            point_out.header.stamp = point_in.header.stamp;
+            point_out.header.frame_id = "map";
+            point_out.point.x = base_x + cos_yaw * point_in.point.x - sin_yaw * point_in.point.y;
+            point_out.point.y = base_y + sin_yaw * point_in.point.x + cos_yaw * point_in.point.y;
+            point_out.point.z = transform.transform.translation.z + point_in.point.z;
+            return true;
+        } catch (const tf2::TransformException& ex) {
+            return false;
+        }
     }
 
     bool computeOutpostYawDeg(double& yaw_deg) {
