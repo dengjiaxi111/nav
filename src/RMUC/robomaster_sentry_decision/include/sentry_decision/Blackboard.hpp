@@ -47,7 +47,9 @@ enum class BehaviorType {
     MOVE_TO_RAMP,
     MOVE_TO_GUARD,
     GUARD,
-    MOVE_TO_SAFE_POINT
+    MOVE_TO_SAFE_POINT,
+    MOVE_TO_PATROL,
+    PATROL
 };
 
 struct BehaviorInfo {
@@ -96,7 +98,6 @@ public:
 
     bool loadConfigFromYAML(const std::string& filepath);
 
-    // 坐标 getter
     geometry_msgs::msg::Point getAttackPoint() const;
     geometry_msgs::msg::Point getSupplyPoint() const;
     geometry_msgs::msg::Point getBaseGainPoint() const;
@@ -104,11 +105,10 @@ public:
     geometry_msgs::msg::Point getRampPoint() const;
     geometry_msgs::msg::Point getEnemyFortressPoint() const;
     geometry_msgs::msg::Point getFortressGainPoint() const;
-    geometry_msgs::msg::Point getCentralHighlandGain() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
     geometry_msgs::msg::Point getEnemyOutpostPoint() const;
+    geometry_msgs::msg::Point getPatrolPoint() const;
 
-    // 参数 getter
     double getArrivalWaitTime() const;
     double getDeviationThreshold() const;
     double getInitAttackDuration() const;
@@ -121,6 +121,7 @@ public:
     double getEnemyFortressOccupyTime() const;
     double getEnemyFortressHpThreshold() const;
     double getEnemyFortressAmmoThreshold() const;
+    double getPatrolStayDuration() const;
 
     double getHpWeight() const;
     double getAmmoWeight() const;
@@ -148,18 +149,16 @@ public:
 
     const std::vector<PriorityConfig>& getPriorityTargets() const { return priority_targets_config_; }
 
-    // 状态更新
     void updateOurState(const OurRobotState::SharedPtr msg);
     void updateEnemyState(const EnemyRobotState::SharedPtr msg);
     void updateGameState(const GameState::SharedPtr msg);
     void updatePositionFromTF(double x_m, double y_m, double yaw_rad);
     void resetForNewMatch();
 
-    // 公共成员
     double current_hp = 400.0;
     double allowance_17mm = 300.0;
     double x = 0.0, y = 0.0;
-    double robot_yaw = 0.0;           // 机器人在地图系下的偏航角（弧度）
+    double robot_yaw = 0.0;
     double our_base_hp = 5000.0;
     double our_outpost_hp = 1500.0;
     uint8_t stage = 0;
@@ -189,17 +188,16 @@ public:
     bool trapezoid_highland_occupied = false;
     bool fortress_gain_point_occupied_by_us = false;
     bool fortress_gain_point_occupied_by_enemy = false;
+    // 以下两个变量仅保留但不在增益点决策中使用，不影响行为
     bool central_highland_occupied_by_us = false;
     bool central_highland_occupied_by_enemy = false;
     bool outpost_gain_point_occupied_by_us = false;
     bool outpost_gain_point_occupied_by_enemy = false;
 
     int8_t base_open = 0;
-    bool enemy_outpost_destroyed = false;  // 敌方前哨站是否已摧毁
+    bool enemy_outpost_destroyed = false;
     uint8_t enemy_fortress_gain_point_occupation = 0;
-
     bool must_occupy_enemy_fortress = false;
-
     uint8_t robot_id_ = 0;
 
     bool isAtTarget(const geometry_msgs::msg::Point& target, double tolerance = 50.0) const;
@@ -242,12 +240,15 @@ private:
         geometry_msgs::msg::Point blue_ramp;
         geometry_msgs::msg::Point red_fortress_gain;
         geometry_msgs::msg::Point blue_fortress_gain;
-        geometry_msgs::msg::Point central_highland_gain;
+        // 中央高地增益点已删除
         geometry_msgs::msg::Point trapezoid_highland_gain;
         geometry_msgs::msg::Point red_enemy_outpost;
         geometry_msgs::msg::Point blue_enemy_outpost;
         geometry_msgs::msg::Point red_enemy_fortress;
         geometry_msgs::msg::Point blue_enemy_fortress;
+
+        geometry_msgs::msg::Point red_patrol;
+        geometry_msgs::msg::Point blue_patrol;
 
         double arrival_wait_time;
         double deviation_threshold;
@@ -287,11 +288,12 @@ private:
         double enemy_fortress_occupy_time;
         double enemy_fortress_hp_threshold;
         double enemy_fortress_ammo_threshold;
+
+        double patrol_stay_duration;
     } config_;
 
     std::shared_ptr<SentryControl> control_msg_;
     uint8_t last_stage_ = 0;
-
     std::vector<PriorityConfig> priority_targets_config_;
 
     void initializeGainPoints();

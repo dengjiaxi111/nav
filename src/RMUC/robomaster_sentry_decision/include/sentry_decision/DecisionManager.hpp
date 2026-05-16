@@ -38,7 +38,9 @@ enum class State {
     MOVE_TO_ENEMY_FORTRESS,
     OCCUPY_ENEMY_FORTRESS,
     MOVE_TO_RAMP,
-    MOVE_TO_SAFE_POINT       // 新增：飞坡后安全中转点
+    MOVE_TO_SAFE_POINT,
+    MOVE_TO_PATROL,
+    PATROL
 };
 
 struct PriorityTargetResult {
@@ -67,15 +69,12 @@ private:
     double last_state_entry_time_ = 0.0;
     std::string current_enemy_id_;
 
-    // 飞坡暂存
     State pending_state_ = State::IDLE;
     geometry_msgs::msg::Point pending_target_;
     bool has_pending_state_ = false;
 
-    // 飞坡后的最终目标点
     geometry_msgs::msg::Point final_target_;
 
-    // 辅助判断函数
     bool needSupply() const;
     bool shouldInterruptForResurrectionOrSupply() const;
     bool checkBaseCritical() const;
@@ -85,7 +84,6 @@ private:
     bool checkEnemyFortress() const;
     bool needRamp(const geometry_msgs::msg::Point& target) const;
 
-    // 安全点选择
     geometry_msgs::msg::Point selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const;
 
     void updateHeroDeployFlag();

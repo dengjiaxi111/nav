@@ -27,7 +27,6 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
     try {
         YAML::Node config = YAML::LoadFile(filepath);
 
-        // 坐标
         config_.red_attack.x = config["red_attack_x"].as<double>();
         config_.red_attack.y = config["red_attack_y"].as<double>();
         config_.blue_attack.x = config["blue_attack_x"].as<double>();
@@ -44,7 +43,6 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_fortress_occupy.y = config["red_fortress_occupy_y"].as<double>();
         config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"].as<double>();
         config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"].as<double>();
-        // 飞坡点
         config_.red_ramp.x = config["red_ramp_point_x"] ? config["red_ramp_point_x"].as<double>() : 1070.0;
         config_.red_ramp.y = config["red_ramp_point_y"] ? config["red_ramp_point_y"].as<double>() : 94.0;
         config_.blue_ramp.x = config["blue_ramp_point_x"] ? config["blue_ramp_point_x"].as<double>() : 1734.0;
@@ -53,8 +51,7 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_fortress_gain.y = config["red_fortress_gain_y"].as<double>();
         config_.blue_fortress_gain.x = config["blue_fortress_gain_x"].as<double>();
         config_.blue_fortress_gain.y = config["blue_fortress_gain_y"].as<double>();
-        config_.central_highland_gain.x = config["central_highland_gain_x"].as<double>();
-        config_.central_highland_gain.y = config["central_highland_gain_y"].as<double>();
+        // 中央高地增益点坐标已删除，不再读取
         config_.trapezoid_highland_gain.x = config["trapezoid_highland_gain_x"].as<double>();
         config_.trapezoid_highland_gain.y = config["trapezoid_highland_gain_y"].as<double>();
         config_.red_enemy_outpost.x = config["red_enemy_outpost_x"] ? config["red_enemy_outpost_x"].as<double>() : 0.0;
@@ -62,30 +59,25 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.blue_enemy_outpost.x = config["blue_enemy_outpost_x"] ? config["blue_enemy_outpost_x"].as<double>() : 0.0;
         config_.blue_enemy_outpost.y = config["blue_enemy_outpost_y"] ? config["blue_enemy_outpost_y"].as<double>() : 0.0;
 
-        // 敌方堡垒占领点
         config_.red_enemy_fortress.x = config["red_enemy_fortress_x"] ? config["red_enemy_fortress_x"].as<double>() : 2112.0;
         config_.red_enemy_fortress.y = config["red_enemy_fortress_y"] ? config["red_enemy_fortress_y"].as<double>() : 754.0;
         config_.blue_enemy_fortress.x = config["blue_enemy_fortress_x"] ? config["blue_enemy_fortress_x"].as<double>() : 694.0;
         config_.blue_enemy_fortress.y = config["blue_enemy_fortress_y"] ? config["blue_enemy_fortress_y"].as<double>() : 756.0;
 
-        // 行为参数
         config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
         config_.deviation_threshold = config["deviation_threshold"].as<double>();
         config_.init_attack_duration = config["init_attack_duration"].as<double>();
         config_.attack_duration = config["attack_duration"].as<double>();
         config_.defend_duration = config["defend_duration"].as<double>();
 
-        // 权重
         config_.hp_weight = config["hp_weight"].as<double>();
         config_.ammo_weight = config["ammo_weight"].as<double>();
         config_.base_weight = config["base_weight"].as<double>();
 
-        // 补给阈值等
         config_.supply_threshold = config["supply_threshold"].as<double>();
         config_.max_hp = config["max_hp"].as<double>();
         config_.max_ammo = config["max_ammo"].as<double>();
 
-        // 决策阈值
         config_.hero_attack_z_threshold = config["hero_attack_z_threshold"].as<double>();
         config_.hero_attack_h_threshold = config["hero_attack_h_threshold"].as<double>();
         config_.hero_high_priority_z_threshold = config["hero_high_priority_z_threshold"].as<double>();
@@ -104,12 +96,10 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.fortress_occupy_hp_ratio = config["fortress_occupy_hp_ratio"].as<double>();
         config_.half_map_x = config["half_map_x"].as<double>();
 
-        // 敌方堡垒占领参数
         config_.enemy_fortress_occupy_time = config["enemy_fortress_occupy_time"] ? config["enemy_fortress_occupy_time"].as<double>() : 180.0;
         config_.enemy_fortress_hp_threshold = config["enemy_fortress_hp_threshold"] ? config["enemy_fortress_hp_threshold"].as<double>() : 0.7;
         config_.enemy_fortress_ammo_threshold = config["enemy_fortress_ammo_threshold"] ? config["enemy_fortress_ammo_threshold"].as<double>() : 0.7;
 
-        // 优先级目标
         priority_targets_config_.clear();
         if (config["priority_targets"]) {
             for (const auto& node : config["priority_targets"]) {
@@ -123,6 +113,12 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
             }
         }
 
+        config_.red_patrol.x = config["red_patrol_x"] ? config["red_patrol_x"].as<double>() : 1958.0;
+        config_.red_patrol.y = config["red_patrol_y"] ? config["red_patrol_y"].as<double>() : 1304.0;
+        config_.blue_patrol.x = config["blue_patrol_x"] ? config["blue_patrol_x"].as<double>() : 846.0;
+        config_.blue_patrol.y = config["blue_patrol_y"] ? config["blue_patrol_y"].as<double>() : 200.0;
+        config_.patrol_stay_duration = config["patrol_stay_duration"] ? config["patrol_stay_duration"].as<double>() : 10.0;
+
         return true;
     } catch (const YAML::Exception& e) {
         std::cerr << "[CONFIG] YAML loading failed: " << e.what() << std::endl;
@@ -133,35 +129,19 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
     }
 }
 
-geometry_msgs::msg::Point Blackboard::getAttackPoint() const {
-    return (robot_id_ == 1) ? config_.blue_attack : config_.red_attack;
-}
-geometry_msgs::msg::Point Blackboard::getSupplyPoint() const {
-    return (robot_id_ == 1) ? config_.blue_supply : config_.red_supply;
-}
-geometry_msgs::msg::Point Blackboard::getBaseGainPoint() const {
-    return (robot_id_ == 1) ? config_.blue_base_gain : config_.red_base_gain;
-}
-geometry_msgs::msg::Point Blackboard::getFortressOccupyPoint() const {
-    return (robot_id_ == 1) ? config_.blue_fortress_occupy : config_.red_fortress_occupy;
-}
-geometry_msgs::msg::Point Blackboard::getRampPoint() const {
-    return (robot_id_ == 1) ? config_.blue_ramp : config_.red_ramp;
-}
-geometry_msgs::msg::Point Blackboard::getEnemyFortressPoint() const {
-    return (robot_id_ == 1) ? config_.blue_enemy_fortress : config_.red_enemy_fortress;
-}
-geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const {
-    return (robot_id_ == 1) ? config_.blue_fortress_gain : config_.red_fortress_gain;
-}
-geometry_msgs::msg::Point Blackboard::getCentralHighlandGain() const {
-    return config_.central_highland_gain;
-}
-geometry_msgs::msg::Point Blackboard::getTrapezoidHighlandGain() const {
-    return config_.trapezoid_highland_gain;
-}
-geometry_msgs::msg::Point Blackboard::getEnemyOutpostPoint() const {
-    return (robot_id_ == 1) ? config_.blue_enemy_outpost : config_.red_enemy_outpost;
+geometry_msgs::msg::Point Blackboard::getAttackPoint() const { return (robot_id_ == 1) ? config_.blue_attack : config_.red_attack; }
+geometry_msgs::msg::Point Blackboard::getSupplyPoint() const { return (robot_id_ == 1) ? config_.blue_supply : config_.red_supply; }
+geometry_msgs::msg::Point Blackboard::getBaseGainPoint() const { return (robot_id_ == 1) ? config_.blue_base_gain : config_.red_base_gain; }
+geometry_msgs::msg::Point Blackboard::getFortressOccupyPoint() const { return (robot_id_ == 1) ? config_.blue_fortress_occupy : config_.red_fortress_occupy; }
+geometry_msgs::msg::Point Blackboard::getRampPoint() const { return (robot_id_ == 1) ? config_.blue_ramp : config_.red_ramp; }
+geometry_msgs::msg::Point Blackboard::getEnemyFortressPoint() const { return (robot_id_ == 1) ? config_.blue_enemy_fortress : config_.red_enemy_fortress; }
+geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const { return (robot_id_ == 1) ? config_.blue_fortress_gain : config_.red_fortress_gain; }
+// getCentralHighlandGain() 已删除
+geometry_msgs::msg::Point Blackboard::getTrapezoidHighlandGain() const { return config_.trapezoid_highland_gain; }
+geometry_msgs::msg::Point Blackboard::getEnemyOutpostPoint() const { return (robot_id_ == 1) ? config_.blue_enemy_outpost : config_.red_enemy_outpost; }
+
+geometry_msgs::msg::Point Blackboard::getPatrolPoint() const {
+    return (robot_id_ == 1) ? config_.blue_patrol : config_.red_patrol;
 }
 
 double Blackboard::getArrivalWaitTime() const { return config_.arrival_wait_time; }
@@ -195,6 +175,7 @@ double Blackboard::getGainPointThresholdLow() const { return config_.gain_point_
 double Blackboard::getFortressOccupyZThreshold() const { return config_.fortress_occupy_z_threshold; }
 double Blackboard::getFortressOccupyFThreshold() const { return config_.fortress_occupy_f_threshold; }
 double Blackboard::getFortressOccupyHpRatio() const { return config_.fortress_occupy_hp_ratio; }
+double Blackboard::getPatrolStayDuration() const { return config_.patrol_stay_duration; }
 
 void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     if (!msg) return;
@@ -242,7 +223,7 @@ void Blackboard::updateEnemyState(const EnemyRobotState::SharedPtr msg) {
     update(enemy_infantry3, msg->enemy_infantry3_x, msg->enemy_infantry3_y, msg->enemy_infantry3_hp, msg->enemy_infantry3_allowance);
     update(enemy_infantry4, msg->enemy_infantry4_x, msg->enemy_infantry4_y, msg->enemy_infantry4_hp, msg->enemy_infantry4_allowance);
     update(enemy_sentry, msg->enemy_sentry_x, msg->enemy_sentry_y, msg->enemy_sentry_hp, msg->enemy_sentry_allowance);
-    enemy_fortress_gain_point_occupation = 0; // 如果消息有该字段可替换
+    enemy_fortress_gain_point_occupation = 0;
 }
 
 void Blackboard::updateGameState(const GameState::SharedPtr msg) {
@@ -420,9 +401,9 @@ void Blackboard::initializeGainPoints() {
         gain_points.push_back(gp);
     };
     add("base_gain", getBaseGainPoint(), 1.0);
-    add("trapezoid_highland_gain", getTrapezoidHighlandGain(), 1.0);
+    // add("trapezoid_highland_gain", getTrapezoidHighlandGain(), 1.0);
     add("fortress_gain", getFortressGainPoint(), 1.0);
-    add("central_highland_gain", getCentralHighlandGain(), 0.5);
+    // 中央高地增益点已删除，不再添加
     add("outpost_gain", getAttackPoint(), 0.5);
 }
 
@@ -438,15 +419,12 @@ void Blackboard::updateGainPointStatus() {
             gp.occupied_by_us = fortress_gain_point_occupied_by_us;
             gp.occupied_by_enemy = fortress_gain_point_occupied_by_enemy;
             gp.neutral = !(fortress_gain_point_occupied_by_us || fortress_gain_point_occupied_by_enemy);
-        } else if (gp.name == "central_highland_gain") {
-            gp.occupied_by_us = central_highland_occupied_by_us;
-            gp.occupied_by_enemy = central_highland_occupied_by_enemy;
-            gp.neutral = !(central_highland_occupied_by_us || central_highland_occupied_by_enemy);
         } else if (gp.name == "outpost_gain") {
             gp.occupied_by_us = outpost_gain_point_occupied_by_us;
             gp.occupied_by_enemy = outpost_gain_point_occupied_by_enemy;
             gp.neutral = !(outpost_gain_point_occupied_by_us || outpost_gain_point_occupied_by_enemy);
         }
+        // 中央高地不再存在于 gain_points 中，因此无需处理
     }
 }
 
@@ -454,4 +432,3 @@ void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
     setTargetPublished(false);
     initializeGainPoints();
 }
-

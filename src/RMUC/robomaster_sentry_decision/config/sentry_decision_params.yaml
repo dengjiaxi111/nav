@@ -33,8 +33,6 @@ red_fortress_gain_y: 746.0
 blue_fortress_gain_x: 690.0
 blue_fortress_gain_y: 746.0
 
-central_highland_gain_x: 1220.0
-central_highland_gain_y: 1092.0
 trapezoid_highland_gain_x: 430.0
 trapezoid_highland_gain_y: 1108.0
 
@@ -101,6 +99,13 @@ half_map_x: 1400.0
 # ========== 发布周期 ==========
 publish_interval_ms: 100               # 控制指令周期
 target_publish_interval_ms: 5000       # 目标点发布周期
+
+# ========== 巡逻点（单位：cm）==========
+red_patrol_x: 1958.0
+red_patrol_y: 1304.0
+blue_patrol_x: 846.0
+blue_patrol_y: 200.0
+patrol_stay_duration: 10.0
 
 # ========== 攻击优先级目标列表（从上到下依次判断） ==========
 priority_targets:

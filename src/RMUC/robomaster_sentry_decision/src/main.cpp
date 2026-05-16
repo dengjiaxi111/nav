@@ -1,8 +1,9 @@
 #include "sentry_decision/DecisionManager.hpp"
-#include "sentry_decision/GameConstants.hpp"
 #include "sentry_decision/EnemyStateFusion.hpp"
+#include "sentry_decision/GameConstants.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
+#include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -141,7 +142,7 @@ private:
                                        std::abs(new_target.y - last_published_target_y_) < 0.01);
                     rclcpp::Time now = this->now();
                     if (!same_point || (now.seconds() - last_target_publish_time_ > 5.0)) {
-                        publishTarget(new_target, output.decision_reason);
+                        publishTarget(new_target);
                         last_published_target_x_ = new_target.x;
                         last_published_target_y_ = new_target.y;
                         last_target_publish_time_ = now.seconds();
@@ -156,67 +157,14 @@ private:
         }
     }
 
-    std::string behaviorTypeToString(BehaviorType type) const {
-        switch (type) {
-            case BehaviorType::NONE: return "NONE";
-            case BehaviorType::INIT_MOVE: return "INIT_MOVE";
-            case BehaviorType::INIT_ATTACK: return "INIT_ATTACK";
-            case BehaviorType::MOVE_TO_ATTACK_HERO: return "MOVE_TO_ATTACK_HERO";
-            case BehaviorType::ATTACK_HERO: return "ATTACK_HERO";
-            case BehaviorType::MOVE_TO_ATTACK_ROBOT: return "MOVE_TO_ATTACK_ROBOT";
-            case BehaviorType::ATTACK_ROBOT: return "ATTACK_ROBOT";
-            case BehaviorType::MOVE_TO_SUPPLY: return "MOVE_TO_SUPPLY";
-            case BehaviorType::SUPPLY: return "SUPPLY";
-            case BehaviorType::RESURRECTION_MOVE: return "RESURRECTION_MOVE";
-            case BehaviorType::RESURRECTING: return "RESURRECTING";
-            case BehaviorType::MOVE_TO_BASE_DEFENSE: return "MOVE_TO_BASE_DEFENSE";
-            case BehaviorType::BASE_DEFENSE: return "BASE_DEFENSE";
-            case BehaviorType::MOVE_TO_GAIN_POINT: return "MOVE_TO_GAIN_POINT";
-            case BehaviorType::OCCUPY_GAIN_POINT: return "OCCUPY_GAIN_POINT";
-            case BehaviorType::MOVE_TO_FORTRESS: return "MOVE_TO_FORTRESS";
-            case BehaviorType::OCCUPY_FORTRESS: return "OCCUPY_FORTRESS";
-            case BehaviorType::MOVE_TO_ENEMY_FORTRESS: return "MOVE_TO_ENEMY_FORTRESS";
-            case BehaviorType::OCCUPY_ENEMY_FORTRESS: return "OCCUPY_ENEMY_FORTRESS";
-            case BehaviorType::MOVE_TO_RAMP: return "MOVE_TO_RAMP";
-            case BehaviorType::MOVE_TO_GUARD: return "MOVE_TO_GUARD";
-            case BehaviorType::GUARD: return "GUARD";
-            case BehaviorType::MOVE_TO_SAFE_POINT: return "MOVE_TO_SAFE_POINT";
-        }
-        return "UNKNOWN";
-    }
-
-    std::string behaviorStateToString(BehaviorState state) const {
-        switch (state) {
-            case BehaviorState::IDLE: return "IDLE";
-            case BehaviorState::MOVING: return "MOVING";
-            case BehaviorState::EXECUTING: return "EXECUTING";
-            case BehaviorState::COMPLETED: return "COMPLETED";
-        }
-        return "UNKNOWN";
-    }
-
-    void publishTarget(const geometry_msgs::msg::Point& target, const std::string& reason) {
+    void publishTarget(const geometry_msgs::msg::Point& target) {
         auto msg = std::make_shared<geometry_msgs::msg::PointStamped>();
         msg->header.stamp = now();
         msg->header.frame_id = "map";
         msg->point.x = target.x / 100.0;
         msg->point.y = target.y / 100.0;
         target_pub_->publish(*msg);
-
-        auto blackboard = decision_manager_->getBlackboard();
-        std::cout << "[TARGET] state=" << reason
-                  << ", behavior=" << behaviorTypeToString(blackboard->current_behavior.type)
-                  << ", behavior_state=" << behaviorStateToString(blackboard->current_behavior.state)
-                  << ", target=(" << msg->point.x << ", " << msg->point.y << ")"
-                  << ", hp=" << blackboard->current_hp << "/" << blackboard->getMaxHp()
-                  << ", ammo=" << blackboard->allowance_17mm << "/" << blackboard->getMaxAmmo()
-                  << ", stage=" << int(blackboard->stage)
-                  << ", time=" << blackboard->stage_remaining_time
-                  << ", res=" << (blackboard->resurrection_flag ? "true" : "false")
-                  << ", init_done=" << (blackboard->initialization_complete ? "true" : "false")
-                  << ", enemy_hero_vis=" << (blackboard->enemy_hero.visible ? "true" : "false")
-                  << ", enemy_eng_vis=" << (blackboard->enemy_engineer.visible ? "true" : "false")
-                  << std::endl;
+        std::cout << "[TARGET] (" << msg->point.x << ", " << msg->point.y << ")" << std::endl;
     }
 
     void publishControl(const sentry_decision::msg::SentryControl& ctrl) {

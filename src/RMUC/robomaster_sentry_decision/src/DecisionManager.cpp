@@ -89,8 +89,18 @@ void DecisionManager::updateMustOccupyFlag() {
 }
 
 bool DecisionManager::needRamp(const geometry_msgs::msg::Point& target) const {
-    // 直接前往目标点，不再使用飞坡点作为跨半场中转
-    return false;
+    double half = blackboard_->getHalfMapX();
+    bool to_enemy_half = false;
+    if (blackboard_->robot_id_ == 1) {
+        to_enemy_half = (blackboard_->x > half) && (target.x < half);
+    } else {
+        to_enemy_half = (blackboard_->x < half) && (target.x > half);
+    }
+    if (!to_enemy_half) return false;
+    if (region_manager_->isInCentralRegion(blackboard_->x, blackboard_->y)) {
+        return false;
+    }
+    return true;
 }
 
 geometry_msgs::msg::Point DecisionManager::selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const {
@@ -237,7 +247,7 @@ geometry_msgs::msg::Point DecisionManager::getTargetPointForEnemy(const std::str
     }
     geometry_msgs::msg::Point hex = region_manager_->findSameRegionHexPoint(
         enemy->x, enemy->y, blackboard_->x, blackboard_->y);
-    return region_manager_->clampPointToAllowedRegion(hex);
+    return region_manager_->clampPointToAllowedRegion(hex, blackboard_->x, blackboard_->y);
 }
 
 Models::GainPointScore DecisionManager::getBestGainPoint() const {
@@ -269,7 +279,7 @@ void DecisionManager::transitionTo(State new_state) {
         case State::INIT_ATTACK:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+            blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);
             break;
         case State::MOVE_TO_ATTACK_HERO:
         case State::MOVE_TO_ATTACK_ROBOT: {
@@ -296,7 +306,7 @@ void DecisionManager::transitionTo(State new_state) {
         }
         case State::MOVE_TO_ENEMY_FORTRESS: {
             geometry_msgs::msg::Point target = blackboard_->getEnemyFortressPoint();
-            target = region_manager_->clampPointToAllowedRegion(target);
+            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
             blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, target, 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
@@ -320,7 +330,7 @@ void DecisionManager::transitionTo(State new_state) {
             break;
         case State::MOVE_TO_GAIN_POINT: {
             auto best = getBestGainPoint();
-            geometry_msgs::msg::Point target = region_manager_->clampPointToAllowedRegion(best.position);
+            geometry_msgs::msg::Point target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
             blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, target, 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
@@ -374,6 +384,18 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->startExecutionTime();
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
             break;
+        case State::MOVE_TO_PATROL: {
+            geometry_msgs::msg::Point target = blackboard_->getPatrolPoint();
+            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_PATROL, target, 0.0);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        }
+        case State::PATROL:
+            blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
+            blackboard_->startExecutionTime();
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+            break;
         default:
             break;
     }
@@ -404,6 +426,8 @@ std::string DecisionManager::stateToString(State state) const {
         case State::OCCUPY_ENEMY_FORTRESS: return "OCCUPY_ENEMY_FORTRESS";
         case State::MOVE_TO_RAMP: return "MOVE_TO_RAMP";
         case State::MOVE_TO_SAFE_POINT: return "MOVE_TO_SAFE_POINT";
+        case State::MOVE_TO_PATROL: return "MOVE_TO_PATROL";
+        case State::PATROL: return "PATROL";
         default: return "UNKNOWN";
     }
 }
@@ -427,8 +451,7 @@ DecisionOutput DecisionManager::executeDecision() {
             output.control_needs_publishing = true;
             blackboard_->setControlUpdated(false);
         }
-        // 即使非比赛阶段也更新标志位
-        output.control_msg.avoidengineer_flag = 0; // 非比赛阶段强制为0
+        output.control_msg.avoidengineer_flag = 0;
         return output;
     }
 
@@ -438,31 +461,14 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::RESURRECTION_MOVE);
             } else if (needSupply()) {
                 transitionTo(State::MOVE_TO_SUPPLY);
-            } else if (!blackboard_->initialization_complete) {
-                transitionTo(State::INIT_MOVE);
-            } else if (checkEnemyFortress()) {
-                geometry_msgs::msg::Point fort_target = blackboard_->getEnemyFortressPoint();
-                fort_target = region_manager_->clampPointToAllowedRegion(fort_target);
-                if (needRamp(fort_target)) {
-                    pending_state_ = State::MOVE_TO_ENEMY_FORTRESS;
-                    pending_target_ = fort_target;
-                    has_pending_state_ = true;
-                    geometry_msgs::msg::Point ramp = blackboard_->getRampPoint();
-                    transitionTo(State::MOVE_TO_RAMP);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, ramp, 0.0);
-                } else {
-                    transitionTo(State::MOVE_TO_ENEMY_FORTRESS);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, fort_target, 0.0);
-                }
             } else if (checkBaseCritical()) {
                 geometry_msgs::msg::Point base = blackboard_->getBaseGainPoint();
                 if (needRamp(base)) {
                     pending_state_ = State::MOVE_TO_BASE_DEFENSE;
                     pending_target_ = base;
                     has_pending_state_ = true;
-                    geometry_msgs::msg::Point ramp = blackboard_->getRampPoint();
                     transitionTo(State::MOVE_TO_RAMP);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, ramp, 0.0);
+                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
                 } else {
                     transitionTo(State::MOVE_TO_BASE_DEFENSE);
                 }
@@ -476,6 +482,21 @@ DecisionOutput DecisionManager::executeDecision() {
                     blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
                 } else {
                     transitionTo(State::MOVE_TO_FORTRESS);
+                }
+            } else if (!blackboard_->initialization_complete) {
+                transitionTo(State::INIT_MOVE);
+            } else if (checkEnemyFortress()) {
+                geometry_msgs::msg::Point fort_target = blackboard_->getEnemyFortressPoint();
+                fort_target = region_manager_->clampPointToAllowedRegion(fort_target, blackboard_->x, blackboard_->y);
+                if (needRamp(fort_target)) {
+                    pending_state_ = State::MOVE_TO_ENEMY_FORTRESS;
+                    pending_target_ = fort_target;
+                    has_pending_state_ = true;
+                    transitionTo(State::MOVE_TO_RAMP);
+                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
+                } else {
+                    transitionTo(State::MOVE_TO_ENEMY_FORTRESS);
+                    blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, fort_target, 0.0);
                 }
             } else {
                 PriorityTargetResult ptarget = selectPriorityTarget();
@@ -495,7 +516,7 @@ DecisionOutput DecisionManager::executeDecision() {
                     }
                 } else if (checkGainPoint()) {
                     auto best = getBestGainPoint();
-                    geometry_msgs::msg::Point gain_target = region_manager_->clampPointToAllowedRegion(best.position);
+                    geometry_msgs::msg::Point gain_target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
                     if (needRamp(gain_target)) {
                         pending_state_ = State::MOVE_TO_GAIN_POINT;
                         pending_target_ = gain_target;
@@ -506,22 +527,50 @@ DecisionOutput DecisionManager::executeDecision() {
                         transitionTo(State::MOVE_TO_GAIN_POINT);
                     }
                 } else {
-                    geometry_msgs::msg::Point guard_target;
-                    guard_target.x = GUARD_X; guard_target.y = GUARD_Y;
-                    if (needRamp(guard_target)) {
-                        pending_state_ = State::MOVE_TO_GUARD;
-                        pending_target_ = guard_target;
-                        has_pending_state_ = true;
-                        transitionTo(State::MOVE_TO_RAMP);
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                    } else {
-                        transitionTo(State::MOVE_TO_GUARD);
-                    }
+                    transitionTo(State::MOVE_TO_PATROL);
                 }
             }
             break;
         }
+
+        case State::MOVE_TO_PATROL: {
+            if (shouldInterruptForResurrectionOrSupply()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            geometry_msgs::msg::Point target = blackboard_->getPatrolPoint();
+            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+                if (!blackboard_->at_current_target) {
+                    blackboard_->setTargetReached(true);
+                    transitionTo(State::PATROL);
+                }
+            } else {
+                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                output.target_position = target;
+                output.target_needs_publishing = true;
+            }
+            break;
+        }
+        case State::PATROL: {
+            if (shouldInterruptForResurrectionOrSupply()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            double elapsed = blackboard_->getExecutionElapsedTime();
+            if (elapsed >= blackboard_->getPatrolStayDuration()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            if (!blackboard_->isControlPublished()) {
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+                output.control_needs_publishing = true;
+            }
+            break;
+        }
+
         case State::INIT_MOVE: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target = blackboard_->getAttackPoint();
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
@@ -536,11 +585,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::INIT_ATTACK: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            // 使用统一布尔值判断敌方前哨站是否被摧毁
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             if (blackboard_->enemy_outpost_destroyed) {
                 blackboard_->initialization_complete = true;
                 transitionTo(State::IDLE);
@@ -559,6 +604,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_RAMP: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             auto ramp_target = blackboard_->current_behavior.target;
             if (blackboard_->isAtTarget(ramp_target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
@@ -576,6 +622,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_SAFE_POINT: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             auto safe_target = blackboard_->current_behavior.target;
             if (blackboard_->isAtTarget(safe_target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
@@ -604,11 +651,9 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_ENEMY_FORTRESS: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target = blackboard_->getEnemyFortressPoint();
-            target = region_manager_->clampPointToAllowedRegion(target);
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE); break;
-            }
+            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
@@ -622,9 +667,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::OCCUPY_ENEMY_FORTRESS: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE); break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -636,10 +679,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::MOVE_TO_ATTACK_HERO:
         case State::MOVE_TO_ATTACK_ROBOT: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target = getTargetPointForEnemy(current_enemy_id_);
             if (target.x == 0 && target.y == 0) {
                 transitionTo(State::IDLE);
@@ -662,10 +702,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::ATTACK_HERO:
         case State::ATTACK_ROBOT: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target = getTargetPointForEnemy(current_enemy_id_);
             if (target.x == 0 || target.y == 0) {
                 transitionTo(State::IDLE);
@@ -725,11 +762,8 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_BASE_DEFENSE: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target = blackboard_->getBaseGainPoint();
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
@@ -743,10 +777,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::BASE_DEFENSE: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -757,12 +788,13 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_GAIN_POINT: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             auto best = getBestGainPoint();
             if (best.name.empty()) {
                 transitionTo(State::IDLE);
                 break;
             }
-            geometry_msgs::msg::Point target = region_manager_->clampPointToAllowedRegion(best.position);
+            geometry_msgs::msg::Point target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
@@ -776,10 +808,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::OCCUPY_GAIN_POINT: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -790,11 +819,8 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_FORTRESS: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target = blackboard_->getFortressOccupyPoint();
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
@@ -808,10 +834,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::OCCUPY_FORTRESS: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -822,12 +845,9 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::MOVE_TO_GUARD: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target;
             target.x = GUARD_X; target.y = GUARD_Y;
-            if (shouldInterruptForResurrectionOrSupply() || checkBaseCritical()) {
-                transitionTo(State::IDLE);
-                break;
-            }
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
@@ -841,27 +861,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::GUARD: {
-            if (shouldInterruptForResurrectionOrSupply() || checkBaseCritical()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            PriorityTargetResult ptarget = selectPriorityTarget();
-            if (ptarget.valid) {
-                current_enemy_id_ = ptarget.enemy_id;
-                State target_state = (ptarget.type == "hero" || ptarget.type == "hero_deploy") ?
-                                     State::MOVE_TO_ATTACK_HERO : State::MOVE_TO_ATTACK_ROBOT;
-                geometry_msgs::msg::Point enemy_target = getTargetPointForEnemy(current_enemy_id_);
-                if (needRamp(enemy_target)) {
-                    pending_state_ = target_state;
-                    pending_target_ = enemy_target;
-                    has_pending_state_ = true;
-                    transitionTo(State::MOVE_TO_RAMP);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                } else {
-                    transitionTo(target_state);
-                }
-                break;
-            }
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= 5.0) {
                 transitionTo(State::IDLE);
@@ -875,8 +875,6 @@ DecisionOutput DecisionManager::executeDecision() {
         }
     }
 
-    // ========== 避让工程标志位更新 ==========
-    // 工程必须可见且存活才判断
     if (blackboard_->enemy_engineer.visible && blackboard_->enemy_engineer.hp > 0) {
         bool in_zone = region_manager_->isInEnemyEngineerMiningZone(
             blackboard_->enemy_engineer.x, blackboard_->enemy_engineer.y, blackboard_->robot_id_);
@@ -885,11 +883,8 @@ DecisionOutput DecisionManager::executeDecision() {
         blackboard_->getControlMsg()->avoidengineer_flag = 0;
     }
 
-    output.target_needs_publishing = output.target_needs_publishing;
     output.control_msg = *blackboard_->getControlMsg();
-    const bool executing_after_arrival =
-        blackboard_->current_behavior.state == BehaviorState::EXECUTING;
-    if (blackboard_->isControlUpdated() || executing_after_arrival) {
+    if (blackboard_->isControlUpdated()) {
         output.control_needs_publishing = true;
         blackboard_->setControlUpdated(false);
     }
