@@ -43,10 +43,6 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_fortress_occupy.y = config["red_fortress_occupy_y"].as<double>();
         config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"].as<double>();
         config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"].as<double>();
-        config_.red_ramp.x = config["red_ramp_point_x"] ? config["red_ramp_point_x"].as<double>() : 1070.0;
-        config_.red_ramp.y = config["red_ramp_point_y"] ? config["red_ramp_point_y"].as<double>() : 94.0;
-        config_.blue_ramp.x = config["blue_ramp_point_x"] ? config["blue_ramp_point_x"].as<double>() : 1734.0;
-        config_.blue_ramp.y = config["blue_ramp_point_y"] ? config["blue_ramp_point_y"].as<double>() : 1388.0;
         config_.red_fortress_gain.x = config["red_fortress_gain_x"].as<double>();
         config_.red_fortress_gain.y = config["red_fortress_gain_y"].as<double>();
         config_.blue_fortress_gain.x = config["blue_fortress_gain_x"].as<double>();
@@ -94,8 +90,6 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.fortress_occupy_z_threshold = config["fortress_occupy_z_threshold"].as<double>();
         config_.fortress_occupy_f_threshold = config["fortress_occupy_f_threshold"].as<double>();
         config_.fortress_occupy_hp_ratio = config["fortress_occupy_hp_ratio"].as<double>();
-        config_.half_map_x = config["half_map_x"].as<double>();
-
         config_.enemy_fortress_occupy_time = config["enemy_fortress_occupy_time"] ? config["enemy_fortress_occupy_time"].as<double>() : 180.0;
         config_.enemy_fortress_hp_threshold = config["enemy_fortress_hp_threshold"] ? config["enemy_fortress_hp_threshold"].as<double>() : 0.7;
         config_.enemy_fortress_ammo_threshold = config["enemy_fortress_ammo_threshold"] ? config["enemy_fortress_ammo_threshold"].as<double>() : 0.7;
@@ -133,7 +127,6 @@ geometry_msgs::msg::Point Blackboard::getAttackPoint() const { return (robot_id_
 geometry_msgs::msg::Point Blackboard::getSupplyPoint() const { return (robot_id_ == 1) ? config_.blue_supply : config_.red_supply; }
 geometry_msgs::msg::Point Blackboard::getBaseGainPoint() const { return (robot_id_ == 1) ? config_.blue_base_gain : config_.red_base_gain; }
 geometry_msgs::msg::Point Blackboard::getFortressOccupyPoint() const { return (robot_id_ == 1) ? config_.blue_fortress_occupy : config_.red_fortress_occupy; }
-geometry_msgs::msg::Point Blackboard::getRampPoint() const { return (robot_id_ == 1) ? config_.blue_ramp : config_.red_ramp; }
 geometry_msgs::msg::Point Blackboard::getEnemyFortressPoint() const { return (robot_id_ == 1) ? config_.blue_enemy_fortress : config_.red_enemy_fortress; }
 geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const { return (robot_id_ == 1) ? config_.blue_fortress_gain : config_.red_fortress_gain; }
 // getCentralHighlandGain() 已删除
@@ -152,7 +145,6 @@ double Blackboard::getDefendDuration() const { return config_.defend_duration; }
 double Blackboard::getSupplyThreshold() const { return config_.supply_threshold; }
 double Blackboard::getMaxHp() const { return config_.max_hp; }
 double Blackboard::getMaxAmmo() const { return config_.max_ammo; }
-double Blackboard::getHalfMapX() const { return config_.half_map_x; }
 double Blackboard::getEnemyFortressOccupyTime() const { return config_.enemy_fortress_occupy_time; }
 double Blackboard::getEnemyFortressHpThreshold() const { return config_.enemy_fortress_hp_threshold; }
 double Blackboard::getEnemyFortressAmmoThreshold() const { return config_.enemy_fortress_ammo_threshold; }

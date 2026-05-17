@@ -19,7 +19,6 @@ namespace GameConstants {
     const uint8_t POSTURE_DEFENSE = 2;
     const uint8_t POSTURE_MOVE = 3;
 
-    // 飞坡已移除
 }
 
 #endif // GAME_CONSTANTS_HPP

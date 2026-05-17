@@ -37,8 +37,6 @@ enum class State {
     GUARD,
     MOVE_TO_ENEMY_FORTRESS,
     OCCUPY_ENEMY_FORTRESS,
-    MOVE_TO_RAMP,
-    MOVE_TO_SAFE_POINT,
     MOVE_TO_PATROL,
     PATROL
 };
@@ -69,12 +67,6 @@ private:
     double last_state_entry_time_ = 0.0;
     std::string current_enemy_id_;
 
-    State pending_state_ = State::IDLE;
-    geometry_msgs::msg::Point pending_target_;
-    bool has_pending_state_ = false;
-
-    geometry_msgs::msg::Point final_target_;
-
     bool needSupply() const;
     bool shouldInterruptForResurrectionOrSupply() const;
     bool checkBaseCritical() const;
@@ -82,9 +74,6 @@ private:
     bool checkFortressOccupy() const;
     bool checkGainPoint() const;
     bool checkEnemyFortress() const;
-    bool needRamp(const geometry_msgs::msg::Point& target) const;
-
-    geometry_msgs::msg::Point selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const;
 
     void updateHeroDeployFlag();
     void updateMustOccupyFlag();

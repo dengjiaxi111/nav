@@ -88,85 +88,6 @@ void DecisionManager::updateMustOccupyFlag() {
     }
 }
 
-bool DecisionManager::needRamp(const geometry_msgs::msg::Point& target) const {
-    double half = blackboard_->getHalfMapX();
-    bool to_enemy_half = false;
-    if (blackboard_->robot_id_ == 1) {
-        to_enemy_half = (blackboard_->x > half) && (target.x < half);
-    } else {
-        to_enemy_half = (blackboard_->x < half) && (target.x > half);
-    }
-    if (!to_enemy_half) return false;
-    if (region_manager_->isInCentralRegion(blackboard_->x, blackboard_->y)) {
-        return false;
-    }
-    return true;
-}
-
-geometry_msgs::msg::Point DecisionManager::selectSafePoint(const geometry_msgs::msg::Point& ramp_point, int robot_id) const {
-    geometry_msgs::msg::Point safe;
-    double min_x, max_x, min_y, max_y;
-    if (robot_id == 1) { // 蓝方
-        min_x = 654; max_x = 846;
-        min_y = 1308; max_y = 1414;
-    } else {             // 红方
-        min_x = 2016; max_x = 2224;
-        min_y = 92; max_y = 204;
-    }
-
-    const double step = 20.0;
-    const double safe_dist = 50.0;
-    std::vector<geometry_msgs::msg::Point> candidates;
-    std::vector<geometry_msgs::msg::Point> same_y_candidates;
-
-    for (double x = min_x; x <= max_x; x += step) {
-        for (double y = min_y; y <= max_y; y += step) {
-            if (x < min_x || x > max_x || y < min_y || y > max_y) continue;
-            bool occupied = false;
-            auto checkEnemy = [&](const EnemyInfo& enemy) {
-                if (enemy.visible && enemy.hp > 0) {
-                    double dx = x - enemy.x;
-                    double dy = y - enemy.y;
-                    if (std::sqrt(dx*dx + dy*dy) < safe_dist) occupied = true;
-                }
-            };
-            checkEnemy(blackboard_->enemy_hero);
-            checkEnemy(blackboard_->enemy_engineer);
-            checkEnemy(blackboard_->enemy_infantry3);
-            checkEnemy(blackboard_->enemy_infantry4);
-            checkEnemy(blackboard_->enemy_sentry);
-            if (occupied) continue;
-
-            geometry_msgs::msg::Point pt;
-            pt.x = x; pt.y = y; pt.z = 0;
-            candidates.push_back(pt);
-            if (std::abs(y - ramp_point.y) < step/2.0) {
-                same_y_candidates.push_back(pt);
-            }
-        }
-    }
-
-    if (!same_y_candidates.empty()) {
-        double best_dist = 1e9;
-        for (const auto& p : same_y_candidates) {
-            double d = std::hypot(p.x - ramp_point.x, p.y - ramp_point.y);
-            if (d < best_dist) { best_dist = d; safe = p; }
-        }
-        return safe;
-    }
-    if (!candidates.empty()) {
-        double best_dist = 1e9;
-        for (const auto& p : candidates) {
-            double d = std::hypot(p.x - ramp_point.x, p.y - ramp_point.y);
-            if (d < best_dist) { best_dist = d; safe = p; }
-        }
-        return safe;
-    }
-    safe.x = (min_x + max_x)/2.0;
-    safe.y = (min_y + max_y)/2.0;
-    return safe;
-}
-
 void DecisionManager::updateHeroDeployFlag() {
     blackboard_->hero_in_deploy_zone = region_manager_->isInEnemyHeroDeployZone(
         blackboard_->enemy_hero.x, blackboard_->enemy_hero.y, blackboard_->robot_id_);
@@ -294,16 +215,6 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         }
-        case State::MOVE_TO_RAMP: {
-            geometry_msgs::msg::Point ramp = blackboard_->getRampPoint();
-            blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, ramp, 0.0);
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
-            break;
-        }
-        case State::MOVE_TO_SAFE_POINT: {
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
-            break;
-        }
         case State::MOVE_TO_ENEMY_FORTRESS: {
             geometry_msgs::msg::Point target = blackboard_->getEnemyFortressPoint();
             target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
@@ -424,8 +335,6 @@ std::string DecisionManager::stateToString(State state) const {
         case State::GUARD: return "GUARD";
         case State::MOVE_TO_ENEMY_FORTRESS: return "MOVE_TO_ENEMY_FORTRESS";
         case State::OCCUPY_ENEMY_FORTRESS: return "OCCUPY_ENEMY_FORTRESS";
-        case State::MOVE_TO_RAMP: return "MOVE_TO_RAMP";
-        case State::MOVE_TO_SAFE_POINT: return "MOVE_TO_SAFE_POINT";
         case State::MOVE_TO_PATROL: return "MOVE_TO_PATROL";
         case State::PATROL: return "PATROL";
         default: return "UNKNOWN";
@@ -462,70 +371,28 @@ DecisionOutput DecisionManager::executeDecision() {
             } else if (needSupply()) {
                 transitionTo(State::MOVE_TO_SUPPLY);
             } else if (checkBaseCritical()) {
-                geometry_msgs::msg::Point base = blackboard_->getBaseGainPoint();
-                if (needRamp(base)) {
-                    pending_state_ = State::MOVE_TO_BASE_DEFENSE;
-                    pending_target_ = base;
-                    has_pending_state_ = true;
-                    transitionTo(State::MOVE_TO_RAMP);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                } else {
-                    transitionTo(State::MOVE_TO_BASE_DEFENSE);
-                }
+                transitionTo(State::MOVE_TO_BASE_DEFENSE);
             } else if (checkOutpostDestroyed() && checkFortressOccupy()) {
-                geometry_msgs::msg::Point fort = blackboard_->getFortressOccupyPoint();
-                if (needRamp(fort)) {
-                    pending_state_ = State::MOVE_TO_FORTRESS;
-                    pending_target_ = fort;
-                    has_pending_state_ = true;
-                    transitionTo(State::MOVE_TO_RAMP);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                } else {
-                    transitionTo(State::MOVE_TO_FORTRESS);
-                }
+                transitionTo(State::MOVE_TO_FORTRESS);
             } else if (!blackboard_->initialization_complete) {
                 transitionTo(State::INIT_MOVE);
             } else if (checkEnemyFortress()) {
                 geometry_msgs::msg::Point fort_target = blackboard_->getEnemyFortressPoint();
                 fort_target = region_manager_->clampPointToAllowedRegion(fort_target, blackboard_->x, blackboard_->y);
-                if (needRamp(fort_target)) {
-                    pending_state_ = State::MOVE_TO_ENEMY_FORTRESS;
-                    pending_target_ = fort_target;
-                    has_pending_state_ = true;
-                    transitionTo(State::MOVE_TO_RAMP);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                } else {
-                    transitionTo(State::MOVE_TO_ENEMY_FORTRESS);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, fort_target, 0.0);
-                }
+                transitionTo(State::MOVE_TO_ENEMY_FORTRESS);
+                blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, fort_target, 0.0);
             } else {
                 PriorityTargetResult ptarget = selectPriorityTarget();
                 if (ptarget.valid) {
                     current_enemy_id_ = ptarget.enemy_id;
                     State target_state = (ptarget.type == "hero" || ptarget.type == "hero_deploy") ?
                                          State::MOVE_TO_ATTACK_HERO : State::MOVE_TO_ATTACK_ROBOT;
-                    geometry_msgs::msg::Point enemy_target = getTargetPointForEnemy(current_enemy_id_);
-                    if (needRamp(enemy_target)) {
-                        pending_state_ = target_state;
-                        pending_target_ = enemy_target;
-                        has_pending_state_ = true;
-                        transitionTo(State::MOVE_TO_RAMP);
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                    } else {
-                        transitionTo(target_state);
-                    }
+                    transitionTo(target_state);
                 } else if (checkGainPoint()) {
                     auto best = getBestGainPoint();
                     geometry_msgs::msg::Point gain_target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
-                    if (needRamp(gain_target)) {
-                        pending_state_ = State::MOVE_TO_GAIN_POINT;
-                        pending_target_ = gain_target;
-                        has_pending_state_ = true;
-                        transitionTo(State::MOVE_TO_RAMP);
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_RAMP, blackboard_->getRampPoint(), 0.0);
-                    } else {
-                        transitionTo(State::MOVE_TO_GAIN_POINT);
-                    }
+                    transitionTo(State::MOVE_TO_GAIN_POINT);
+                    blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, gain_target, 0.0);
                 } else {
                     transitionTo(State::MOVE_TO_PATROL);
                 }
@@ -600,53 +467,6 @@ DecisionOutput DecisionManager::executeDecision() {
             if (!blackboard_->isControlPublished()) {
                 blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
-            }
-            break;
-        }
-        case State::MOVE_TO_RAMP: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            auto ramp_target = blackboard_->current_behavior.target;
-            if (blackboard_->isAtTarget(ramp_target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    geometry_msgs::msg::Point safe = selectSafePoint(ramp_target, blackboard_->robot_id_);
-                    final_target_ = pending_target_;
-                    transitionTo(State::MOVE_TO_SAFE_POINT);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_SAFE_POINT, safe, 0.0);
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                output.target_position = ramp_target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-        case State::MOVE_TO_SAFE_POINT: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            auto safe_target = blackboard_->current_behavior.target;
-            if (blackboard_->isAtTarget(safe_target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(pending_state_);
-                    if (pending_state_ == State::MOVE_TO_ATTACK_HERO || pending_state_ == State::MOVE_TO_ATTACK_ROBOT) {
-                        BehaviorType bt = (pending_state_ == State::MOVE_TO_ATTACK_HERO) ?
-                                          BehaviorType::MOVE_TO_ATTACK_HERO : BehaviorType::MOVE_TO_ATTACK_ROBOT;
-                        blackboard_->startBehavior(bt, final_target_, 0.0);
-                    } else if (pending_state_ == State::MOVE_TO_GAIN_POINT) {
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, final_target_, 0.0);
-                    } else if (pending_state_ == State::MOVE_TO_ENEMY_FORTRESS) {
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, final_target_, 0.0);
-                    } else if (pending_state_ == State::MOVE_TO_GUARD) {
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_GUARD, final_target_, 0.0);
-                    } else if (pending_state_ == State::MOVE_TO_BASE_DEFENSE) {
-                        blackboard_->startBehavior(BehaviorType::MOVE_TO_BASE_DEFENSE, final_target_, 0.0);
-                    }
-                    has_pending_state_ = false;
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                output.target_position = safe_target;
-                output.target_needs_publishing = true;
             }
             break;
         }

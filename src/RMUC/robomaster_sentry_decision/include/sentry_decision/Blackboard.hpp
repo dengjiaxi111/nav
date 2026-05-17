@@ -44,10 +44,8 @@ enum class BehaviorType {
     OCCUPY_FORTRESS,
     MOVE_TO_ENEMY_FORTRESS,
     OCCUPY_ENEMY_FORTRESS,
-    MOVE_TO_RAMP,
     MOVE_TO_GUARD,
     GUARD,
-    MOVE_TO_SAFE_POINT,
     MOVE_TO_PATROL,
     PATROL
 };
@@ -102,7 +100,6 @@ public:
     geometry_msgs::msg::Point getSupplyPoint() const;
     geometry_msgs::msg::Point getBaseGainPoint() const;
     geometry_msgs::msg::Point getFortressOccupyPoint() const;
-    geometry_msgs::msg::Point getRampPoint() const;
     geometry_msgs::msg::Point getEnemyFortressPoint() const;
     geometry_msgs::msg::Point getFortressGainPoint() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
@@ -117,7 +114,6 @@ public:
     double getSupplyThreshold() const;
     double getMaxHp() const;
     double getMaxAmmo() const;
-    double getHalfMapX() const;
     double getEnemyFortressOccupyTime() const;
     double getEnemyFortressHpThreshold() const;
     double getEnemyFortressAmmoThreshold() const;
@@ -236,8 +232,6 @@ private:
         geometry_msgs::msg::Point blue_base_gain;
         geometry_msgs::msg::Point red_fortress_occupy;
         geometry_msgs::msg::Point blue_fortress_occupy;
-        geometry_msgs::msg::Point red_ramp;
-        geometry_msgs::msg::Point blue_ramp;
         geometry_msgs::msg::Point red_fortress_gain;
         geometry_msgs::msg::Point blue_fortress_gain;
         // 中央高地增益点已删除
@@ -284,7 +278,6 @@ private:
         double fortress_occupy_f_threshold;
         double fortress_occupy_hp_ratio;
 
-        double half_map_x;
         double enemy_fortress_occupy_time;
         double enemy_fortress_hp_threshold;
         double enemy_fortress_ammo_threshold;
