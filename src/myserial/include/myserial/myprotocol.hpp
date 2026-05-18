@@ -195,7 +195,7 @@ namespace rm
          * @brief: 接收自瞄相关数据 
          */
         // 14B
-        uint8_t _enemy_outpost_destroyed = 0; // 敌方前哨站是否死亡：0 正常，1 死亡
+        uint8_t _enemy_outpost_alive = 0; // 雷达前哨站存活状态：1 存活，0 已摧毁
         float _base_yaw = 0; // 大小yaw偏角
         float leg_length =0;
         uint8_t _enemy_id = 0;
@@ -314,7 +314,7 @@ namespace rm
                     << "  " << static_cast<float>(_speed_w)/50 << " " << endl;
 
             cout << "[自瞄数据]" << endl;
-            cout << "  Enemy Outpost Destroyed: " << static_cast<int>(_enemy_outpost_destroyed) << endl;
+            cout << "  Enemy Outpost Alive: " << static_cast<int>(_enemy_outpost_alive) << endl;
             cout << "  Base Yaw: " << _base_yaw << " deg" << endl;
             cout << "  Enemy ID: " << static_cast<int>(_enemy_id)
                     << "  Pos: (" << static_cast<int>(_enemy_x)
@@ -401,7 +401,7 @@ namespace rm
             oss << "  Speed W: " << static_cast<float>(_speed_w/1000) << std::endl;
 
             oss << "[自瞄数据]" << std::endl;
-            oss << "  Enemy Outpost Destroyed: " << static_cast<int>(_enemy_outpost_destroyed) << std::endl;
+            oss << "  Enemy Outpost Alive: " << static_cast<int>(_enemy_outpost_alive) << std::endl;
             oss << "  Base Yaw: " << _base_yaw << " deg" << std::endl;
             oss << "  Enemy ID: " << static_cast<int>(_enemy_id) << " Pos: (" 
                 << static_cast<float>(_enemy_x) << ", " << static_cast<float>(_enemy_y) << ")" << std::endl;
