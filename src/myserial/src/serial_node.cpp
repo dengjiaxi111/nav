@@ -372,19 +372,16 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     our_state_pub_->publish(our_state_);
 
     // ---------- EnemyRobotState ----------
-    const auto radar_m_to_decision_cm = [](uint16_t position_m) {
-        return static_cast<float>(position_m) * 100.0f;
-    };
-    enemy_state_.enemy_hero_x = radar_m_to_decision_cm(msg.enemy_robot[0].position_x);
-    enemy_state_.enemy_hero_y = radar_m_to_decision_cm(msg.enemy_robot[0].position_y);
-    enemy_state_.enemy_engineer_x = radar_m_to_decision_cm(msg.enemy_robot[1].position_x);
-    enemy_state_.enemy_engineer_y = radar_m_to_decision_cm(msg.enemy_robot[1].position_y);
-    enemy_state_.enemy_infantry3_x = radar_m_to_decision_cm(msg.enemy_robot[2].position_x);
-    enemy_state_.enemy_infantry3_y = radar_m_to_decision_cm(msg.enemy_robot[2].position_y);
-    enemy_state_.enemy_infantry4_x = radar_m_to_decision_cm(msg.enemy_robot[3].position_x);
-    enemy_state_.enemy_infantry4_y = radar_m_to_decision_cm(msg.enemy_robot[3].position_y);
-    enemy_state_.enemy_sentry_x = radar_m_to_decision_cm(msg.enemy_robot[4].position_x);
-    enemy_state_.enemy_sentry_y = radar_m_to_decision_cm(msg.enemy_robot[4].position_y);
+    enemy_state_.enemy_hero_x = static_cast<float>(msg.enemy_robot[0].position_x);
+    enemy_state_.enemy_hero_y = static_cast<float>(msg.enemy_robot[0].position_y);
+    enemy_state_.enemy_engineer_x = static_cast<float>(msg.enemy_robot[1].position_x);
+    enemy_state_.enemy_engineer_y = static_cast<float>(msg.enemy_robot[1].position_y);
+    enemy_state_.enemy_infantry3_x = static_cast<float>(msg.enemy_robot[2].position_x);
+    enemy_state_.enemy_infantry3_y = static_cast<float>(msg.enemy_robot[2].position_y);
+    enemy_state_.enemy_infantry4_x = static_cast<float>(msg.enemy_robot[3].position_x);
+    enemy_state_.enemy_infantry4_y = static_cast<float>(msg.enemy_robot[3].position_y);
+    enemy_state_.enemy_sentry_x = static_cast<float>(msg.enemy_robot[4].position_x);
+    enemy_state_.enemy_sentry_y = static_cast<float>(msg.enemy_robot[4].position_y);
 
     enemy_state_.enemy_hero_hp = msg.enemy_robot[0].hp;
     enemy_state_.enemy_engineer_hp = msg.enemy_robot[1].hp;
