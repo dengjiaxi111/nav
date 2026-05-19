@@ -34,7 +34,7 @@ public:
 
     std::string getRegionName(double x, double y) const;
 
-    static std::vector<geometry_msgs::msg::Point> calculateHexagonPoints(double center_x, double center_y, double radius = 200.0);
+    static std::vector<geometry_msgs::msg::Point> calculateHexagonPoints(double center_x, double center_y, double radius = 300.0);
     geometry_msgs::msg::Point findSameRegionHexPoint(double target_x, double target_y, double robot_x, double robot_y) const;
 
 private:

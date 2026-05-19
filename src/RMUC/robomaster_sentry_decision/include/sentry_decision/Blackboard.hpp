@@ -108,6 +108,7 @@ public:
 
     double getArrivalWaitTime() const;
     double getDeviationThreshold() const;
+    double getEnemyChaseRepathThreshold() const;
     double getInitAttackDuration() const;
     double getAttackDuration() const;
     double getDefendDuration() const;
@@ -163,6 +164,7 @@ public:
 
     bool resurrection_flag = false;
     bool initialization_complete = false;
+    double init_attack_elapsed_time = 0.0;
     bool at_supply_point = false;
     bool hero_in_deploy_zone = false;
 
@@ -193,6 +195,7 @@ public:
     int8_t base_open = 0;
     bool enemy_outpost_destroyed = false;
     uint8_t enemy_fortress_gain_point_occupation = 0;
+    bool enemy_fortress_gain_point_captured_by_us = false;
     bool must_occupy_enemy_fortress = false;
     uint8_t robot_id_ = 0;
 
@@ -246,6 +249,7 @@ private:
 
         double arrival_wait_time;
         double deviation_threshold;
+        double enemy_chase_repath_threshold;
         double init_attack_duration;
         double attack_duration;
         double defend_duration;

@@ -66,6 +66,9 @@ private:
     State current_state_ = State::IDLE;
     double last_state_entry_time_ = 0.0;
     std::string current_enemy_id_;
+    bool correcting_target_offset_ = false;
+    State correction_resume_state_ = State::IDLE;
+    geometry_msgs::msg::Point correction_target_;
 
     bool needSupply() const;
     bool shouldInterruptForResurrectionOrSupply() const;
@@ -80,8 +83,12 @@ private:
 
     PriorityTargetResult selectPriorityTarget();
 
+    geometry_msgs::msg::Point constrainTargetPoint(const geometry_msgs::msg::Point& point,
+                                                   bool clamp_to_allowed_region = true) const;
     geometry_msgs::msg::Point getTargetPointForEnemy(const std::string& enemy_id) const;
     Models::GainPointScore getBestGainPoint() const;
+    bool beginTargetOffsetCorrection(State move_state, DecisionOutput& output);
+    State consumeCorrectionResumeState(State normal_state);
 
     void transitionTo(State new_state);
     std::string stateToString(State state) const;
