@@ -63,13 +63,9 @@ public:
       info_pub_(true),
       enemy_priority_(0b11111110)
     {
-        cout << "WholeGetFrame: " << WHOLE_GET_LEN << endl;
-        cout << "WholeSendFrame: " << WHOLE_SEND_LEN << endl;
-
         this->declare_parameter<bool>("on_court", false);
         this->declare_parameter<bool>("debug_flag", false);
         this->declare_parameter<bool>("info_pub",true);
-        this->declare_parameter<bool>("log_radar_info", true);
         this->declare_parameter<bool>("enable_rtt_measure", false);  // RTT 测量开关
         
         // 性能优化开关（用于对比测试）
@@ -83,21 +79,12 @@ public:
         this->get_parameter("on_court",on_court_);
         this->get_parameter("debug_flag",debug_flag_);
         this->get_parameter("info_pub", info_pub_);
-        this->get_parameter("log_radar_info", log_radar_info_);
         this->get_parameter("enable_rtt_measure", enable_rtt_measure_);
         this->get_parameter("enable_batch_read", enable_batch_read_);
         this->get_parameter("enable_improved_framing", enable_improved_framing_);
         this->get_parameter("batch_read_size", batch_read_size_);
         this->get_parameter("log_path",log_path_);
         
-        RCLCPP_INFO(this->get_logger(),"on_court: %d", static_cast<int>(on_court_));
-        RCLCPP_INFO(this->get_logger(),"log_radar_info: %d", static_cast<int>(log_radar_info_));
-        RCLCPP_INFO(this->get_logger(),"enable_rtt_measure: %d", static_cast<int>(enable_rtt_measure_));
-        RCLCPP_INFO(this->get_logger(),"enable_batch_read: %d (size=%d)", 
-            static_cast<int>(enable_batch_read_), batch_read_size_);
-        RCLCPP_INFO(this->get_logger(),"enable_improved_framing: %d", 
-            static_cast<int>(enable_improved_framing_));
-
         // 这个函数返回的是： <install space>/share/your_package_name
         package_path_ = ament_index_cpp::get_package_share_directory("myserial");
         music_package_path_ = ament_index_cpp::get_package_share_directory("play_music");
@@ -239,7 +226,6 @@ private:
     void publish_locked_enemy_marker(uint8_t enemy_id, float enemy_x_base, float enemy_y_base);
 
     bool debug_flag_;
-    bool log_radar_info_ = true;
 
     // logger相关
     shared_ptr<spdlog::async_logger> my_logger_;

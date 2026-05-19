@@ -150,11 +150,14 @@ void SerialNode::parse_buffer()
 
         buffer_.erase(buffer_.begin(), buffer_.begin()+WHOLE_GET_LEN);
 
-        if(debug_flag_) 
+        if(debug_flag_) {
             RCLCPP_INFO(this->get_logger(), "Successfully parsed a frame! Header=0x%02X, Tail=0x%02X", HEADER, TAIL);
+        }
 
         if (callback_) {
-            my_logger_->info("[RX] {}", _get_frame_.to_string());
+            if (debug_flag_) {
+                my_logger_->info("[RX] {}", _get_frame_.to_string());
+            }
             // if(debug_flag_){
             //     _get_frame_.print();
             //     RCLCPP_INFO(this->get_logger(), "成功接收一帧数据");
@@ -394,52 +397,6 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     enemy_state_.enemy_infantry4_allowance = msg.enemy_robot[3].remaining_bullets;
     enemy_state_.enemy_sentry_allowance = msg.enemy_robot[4].remaining_bullets;
 
-    if (log_radar_info_) {
-        const auto& r = msg.enemy_robot;
-        const uint32_t radar_event = msg.radar_event_data;
-        const bool any_radar =
-            r[0].position_x || r[0].position_y || r[0].hp || r[0].remaining_bullets ||
-            r[1].position_x || r[1].position_y || r[1].hp || r[1].remaining_bullets ||
-            r[2].position_x || r[2].position_y || r[2].hp || r[2].remaining_bullets ||
-            r[3].position_x || r[3].position_y || r[3].hp || r[3].remaining_bullets ||
-            r[4].position_x || r[4].position_y || r[4].hp || r[4].remaining_bullets;
-        std::ostringstream radar_log;
-        radar_log
-            << "[RADAR_RX] any=" << static_cast<unsigned>(any_radar)
-            << " enemy_outpost_alive=" << static_cast<unsigned>(msg._enemy_outpost_alive)
-            << " radar_event_data=0x" << std::hex << std::setw(8) << std::setfill('0') << radar_event
-            << std::dec << std::setfill(' ') << "(" << radar_event << ")"
-            << " events{"
-            << "opp_supply_zone=" << static_cast<unsigned>(get_event_bits(radar_event, 0, 1))
-            << " opp_central_highland=" << static_cast<unsigned>(get_event_bits(radar_event, 1, 2))
-            << " opp_trapezoid_highland=" << static_cast<unsigned>(get_event_bits(radar_event, 3, 1))
-            << " opp_fortress_buff=" << static_cast<unsigned>(get_event_bits(radar_event, 4, 2))
-            << " opp_outpost_buff=" << static_cast<unsigned>(get_event_bits(radar_event, 6, 2))
-            << " opp_base_buff=" << static_cast<unsigned>(get_event_bits(radar_event, 8, 1))
-            << " tunnel_opp_front=" << static_cast<unsigned>(get_event_bits(radar_event, 9, 1))
-            << " tunnel_opp_rear=" << static_cast<unsigned>(get_event_bits(radar_event, 10, 1))
-            << " tunnel_ally_front=" << static_cast<unsigned>(get_event_bits(radar_event, 11, 1))
-            << " tunnel_ally_rear=" << static_cast<unsigned>(get_event_bits(radar_event, 12, 1))
-            << " highland_top=" << static_cast<unsigned>(get_event_bits(radar_event, 13, 1))
-            << " ramp_rear=" << static_cast<unsigned>(get_event_bits(radar_event, 14, 1))
-            << " road_top=" << static_cast<unsigned>(get_event_bits(radar_event, 15, 1))
-            << " reserved=0x" << std::hex << ((radar_event >> 16) & 0xffffu) << std::dec
-            << "} robots{"
-            << "hero=(" << r[0].position_x << "," << r[0].position_y << " hp=" << r[0].hp << " ammo=" << r[0].remaining_bullets << ") "
-            << "engineer=(" << r[1].position_x << "," << r[1].position_y << " hp=" << r[1].hp << " ammo=" << r[1].remaining_bullets << ") "
-            << "infantry3=(" << r[2].position_x << "," << r[2].position_y << " hp=" << r[2].hp << " ammo=" << r[2].remaining_bullets << ") "
-            << "infantry4=(" << r[3].position_x << "," << r[3].position_y << " hp=" << r[3].hp << " ammo=" << r[3].remaining_bullets << ") "
-            << "sentry=(" << r[4].position_x << "," << r[4].position_y << " hp=" << r[4].hp << " ammo=" << r[4].remaining_bullets << ")"
-            << "}";
-        const auto radar_log_text = radar_log.str();
-        RCLCPP_INFO_THROTTLE(
-            this->get_logger(),
-            *this->get_clock(),
-            1000,
-            "%s",
-            radar_log_text.c_str());
-    }
-
     enemy_state_.base_yaw = static_cast<float>(msg._base_yaw / 180.0 * M_PI);
     enemy_state_.enemy_id = msg._enemy_id;
     enemy_state_.enemy_x = msg._enemy_x;
@@ -612,7 +569,9 @@ void SerialNode::send_msg()
         _send_frame_._sentry_cmd |= 0x01;
         memcpy(packet.data(), &_send_frame_, WHOLE_SEND_LEN);
 
-        my_logger_->info("[TX] {}", _send_frame_.to_string());
+        if (debug_flag_) {
+            my_logger_->info("[TX] {}", _send_frame_.to_string());
+        }
         // if(debug_flag_){
         //     _send_frame_.print();
         // }
@@ -689,20 +648,22 @@ void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryContr
         _send_frame_._buff_yaw_diff_angle = 0;
     }
 
-    RCLCPP_INFO_THROTTLE(
-        this->get_logger(),
-        *this->get_clock(),
-        500,
-        "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, avoidengineer=%u, yaw_valid=%u, yaw_x100=%d, sentry_cmd=0x%08X, auto_drive=%u",
-        static_cast<unsigned>(msg->spin_mode),
-        static_cast<unsigned>(_send_frame_.getChassisMode()),
-        static_cast<unsigned>(_send_frame_.getGimbalMode()),
-        static_cast<unsigned>(posture),
-        static_cast<unsigned>(avoidengineer_flag),
-        static_cast<unsigned>(msg->target_yaw_valid),
-        static_cast<int>(_send_frame_._buff_yaw_diff_angle),
-        static_cast<unsigned>(_send_frame_._sentry_cmd),
-        static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
+    if (debug_flag_) {
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            500,
+            "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, avoidengineer=%u, yaw_valid=%u, yaw_x100=%d, sentry_cmd=0x%08X, auto_drive=%u",
+            static_cast<unsigned>(msg->spin_mode),
+            static_cast<unsigned>(_send_frame_.getChassisMode()),
+            static_cast<unsigned>(_send_frame_.getGimbalMode()),
+            static_cast<unsigned>(posture),
+            static_cast<unsigned>(avoidengineer_flag),
+            static_cast<unsigned>(msg->target_yaw_valid),
+            static_cast<int>(_send_frame_._buff_yaw_diff_angle),
+            static_cast<unsigned>(_send_frame_._sentry_cmd),
+            static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
+    }
 }
 
 void SerialNode::monitor(){
