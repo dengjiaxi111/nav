@@ -44,8 +44,9 @@ blue_enemy_outpost_y: 0.0
 
 # ========== 行为参数 ==========
 arrival_wait_time: 1.0
-deviation_threshold: 50.0
-init_attack_duration: 10.0          # 保留作为后备超时
+deviation_threshold: 50.0              # 到点/偏移修正阈值，单位 cm
+enemy_chase_repath_threshold: 100.0    # 攻击追敌时，目标点偏离超过该值后重新规划，单位 cm
+init_attack_duration: 60.0          # 保留作为后备超时
 attack_duration: 8.0
 defend_duration: 10.0
 
@@ -100,17 +101,7 @@ patrol_stay_duration: 10.0
 
 # ========== 攻击优先级目标列表（从上到下依次判断） ==========
 priority_targets:
-  - type: "hero_deploy"        # 部署模式英雄（特殊评分模型）
-    weight_hp: 0.5             # 不使用，保留占位
-    weight_distance: 0.35
-    weight_ammo: 0.15
-    threshold: 0.5
   - type: "infantry"           # 步兵
-    weight_hp: 0.4
-    weight_distance: 0.4
-    weight_ammo: 0.2
-    threshold: 0.5
-  - type: "hero"               # 普通英雄
     weight_hp: 0.4
     weight_distance: 0.4
     weight_ammo: 0.2
@@ -120,7 +111,12 @@ priority_targets:
     weight_distance: 0.4
     weight_ammo: 0.2
     threshold: 0.5
-  - type: "engineer"           # 工程
+  - type: "hero_deploy"        # 部署模式英雄，不作为攻击目标
+    weight_hp: 0.5             # 不使用，保留占位
+    weight_distance: 0.35
+    weight_ammo: 0.15
+    threshold: 0.5
+  - type: "hero"               # 普通英雄，不作为攻击目标
     weight_hp: 0.4
     weight_distance: 0.4
     weight_ammo: 0.2

@@ -4,9 +4,10 @@
 
 double Models::calculateSituationZ(const Blackboard& bb) {
     double hp_ratio = bb.current_hp / bb.getMaxHp();
-    double ammo_ratio = bb.allowance_17mm / bb.getMaxAmmo();
     double base_ratio = bb.our_base_hp / 5000.0;
-    return bb.getHpWeight() * hp_ratio + bb.getAmmoWeight() * ammo_ratio + bb.getBaseWeight() * base_ratio;
+    double total_weight = bb.getHpWeight() + bb.getBaseWeight();
+    if (total_weight <= 0.0) return 0.0;
+    return (bb.getHpWeight() * hp_ratio + bb.getBaseWeight() * base_ratio) / total_weight;
 }
 
 double Models::calculateHeroAttackValue(const Blackboard& bb, double distance_to_hero, bool deploy_state) {
@@ -22,8 +23,10 @@ double Models::calculateGeneralTargetScore(const Blackboard& bb, const EnemyInfo
     double hp_ratio = 1.0 - (enemy.hp / getMaxHP(enemy.type)); // 血量越低分数越高
     double distance = calculateDistance(bb.x, bb.y, enemy.x, enemy.y);
     double distance_score = 1.0 - std::min(distance / 2800.0, 1.0);
-    double ammo_ratio = 1.0 - (enemy.allowance / getMaxAmmo(enemy.type));
-    return weight_hp * hp_ratio + weight_distance * distance_score + weight_ammo * ammo_ratio;
+    (void)weight_ammo;
+    double total_weight = weight_hp + weight_distance;
+    if (total_weight <= 0.0) return 0.0;
+    return (weight_hp * hp_ratio + weight_distance * distance_score) / total_weight;
 }
 
 std::vector<Models::TargetScore> Models::calculateAllTargetScores(const Blackboard& bb) {
@@ -33,12 +36,10 @@ std::vector<Models::TargetScore> Models::calculateAllTargetScores(const Blackboa
         double hp_score = 1.0 - (enemy.hp / getMaxHP(type));
         double distance_score = 1.0 - std::min(distance / 2800.0, 1.0);
         double type_weight = getTypeWeight(type) / 1.6;
-        double ammo_score = 1.0 - (enemy.allowance / getMaxAmmo(type));
-        double total = 0.35 * hp_score + 0.30 * distance_score + 0.25 * type_weight + 0.10 * ammo_score;
+        double total = (0.35 * hp_score + 0.30 * distance_score + 0.25 * type_weight) / 0.90;
         scores.push_back({enemy.id, type, total});
     };
     if (bb.enemy_hero.visible && bb.enemy_hero.hp > 0) addScore(bb.enemy_hero, "hero");
-    if (bb.enemy_engineer.visible && bb.enemy_engineer.hp > 0) addScore(bb.enemy_engineer, "engineer");
     if (bb.enemy_infantry3.visible && bb.enemy_infantry3.hp > 0) addScore(bb.enemy_infantry3, "infantry");
     if (bb.enemy_infantry4.visible && bb.enemy_infantry4.hp > 0) addScore(bb.enemy_infantry4, "infantry");
     if (bb.enemy_sentry.visible && bb.enemy_sentry.hp > 0) addScore(bb.enemy_sentry, "sentry");

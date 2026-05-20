@@ -18,7 +18,6 @@ void DecisionManager::updateOurState(const OurRobotState::SharedPtr msg) {
 }
 void DecisionManager::updateEnemyState(const EnemyRobotState::SharedPtr msg) {
     blackboard_->updateEnemyState(msg);
-    updateMustOccupyFlag();
 }
 void DecisionManager::updateGameState(const GameState::SharedPtr msg) {
     blackboard_->updateGameState(msg);
@@ -26,9 +25,8 @@ void DecisionManager::updateGameState(const GameState::SharedPtr msg) {
 
 bool DecisionManager::needSupply() const {
     double hp_ratio = blackboard_->current_hp / blackboard_->getMaxHp();
-    double ammo_ratio = blackboard_->allowance_17mm / blackboard_->getMaxAmmo();
     double threshold = blackboard_->getSupplyThreshold();
-    return (hp_ratio < threshold || ammo_ratio < threshold);
+    return (hp_ratio < threshold || blackboard_->allowance_17mm <= 0.0);
 }
 bool DecisionManager::shouldInterruptForResurrectionOrSupply() const {
     return blackboard_->resurrection_flag || needSupply();
@@ -102,29 +100,10 @@ PriorityTargetResult DecisionManager::selectPriorityTarget() {
         std::string best_id;
         bool available = false;
 
-        if (cfg.type == "hero_deploy") {
-            if (blackboard_->enemy_hero.visible && blackboard_->enemy_hero.hp > 0 &&
-                blackboard_->hero_in_deploy_zone) {
-                result.enemy_id = "hero";
-                result.type = "hero_deploy";
-                result.score = 1.0;
-                result.valid = true;
-                return result;
-            }
-        } else if (cfg.type == "hero") {
-            if (blackboard_->enemy_hero.visible && blackboard_->enemy_hero.hp > 0) {
-                score = Models::calculateGeneralTargetScore(*blackboard_, blackboard_->enemy_hero,
-                                                            cfg.weight_hp, cfg.weight_distance, cfg.weight_ammo);
-                best_id = "hero";
-                available = true;
-            }
+        if (cfg.type == "hero_deploy" || cfg.type == "hero") {
+            continue;
         } else if (cfg.type == "engineer") {
-            if (blackboard_->enemy_engineer.visible && blackboard_->enemy_engineer.hp > 0) {
-                score = Models::calculateGeneralTargetScore(*blackboard_, blackboard_->enemy_engineer,
-                                                            cfg.weight_hp, cfg.weight_distance, cfg.weight_ammo);
-                best_id = "engineer";
-                available = true;
-            }
+            continue;
         } else if (cfg.type == "infantry") {
             double best_score = -1.0;
             auto checkInfantry = [&](const EnemyInfo& info, const std::string& id) {
@@ -161,6 +140,23 @@ PriorityTargetResult DecisionManager::selectPriorityTarget() {
     return result;
 }
 
+geometry_msgs::msg::Point DecisionManager::constrainTargetPoint(const geometry_msgs::msg::Point& point,
+                                                               bool clamp_to_allowed_region) const {
+    geometry_msgs::msg::Point target = point;
+    if (!clamp_to_allowed_region) {
+        return target;
+    }
+    if (blackboard_->enemy_fortress_gain_point_captured_by_us) {
+        constexpr double MAP_MID_X = 1400.0;
+        if (blackboard_->robot_id_ == 1) {
+            target.x = std::max(target.x, MAP_MID_X);
+        } else {
+            target.x = std::min(target.x, MAP_MID_X);
+        }
+    }
+    return region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+}
+
 geometry_msgs::msg::Point DecisionManager::getTargetPointForEnemy(const std::string& enemy_id) const {
     const EnemyInfo* enemy = blackboard_->getEnemyById(enemy_id);
     if (!enemy || !enemy->visible || enemy->hp <= 0) {
@@ -168,7 +164,7 @@ geometry_msgs::msg::Point DecisionManager::getTargetPointForEnemy(const std::str
     }
     geometry_msgs::msg::Point hex = region_manager_->findSameRegionHexPoint(
         enemy->x, enemy->y, blackboard_->x, blackboard_->y);
-    return region_manager_->clampPointToAllowedRegion(hex, blackboard_->x, blackboard_->y);
+    return constrainTargetPoint(hex);
 }
 
 Models::GainPointScore DecisionManager::getBestGainPoint() const {
@@ -181,6 +177,34 @@ Models::GainPointScore DecisionManager::getBestGainPoint() const {
     return scores[0];
 }
 
+bool DecisionManager::beginTargetOffsetCorrection(State move_state, DecisionOutput& output) {
+    const auto& target = blackboard_->current_behavior.target;
+    if ((target.x == 0.0 && target.y == 0.0) ||
+        blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+        return false;
+    }
+
+    correcting_target_offset_ = true;
+    correction_resume_state_ = current_state_;
+    correction_target_ = target;
+    transitionTo(move_state);
+    blackboard_->current_behavior.target = correction_target_;
+    blackboard_->updateControlMsg(blackboard_->getControlMsg()->gimbal_mode, SPIN_OFF, POSTURE_MOVE);
+    output.target_position = correction_target_;
+    output.target_needs_publishing = true;
+    output.control_needs_publishing = true;
+    return true;
+}
+
+State DecisionManager::consumeCorrectionResumeState(State normal_state) {
+    if (!correcting_target_offset_) return normal_state;
+    State resume_state = correction_resume_state_;
+    correcting_target_offset_ = false;
+    correction_resume_state_ = State::IDLE;
+    correction_target_ = geometry_msgs::msg::Point();
+    return resume_state;
+}
+
 void DecisionManager::transitionTo(State new_state) {
     if (current_state_ == new_state) return;
     current_state_ = new_state;
@@ -190,14 +214,18 @@ void DecisionManager::transitionTo(State new_state) {
 
     switch (new_state) {
         case State::IDLE:
+            correcting_target_offset_ = false;
+            correction_resume_state_ = State::IDLE;
+            correction_target_ = geometry_msgs::msg::Point();
             blackboard_->resetCurrentBehavior();
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_MOVE:
-            blackboard_->startBehavior(BehaviorType::INIT_MOVE, blackboard_->getAttackPoint(), 0.0);
+            blackboard_->startBehavior(BehaviorType::INIT_MOVE, constrainTargetPoint(blackboard_->getAttackPoint(), false), 0.0);
             blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_ATTACK:
+            blackboard_->current_behavior.type = BehaviorType::INIT_ATTACK;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
             blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);
@@ -217,7 +245,7 @@ void DecisionManager::transitionTo(State new_state) {
         }
         case State::MOVE_TO_ENEMY_FORTRESS: {
             geometry_msgs::msg::Point target = blackboard_->getEnemyFortressPoint();
-            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+            target = constrainTargetPoint(target);
             blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, target, 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
@@ -228,32 +256,32 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
             break;
         case State::MOVE_TO_SUPPLY:
-            blackboard_->startBehavior(BehaviorType::MOVE_TO_SUPPLY, blackboard_->getSupplyPoint(), 0.0);
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_SUPPLY, constrainTargetPoint(blackboard_->getSupplyPoint(), false), 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::RESURRECTION_MOVE:
-            blackboard_->startBehavior(BehaviorType::RESURRECTION_MOVE, blackboard_->getSupplyPoint(), 0.0);
+            blackboard_->startBehavior(BehaviorType::RESURRECTION_MOVE, constrainTargetPoint(blackboard_->getSupplyPoint(), false), 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::MOVE_TO_BASE_DEFENSE:
-            blackboard_->startBehavior(BehaviorType::MOVE_TO_BASE_DEFENSE, blackboard_->getBaseGainPoint(), 0.0);
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_BASE_DEFENSE, constrainTargetPoint(blackboard_->getBaseGainPoint(), false), 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::MOVE_TO_GAIN_POINT: {
             auto best = getBestGainPoint();
-            geometry_msgs::msg::Point target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
+            geometry_msgs::msg::Point target = constrainTargetPoint(best.position);
             blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, target, 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         }
         case State::MOVE_TO_FORTRESS:
-            blackboard_->startBehavior(BehaviorType::MOVE_TO_FORTRESS, blackboard_->getFortressOccupyPoint(), 0.0);
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_FORTRESS, constrainTargetPoint(blackboard_->getFortressOccupyPoint(), false), 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::MOVE_TO_GUARD: {
             geometry_msgs::msg::Point target;
             target.x = GUARD_X; target.y = GUARD_Y;
-            blackboard_->startBehavior(BehaviorType::MOVE_TO_GUARD, target, 0.0);
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_GUARD, constrainTargetPoint(target, false), 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         }
@@ -297,7 +325,7 @@ void DecisionManager::transitionTo(State new_state) {
             break;
         case State::MOVE_TO_PATROL: {
             geometry_msgs::msg::Point target = blackboard_->getPatrolPoint();
-            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+            target = constrainTargetPoint(target);
             blackboard_->startBehavior(BehaviorType::MOVE_TO_PATROL, target, 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
@@ -370,27 +398,16 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::RESURRECTION_MOVE);
             } else if (needSupply()) {
                 transitionTo(State::MOVE_TO_SUPPLY);
-            } else if (checkBaseCritical()) {
-                transitionTo(State::MOVE_TO_BASE_DEFENSE);
-            } else if (checkOutpostDestroyed() && checkFortressOccupy()) {
-                transitionTo(State::MOVE_TO_FORTRESS);
             } else if (!blackboard_->initialization_complete) {
                 transitionTo(State::INIT_MOVE);
-            } else if (checkEnemyFortress()) {
-                geometry_msgs::msg::Point fort_target = blackboard_->getEnemyFortressPoint();
-                fort_target = region_manager_->clampPointToAllowedRegion(fort_target, blackboard_->x, blackboard_->y);
-                transitionTo(State::MOVE_TO_ENEMY_FORTRESS);
-                blackboard_->startBehavior(BehaviorType::MOVE_TO_ENEMY_FORTRESS, fort_target, 0.0);
             } else {
                 PriorityTargetResult ptarget = selectPriorityTarget();
                 if (ptarget.valid) {
                     current_enemy_id_ = ptarget.enemy_id;
-                    State target_state = (ptarget.type == "hero" || ptarget.type == "hero_deploy") ?
-                                         State::MOVE_TO_ATTACK_HERO : State::MOVE_TO_ATTACK_ROBOT;
-                    transitionTo(target_state);
+                    transitionTo(State::MOVE_TO_ATTACK_ROBOT);
                 } else if (checkGainPoint()) {
                     auto best = getBestGainPoint();
-                    geometry_msgs::msg::Point gain_target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
+                    geometry_msgs::msg::Point gain_target = constrainTargetPoint(best.position);
                     transitionTo(State::MOVE_TO_GAIN_POINT);
                     blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, gain_target, 0.0);
                 } else {
@@ -405,15 +422,17 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::IDLE);
                 break;
             }
-            geometry_msgs::msg::Point target = blackboard_->getPatrolPoint();
-            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : blackboard_->getPatrolPoint();
+            if (!correcting_target_offset_)
+                target = constrainTargetPoint(target);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::PATROL);
+                    transitionTo(consumeCorrectionResumeState(State::PATROL));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -424,6 +443,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::IDLE);
                 break;
             }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_PATROL, output)) break;
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getPatrolStayDuration()) {
                 transitionTo(State::IDLE);
@@ -438,28 +458,44 @@ DecisionOutput DecisionManager::executeDecision() {
 
         case State::INIT_MOVE: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = blackboard_->getAttackPoint();
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getAttackPoint(), false);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::INIT_ATTACK);
+                    transitionTo(consumeCorrectionResumeState(State::INIT_ATTACK));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
             break;
         }
         case State::INIT_ATTACK: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (shouldInterruptForResurrectionOrSupply()) {
+                blackboard_->init_attack_elapsed_time = std::min(
+                    blackboard_->getInitAttackDuration(),
+                    blackboard_->init_attack_elapsed_time + blackboard_->getExecutionElapsedTime());
+                transitionTo(State::IDLE);
+                break;
+            }
+            const auto& init_target = blackboard_->current_behavior.target;
+            if (!((init_target.x == 0.0 && init_target.y == 0.0) ||
+                  blackboard_->isAtTarget(init_target, blackboard_->getDeviationThreshold()))) {
+                blackboard_->init_attack_elapsed_time = std::min(
+                    blackboard_->getInitAttackDuration(),
+                    blackboard_->init_attack_elapsed_time + blackboard_->getExecutionElapsedTime());
+                if (beginTargetOffsetCorrection(State::INIT_MOVE, output)) break;
+            }
             if (blackboard_->enemy_outpost_destroyed) {
                 blackboard_->initialization_complete = true;
                 transitionTo(State::IDLE);
                 break;
             }
             double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getInitAttackDuration()) {
+            if (blackboard_->init_attack_elapsed_time + elapsed >= blackboard_->getInitAttackDuration()) {
+                blackboard_->init_attack_elapsed_time = blackboard_->getInitAttackDuration();
                 blackboard_->initialization_complete = true;
                 transitionTo(State::IDLE);
                 break;
@@ -472,15 +508,17 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::MOVE_TO_ENEMY_FORTRESS: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = blackboard_->getEnemyFortressPoint();
-            target = region_manager_->clampPointToAllowedRegion(target, blackboard_->x, blackboard_->y);
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : blackboard_->getEnemyFortressPoint();
+            if (!correcting_target_offset_)
+                target = constrainTargetPoint(target);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::OCCUPY_ENEMY_FORTRESS);
+                    transitionTo(consumeCorrectionResumeState(State::OCCUPY_ENEMY_FORTRESS));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -488,6 +526,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::OCCUPY_ENEMY_FORTRESS: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_ENEMY_FORTRESS, output)) break;
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -500,7 +539,7 @@ DecisionOutput DecisionManager::executeDecision() {
         case State::MOVE_TO_ATTACK_HERO:
         case State::MOVE_TO_ATTACK_ROBOT: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = getTargetPointForEnemy(current_enemy_id_);
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getTargetPointForEnemy(current_enemy_id_);
             if (target.x == 0 && target.y == 0) {
                 transitionTo(State::IDLE);
                 break;
@@ -508,13 +547,13 @@ DecisionOutput DecisionManager::executeDecision() {
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    if (current_state_ == State::MOVE_TO_ATTACK_HERO)
-                        transitionTo(State::ATTACK_HERO);
-                    else
-                        transitionTo(State::ATTACK_ROBOT);
+                    State normal_state = (current_state_ == State::MOVE_TO_ATTACK_HERO) ?
+                                         State::ATTACK_HERO : State::ATTACK_ROBOT;
+                    transitionTo(consumeCorrectionResumeState(normal_state));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -528,7 +567,7 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::IDLE);
                 break;
             }
-            if (!blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+            if (!blackboard_->isAtTarget(target, blackboard_->getEnemyChaseRepathThreshold())) {
                 if (current_state_ == State::ATTACK_HERO)
                     transitionTo(State::MOVE_TO_ATTACK_HERO);
                 else
@@ -546,25 +585,25 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::MOVE_TO_SUPPLY:
         case State::RESURRECTION_MOVE: {
-            geometry_msgs::msg::Point target = blackboard_->getSupplyPoint();
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getSupplyPoint(), false);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    if (current_state_ == State::RESURRECTION_MOVE)
-                        transitionTo(State::RESURRECTING);
-                    else
-                        transitionTo(State::SUPPLYING);
+                    State normal_state = (current_state_ == State::RESURRECTION_MOVE) ?
+                                         State::RESURRECTING : State::SUPPLYING;
+                    transitionTo(consumeCorrectionResumeState(normal_state));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
             break;
         }
         case State::SUPPLYING: {
-            if (blackboard_->current_hp >= blackboard_->getMaxHp() &&
-                blackboard_->allowance_17mm >= blackboard_->getMaxAmmo())
+            if (beginTargetOffsetCorrection(State::MOVE_TO_SUPPLY, output)) break;
+            if (blackboard_->current_hp >= blackboard_->getMaxHp())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
                 blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
@@ -573,6 +612,7 @@ DecisionOutput DecisionManager::executeDecision() {
             break;
         }
         case State::RESURRECTING: {
+            if (beginTargetOffsetCorrection(State::RESURRECTION_MOVE, output)) break;
             if (!blackboard_->resurrection_flag && blackboard_->current_hp >= blackboard_->getMaxHp())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
@@ -583,14 +623,15 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::MOVE_TO_BASE_DEFENSE: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = blackboard_->getBaseGainPoint();
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getBaseGainPoint(), false);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::BASE_DEFENSE);
+                    transitionTo(consumeCorrectionResumeState(State::BASE_DEFENSE));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -598,6 +639,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::BASE_DEFENSE: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_BASE_DEFENSE, output)) break;
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -609,19 +651,25 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::MOVE_TO_GAIN_POINT: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            auto best = getBestGainPoint();
-            if (best.name.empty()) {
-                transitionTo(State::IDLE);
-                break;
+            geometry_msgs::msg::Point target;
+            if (correcting_target_offset_) {
+                target = correction_target_;
+            } else {
+                auto best = getBestGainPoint();
+                if (best.name.empty()) {
+                    transitionTo(State::IDLE);
+                    break;
+                }
+                target = constrainTargetPoint(best.position);
             }
-            geometry_msgs::msg::Point target = region_manager_->clampPointToAllowedRegion(best.position, blackboard_->x, blackboard_->y);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::OCCUPY_GAIN_POINT);
+                    transitionTo(consumeCorrectionResumeState(State::OCCUPY_GAIN_POINT));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -629,6 +677,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::OCCUPY_GAIN_POINT: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_GAIN_POINT, output)) break;
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -640,14 +689,15 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::MOVE_TO_FORTRESS: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = blackboard_->getFortressOccupyPoint();
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getFortressOccupyPoint(), false);
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::OCCUPY_FORTRESS);
+                    transitionTo(consumeCorrectionResumeState(State::OCCUPY_FORTRESS));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -655,6 +705,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::OCCUPY_FORTRESS: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_FORTRESS, output)) break;
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= blackboard_->getDefendDuration())
                 transitionTo(State::IDLE);
@@ -667,14 +718,20 @@ DecisionOutput DecisionManager::executeDecision() {
         case State::MOVE_TO_GUARD: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
             geometry_msgs::msg::Point target;
-            target.x = GUARD_X; target.y = GUARD_Y;
+            if (correcting_target_offset_) {
+                target = correction_target_;
+            } else {
+                target.x = GUARD_X; target.y = GUARD_Y;
+                target = constrainTargetPoint(target, false);
+            }
             if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
                 if (!blackboard_->at_current_target) {
                     blackboard_->setTargetReached(true);
-                    transitionTo(State::GUARD);
+                    transitionTo(consumeCorrectionResumeState(State::GUARD));
                 }
             } else {
                 if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
                 output.target_position = target;
                 output.target_needs_publishing = true;
             }
@@ -682,6 +739,7 @@ DecisionOutput DecisionManager::executeDecision() {
         }
         case State::GUARD: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_GUARD, output)) break;
             double elapsed = blackboard_->getExecutionElapsedTime();
             if (elapsed >= 5.0) {
                 transitionTo(State::IDLE);
