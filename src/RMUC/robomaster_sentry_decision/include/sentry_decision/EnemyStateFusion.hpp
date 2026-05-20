@@ -15,7 +15,7 @@ public:
                                    decision_messages::msg::EnemyRobotState& output) const;
 
 private:
-    tf2_ros::Buffer& tf_buffer_;to
+    tf2_ros::Buffer& tf_buffer_;
 
     static double yawFromQuaternion(const geometry_msgs::msg::Quaternion& q);
 
