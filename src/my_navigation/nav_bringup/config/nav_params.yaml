@@ -512,6 +512,8 @@ nav_server:
       forward_speed: 0.7             # 前进线速度 (m/s)
       yaw_tolerance: 0.1              # 角度对齐容差 (rad, ~6度)
       position_tolerance: 0.1        # 到达位置容差 (m)
+      drive_min_progress: 0.05       # 阶段5驶向目标时刷新进展所需的最小距离减少量(m)
+      drive_progress_timeout: 1.5    # 阶段5超过该时间未有效接近目标则进入 STUCK recovery(s)
       
       # 超时保护
       timeout: 10.0                   # 脱困最大时长(s)，超时触发 STUCK recovery

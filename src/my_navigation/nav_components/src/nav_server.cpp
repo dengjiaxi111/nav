@@ -104,6 +104,8 @@ public:
         declare_parameter("escape.forward_speed", 0.15);
         declare_parameter("escape.yaw_tolerance", 0.1);
         declare_parameter("escape.position_tolerance", 0.15);
+        declare_parameter("escape.drive_min_progress", 0.05);
+        declare_parameter("escape.drive_progress_timeout", 1.5);
         declare_parameter("escape.timeout", 10.0);
         
         escape_trigger_costmap_threshold_ = get_parameter("escape.trigger_costmap_threshold").as_int();
@@ -122,6 +124,8 @@ public:
         escape_forward_speed_ = get_parameter("escape.forward_speed").as_double();
         escape_yaw_tolerance_ = get_parameter("escape.yaw_tolerance").as_double();
         escape_position_tolerance_ = get_parameter("escape.position_tolerance").as_double();
+        escape_drive_min_progress_ = get_parameter("escape.drive_min_progress").as_double();
+        escape_drive_progress_timeout_ = get_parameter("escape.drive_progress_timeout").as_double();
         escape_timeout_ = get_parameter("escape.timeout").as_double();
 
         if (escape_preferred_search_distance_ < 0.0) {
@@ -1359,6 +1363,7 @@ private:
         escape_release_direction_initialized_ = false;
         escape_phase_initialized_ = false;
         escape_active_release_phase_ = -1;
+        escape_drive_progress_initialized_ = false;
         escape_phase_start_time_ = std::chrono::steady_clock::now();
         escape_phase_last_progress_time_ = escape_phase_start_time_;
         escape_phase_last_progress_dist_ = 0.0;
@@ -1551,12 +1556,32 @@ private:
         return true;
     }
 
-    void advanceEscapeReleasePhase(const char* reason) {
+    void completeEscapeReleasePhase(const char* reason) {
         stopRobot();
-        RCLCPP_WARN(get_logger(), "脱困退让阶段%d结束: %s", escape_phase_, reason);
+        RCLCPP_WARN(get_logger(), "脱困退让阶段%d完成: %s", escape_phase_, reason);
         escape_phase_initialized_ = false;
         escape_active_release_phase_ = -1;
         escape_phase_ = 3;
+    }
+
+    void failEscapeReleasePhase(const char* reason) {
+        stopRobot();
+        RCLCPP_WARN(get_logger(), "脱困退让阶段%d失败: %s", escape_phase_, reason);
+        escape_phase_initialized_ = false;
+        escape_active_release_phase_ = -1;
+
+        if (escape_phase_ == 0) {
+            escape_phase_ = 1;
+            RCLCPP_WARN(get_logger(),
+                        "优先释放方向失败，切换为%s释放",
+                        (escape_release_direction_ > 0 ? "后退" : "前进"));
+            return;
+        }
+
+        RCLCPP_WARN(get_logger(), "正反释放方向均失败，进入恢复模式");
+        escape_target_x_ = -1.0;
+        escape_target_y_ = -1.0;
+        fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
     }
 
     bool runEscapeReleasePhase() {
@@ -1566,8 +1591,9 @@ private:
         }
 
         double target_dist = escape_backup_dist_;
-        double linear_vel =
-            static_cast<double>(escape_release_direction_) * std::abs(escape_backup_vel_);
+        const int release_direction =
+            (escape_phase_ == 1) ? -escape_release_direction_ : escape_release_direction_;
+        double linear_vel = static_cast<double>(release_direction) * std::abs(escape_backup_vel_);
         double angular_vel = 0.0;
         double timeout_s = escape_backup_timeout_;
         double safety_duration = (std::abs(linear_vel) > 1e-6)
@@ -1575,7 +1601,7 @@ private:
             : timeout_s;
 
         if (target_dist <= 1e-6 || std::abs(linear_vel) <= 1e-6 || timeout_s <= 0.0) {
-            advanceEscapeReleasePhase("参数禁用");
+            completeEscapeReleasePhase("参数禁用");
             return true;
         }
 
@@ -1590,26 +1616,31 @@ private:
 
             std::string reason;
             if (!isEscapeReleaseMotionAllowed(linear_vel, angular_vel, safety_duration, &reason)) {
-                advanceEscapeReleasePhase(reason.empty() ? "退让动作保护检查失败" : reason.c_str());
+                failEscapeReleasePhase(reason.empty() ? "退让动作保护检查失败" : reason.c_str());
                 return true;
             }
 
             RCLCPP_INFO(get_logger(),
-                        "脱困退让阶段%d开始: dist=%.2fm v=%.2fm/s w=%.2frad/s timeout=%.1fs",
-                        escape_phase_, target_dist, linear_vel, angular_vel, timeout_s);
+                        "脱困退让阶段%d开始(%s): dist=%.2fm v=%.2fm/s w=%.2frad/s timeout=%.1fs",
+                        escape_phase_,
+                        (release_direction > 0 ? "前进" : "后退"),
+                        target_dist,
+                        linear_vel,
+                        angular_vel,
+                        timeout_s);
         }
 
         const double dx = current_pose_.pose.position.x - escape_phase_start_pose_.pose.position.x;
         const double dy = current_pose_.pose.position.y - escape_phase_start_pose_.pose.position.y;
         const double traveled = std::hypot(dx, dy);
         if (traveled >= target_dist) {
-            advanceEscapeReleasePhase("达到目标退让距离");
+            completeEscapeReleasePhase("达到目标退让距离");
             return true;
         }
 
         const double elapsed = std::chrono::duration<double>(now - escape_phase_start_time_).count();
         if (elapsed > timeout_s) {
-            advanceEscapeReleasePhase("动作超时");
+            failEscapeReleasePhase("动作超时");
             return true;
         }
 
@@ -1623,13 +1654,13 @@ private:
             std::chrono::duration<double>(now - escape_phase_last_progress_time_).count();
         if (escape_backup_progress_timeout_ > 0.0 &&
             no_progress_elapsed > escape_backup_progress_timeout_) {
-            advanceEscapeReleasePhase("无有效位移进展");
+            failEscapeReleasePhase("无有效位移进展");
             return true;
         }
 
         std::string reason;
         if (!isEscapeReleaseMotionAllowed(linear_vel, angular_vel, 0.25, &reason)) {
-            advanceEscapeReleasePhase(reason.empty() ? "运行中退让动作保护检查失败" : reason.c_str());
+            failEscapeReleasePhase(reason.empty() ? "运行中退让动作保护检查失败" : reason.c_str());
             return true;
         }
 
@@ -1638,8 +1669,12 @@ private:
         cmd.angular.z = angular_vel;
         cmd_vel_pub_->publish(cmd);
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "脱困退让阶段%d执行中: traveled=%.2f/%.2fm elapsed=%.1fs",
-                             escape_phase_, traveled, target_dist, elapsed);
+                             "脱困退让阶段%d(%s)执行中: traveled=%.2f/%.2fm elapsed=%.1fs",
+                             escape_phase_,
+                             (release_direction > 0 ? "前进" : "后退"),
+                             traveled,
+                             target_dist,
+                             elapsed);
         return true;
     }
 
@@ -1997,8 +2032,8 @@ private:
     
     void doEscaping() {
         // 脱困模式：先低速退让释放车头接触，再搜索安全点并直线驶入。
-        double elapsed = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - escape_start_time_).count();
+        const auto now = std::chrono::steady_clock::now();
+        double elapsed = std::chrono::duration<double>(now - escape_start_time_).count();
         
         if (elapsed > escape_timeout_) {
             RCLCPP_ERROR(get_logger(), "脱困超时(%.1fs)，进入恢复模式", escape_timeout_);
@@ -2016,7 +2051,7 @@ private:
             return;
         }
 
-        if (escape_phase_ == 0) {
+        if (escape_phase_ == 0 || escape_phase_ == 1) {
             selectEscapeReleaseDirection();
             if (runEscapeReleasePhase()) {
                 return;
@@ -2072,6 +2107,7 @@ private:
                     yaw_error * 180.0 / M_PI);
             } else {
                 escape_phase_ = 5;
+                escape_drive_progress_initialized_ = false;
             }
             return;
         }
@@ -2100,6 +2136,35 @@ private:
                 }
                 return;
             }
+
+            if (!escape_drive_progress_initialized_) {
+                escape_drive_progress_initialized_ = true;
+                escape_drive_best_dist_to_target_ = dist_to_target;
+                escape_drive_last_progress_time_ = now;
+            } else if (escape_drive_min_progress_ > 0.0 &&
+                       escape_drive_best_dist_to_target_ - dist_to_target >=
+                           escape_drive_min_progress_) {
+                escape_drive_best_dist_to_target_ = dist_to_target;
+                escape_drive_last_progress_time_ = now;
+            }
+
+            const double no_progress_elapsed =
+                std::chrono::duration<double>(now - escape_drive_last_progress_time_).count();
+            if (escape_drive_progress_timeout_ > 0.0 &&
+                no_progress_elapsed > escape_drive_progress_timeout_) {
+                RCLCPP_WARN(get_logger(),
+                            "阶段5无进展: %.2fs 内到目标距离减少不足 %.3fm "
+                            "(best=%.3fm, current=%.3fm)，进入恢复模式",
+                            no_progress_elapsed,
+                            escape_drive_min_progress_,
+                            escape_drive_best_dist_to_target_,
+                            dist_to_target);
+                stopRobot();
+                escape_target_x_ = -1.0;
+                escape_drive_progress_initialized_ = false;
+                fsm_.triggerRecovery(nav_core::RecoveryTrigger::STUCK);
+                return;
+            }
             
             // 前进时保持方向修正（轻微转向）
             if (std::abs(yaw_error) > escape_yaw_tolerance_ * 2) {
@@ -2107,6 +2172,7 @@ private:
                 RCLCPP_WARN(get_logger(), "⚠️ 方向偏离过大(%.1f°)，重新旋转", 
                     yaw_error * 180.0 / M_PI);
                 escape_phase_ = 4;
+                escape_drive_progress_initialized_ = false;
                 return;
             }
             
@@ -2640,6 +2706,8 @@ private:
     double escape_forward_speed_;           // 前进速度
     double escape_yaw_tolerance_;           // 角度容差
     double escape_position_tolerance_;      // 位置容差
+    double escape_drive_min_progress_{0.05};  // 驶向目标最小有效进展
+    double escape_drive_progress_timeout_{1.5};  // 驶向目标无进展超时
     double escape_timeout_;                 // 超时时长
     
     std::chrono::steady_clock::time_point start_time_;           // 导航开始时间(wall clock)
@@ -2651,7 +2719,7 @@ private:
     // 脱困相关状态
     double escape_target_x_ = -1.0;  // 脱困目标点 X（-1表示未设置）
     double escape_target_y_ = -1.0;  // 脱困目标点 Y
-    int escape_phase_ = 0;  // 脱困阶段：0=直线释放,3=找点,4=旋转,5=驶向目标
+    int escape_phase_ = 0;  // 脱困阶段：0=优先方向释放,1=反方向释放,3=找点,4=旋转,5=驶向目标
     int escape_drive_direction_ = 1;  // 脱困驱动方向：1=前进, -1=倒车
     int escape_release_direction_ = -1;  // 释放动作方向：1=前进, -1=后退
     bool escape_release_direction_initialized_ = false;
@@ -2661,6 +2729,9 @@ private:
     std::chrono::steady_clock::time_point escape_phase_start_time_;
     std::chrono::steady_clock::time_point escape_phase_last_progress_time_;
     double escape_phase_last_progress_dist_ = 0.0;
+    bool escape_drive_progress_initialized_ = false;
+    std::chrono::steady_clock::time_point escape_drive_last_progress_time_;
+    double escape_drive_best_dist_to_target_ = 0.0;
 };
 
 int main(int argc, char** argv) {
