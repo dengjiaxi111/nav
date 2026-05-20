@@ -36,6 +36,12 @@ red_enemy_fortress_y: 754.0
 blue_enemy_fortress_x: 694.0
 blue_enemy_fortress_y: 756.0
 
+# 主决策驻守点：打完前哨站、补给/复活回来后都去这里
+red_main_decision_x: 2116.0
+red_main_decision_y: 954.0
+blue_main_decision_x: 2116.0
+blue_main_decision_y: 954.0
+
 # 敌方前哨站坐标（用于 target_yaw_deg 计算，后续标定）
 red_enemy_outpost_x: 0.0
 red_enemy_outpost_y: 0.0
@@ -111,12 +117,17 @@ priority_targets:
     weight_distance: 0.4
     weight_ammo: 0.2
     threshold: 0.5
-  - type: "hero_deploy"        # 部署模式英雄，不作为攻击目标
-    weight_hp: 0.5             # 不使用，保留占位
+  - type: "hero_deploy"        # 部署模式英雄
+    weight_hp: 0.5
     weight_distance: 0.35
     weight_ammo: 0.15
     threshold: 0.5
-  - type: "hero"               # 普通英雄，不作为攻击目标
+  - type: "hero"               # 普通英雄
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "engineer"           # 工程；处于取矿屏蔽区时仍不打
     weight_hp: 0.4
     weight_distance: 0.4
     weight_ammo: 0.2

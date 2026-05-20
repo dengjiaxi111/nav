@@ -38,7 +38,9 @@ enum class State {
     MOVE_TO_ENEMY_FORTRESS,
     OCCUPY_ENEMY_FORTRESS,
     MOVE_TO_PATROL,
-    PATROL
+    PATROL,
+    MOVE_TO_MAIN_POINT,
+    MAIN_POINT_ATTACK
 };
 
 struct PriorityTargetResult {
@@ -89,6 +91,7 @@ private:
     Models::GainPointScore getBestGainPoint() const;
     bool beginTargetOffsetCorrection(State move_state, DecisionOutput& output);
     State consumeCorrectionResumeState(State normal_state);
+    geometry_msgs::msg::Point getMainDecisionTarget() const;
 
     void transitionTo(State new_state);
     std::string stateToString(State state) const;

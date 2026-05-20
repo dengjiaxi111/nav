@@ -101,9 +101,21 @@ PriorityTargetResult DecisionManager::selectPriorityTarget() {
         bool available = false;
 
         if (cfg.type == "hero_deploy" || cfg.type == "hero") {
-            continue;
+            if (blackboard_->enemy_hero.visible && blackboard_->enemy_hero.hp > 0) {
+                score = Models::calculateGeneralTargetScore(*blackboard_, blackboard_->enemy_hero,
+                                                            cfg.weight_hp, cfg.weight_distance, cfg.weight_ammo);
+                best_id = "hero";
+                available = true;
+            }
         } else if (cfg.type == "engineer") {
-            continue;
+            bool in_zone = region_manager_->isInEnemyEngineerMiningZone(
+                blackboard_->enemy_engineer.x, blackboard_->enemy_engineer.y, blackboard_->robot_id_);
+            if (!in_zone && blackboard_->enemy_engineer.visible && blackboard_->enemy_engineer.hp > 0) {
+                score = Models::calculateGeneralTargetScore(*blackboard_, blackboard_->enemy_engineer,
+                                                            cfg.weight_hp, cfg.weight_distance, cfg.weight_ammo);
+                best_id = "engineer";
+                available = true;
+            }
         } else if (cfg.type == "infantry") {
             double best_score = -1.0;
             auto checkInfantry = [&](const EnemyInfo& info, const std::string& id) {
@@ -203,6 +215,10 @@ State DecisionManager::consumeCorrectionResumeState(State normal_state) {
     correction_resume_state_ = State::IDLE;
     correction_target_ = geometry_msgs::msg::Point();
     return resume_state;
+}
+
+geometry_msgs::msg::Point DecisionManager::getMainDecisionTarget() const {
+    return constrainTargetPoint(blackboard_->getMainDecisionPoint(), false);
 }
 
 void DecisionManager::transitionTo(State new_state) {
@@ -335,6 +351,16 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->startExecutionTime();
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
             break;
+        case State::MOVE_TO_MAIN_POINT:
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_MAIN_POINT, getMainDecisionTarget(), 0.0);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        case State::MAIN_POINT_ATTACK:
+            blackboard_->current_behavior.type = BehaviorType::MAIN_POINT_ATTACK;
+            blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
+            blackboard_->startExecutionTime();
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+            break;
         default:
             break;
     }
@@ -365,6 +391,8 @@ std::string DecisionManager::stateToString(State state) const {
         case State::OCCUPY_ENEMY_FORTRESS: return "OCCUPY_ENEMY_FORTRESS";
         case State::MOVE_TO_PATROL: return "MOVE_TO_PATROL";
         case State::PATROL: return "PATROL";
+        case State::MOVE_TO_MAIN_POINT: return "MOVE_TO_MAIN_POINT";
+        case State::MAIN_POINT_ATTACK: return "MAIN_POINT_ATTACK";
         default: return "UNKNOWN";
     }
 }
@@ -401,18 +429,40 @@ DecisionOutput DecisionManager::executeDecision() {
             } else if (!blackboard_->initialization_complete) {
                 transitionTo(State::INIT_MOVE);
             } else {
-                PriorityTargetResult ptarget = selectPriorityTarget();
-                if (ptarget.valid) {
-                    current_enemy_id_ = ptarget.enemy_id;
-                    transitionTo(State::MOVE_TO_ATTACK_ROBOT);
-                } else if (checkGainPoint()) {
-                    auto best = getBestGainPoint();
-                    geometry_msgs::msg::Point gain_target = constrainTargetPoint(best.position);
-                    transitionTo(State::MOVE_TO_GAIN_POINT);
-                    blackboard_->startBehavior(BehaviorType::MOVE_TO_GAIN_POINT, gain_target, 0.0);
-                } else {
-                    transitionTo(State::MOVE_TO_PATROL);
+                transitionTo(State::MOVE_TO_MAIN_POINT);
+            }
+            break;
+        }
+
+        case State::MOVE_TO_MAIN_POINT: {
+            if (shouldInterruptForResurrectionOrSupply()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getMainDecisionTarget();
+            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+                if (!blackboard_->at_current_target) {
+                    blackboard_->setTargetReached(true);
+                    transitionTo(consumeCorrectionResumeState(State::MAIN_POINT_ATTACK));
                 }
+            } else {
+                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
+                output.target_position = target;
+                output.target_needs_publishing = true;
+            }
+            break;
+        }
+
+        case State::MAIN_POINT_ATTACK: {
+            if (shouldInterruptForResurrectionOrSupply()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_MAIN_POINT, output)) break;
+            if (!blackboard_->isControlPublished()) {
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+                output.control_needs_publishing = true;
             }
             break;
         }

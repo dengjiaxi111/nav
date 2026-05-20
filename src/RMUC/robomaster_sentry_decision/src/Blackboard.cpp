@@ -60,6 +60,11 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.blue_enemy_fortress.x = config["blue_enemy_fortress_x"] ? config["blue_enemy_fortress_x"].as<double>() : 694.0;
         config_.blue_enemy_fortress.y = config["blue_enemy_fortress_y"] ? config["blue_enemy_fortress_y"].as<double>() : 756.0;
 
+        config_.red_main_decision.x = config["red_main_decision_x"] ? config["red_main_decision_x"].as<double>() : 1400.0;
+        config_.red_main_decision.y = config["red_main_decision_y"] ? config["red_main_decision_y"].as<double>() : 750.0;
+        config_.blue_main_decision.x = config["blue_main_decision_x"] ? config["blue_main_decision_x"].as<double>() : 1400.0;
+        config_.blue_main_decision.y = config["blue_main_decision_y"] ? config["blue_main_decision_y"].as<double>() : 750.0;
+
         config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
         config_.deviation_threshold = config["deviation_threshold"].as<double>();
         config_.enemy_chase_repath_threshold =
@@ -134,6 +139,7 @@ geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const { return (rob
 // getCentralHighlandGain() 已删除
 geometry_msgs::msg::Point Blackboard::getTrapezoidHighlandGain() const { return config_.trapezoid_highland_gain; }
 geometry_msgs::msg::Point Blackboard::getEnemyOutpostPoint() const { return (robot_id_ == 1) ? config_.blue_enemy_outpost : config_.red_enemy_outpost; }
+geometry_msgs::msg::Point Blackboard::getMainDecisionPoint() const { return (robot_id_ == 1) ? config_.blue_main_decision : config_.red_main_decision; }
 
 geometry_msgs::msg::Point Blackboard::getPatrolPoint() const {
     return (robot_id_ == 1) ? config_.blue_patrol : config_.red_patrol;
@@ -437,6 +443,8 @@ void Blackboard::updateGainPointStatus() {
 }
 
 void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
+    (void)old_id;
+    (void)new_id;
     setTargetPublished(false);
     initializeGainPoints();
 }

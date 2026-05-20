@@ -47,7 +47,9 @@ enum class BehaviorType {
     MOVE_TO_GUARD,
     GUARD,
     MOVE_TO_PATROL,
-    PATROL
+    PATROL,
+    MOVE_TO_MAIN_POINT,
+    MAIN_POINT_ATTACK
 };
 
 struct BehaviorInfo {
@@ -104,6 +106,7 @@ public:
     geometry_msgs::msg::Point getFortressGainPoint() const;
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
     geometry_msgs::msg::Point getEnemyOutpostPoint() const;
+    geometry_msgs::msg::Point getMainDecisionPoint() const;
     geometry_msgs::msg::Point getPatrolPoint() const;
 
     double getArrivalWaitTime() const;
@@ -243,6 +246,8 @@ private:
         geometry_msgs::msg::Point blue_enemy_outpost;
         geometry_msgs::msg::Point red_enemy_fortress;
         geometry_msgs::msg::Point blue_enemy_fortress;
+        geometry_msgs::msg::Point red_main_decision;
+        geometry_msgs::msg::Point blue_main_decision;
 
         geometry_msgs::msg::Point red_patrol;
         geometry_msgs::msg::Point blue_patrol;

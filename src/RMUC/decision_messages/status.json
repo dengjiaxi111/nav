@@ -1,9 +1,8 @@
 {
   "game_state": {
     "stage": 4,
-    "stage_remaining_time": 191.73629927635193,
-    "is_running": true,
-    "competition_type": 1
+    "stage_remaining_time": 273.32587933540344,
+    "is_running": true
   },
   "red_robots": {
     "1": {
@@ -25,47 +24,47 @@
       "allowance": 0
     },
     "4": {
-      "x": 690,
-      "y": 742,
+      "x": 346,
+      "y": 626,
       "hp": 150,
       "allowance": 0
     },
     "7": {
-      "x": 2578.0,
-      "y": 1214.0,
+      "x": 1213.1100644000746,
+      "y": 631.9382291571396,
       "hp": 400,
       "allowance": 300
     }
   },
   "blue_robots": {
     "1": {
-      "x": 424,
-      "y": 1116,
+      "x": 2464,
+      "y": 638,
       "hp": 200,
       "allowance": 0
     },
     "2": {
-      "x": 1478,
-      "y": 446,
+      "x": 2398,
+      "y": 688,
       "hp": 250,
       "allowance": 0
     },
     "3": {
-      "x": 2304,
-      "y": 662,
+      "x": 2558,
+      "y": 624,
       "hp": 150,
       "allowance": 0
     },
     "4": {
-      "x": 824,
-      "y": 120,
+      "x": 2634,
+      "y": 654,
       "hp": 150,
       "allowance": 0
     },
     "7": {
       "x": 2398,
       "y": 798,
-      "hp": 40,
+      "hp": 400,
       "allowance": 300
     }
   },
@@ -79,7 +78,7 @@
     "supply_zone_occupation": 0,
     "central_highland_occupation": 0,
     "trapezoid_highland_occupation": 0,
-    "fortress_gain_point_occupation": 1,
+    "fortress_gain_point_occupation": 0,
     "outpost_gain_point_occupation": 0,
     "base_gain_point_occupation": 1
   },
@@ -87,8 +86,8 @@
     "central_highland_occupation": 0,
     "outpost_gain_point_occupation": 0
   },
-  "our_robot_id": 1,
+  "our_robot_id": 0,
   "meta": {
-    "write_ts": 1779223377.8000677
+    "write_ts": 1779309311.8668034
   }
 }
