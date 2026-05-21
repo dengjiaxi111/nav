@@ -37,21 +37,21 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_supply.y = config["red_supply_y"].as<double>();
         config_.blue_supply.x = config["blue_supply_x"].as<double>();
         config_.blue_supply.y = config["blue_supply_y"].as<double>();
-        config_.red_base_gain.x = config["red_base_gain_x"].as<double>();
-        config_.red_base_gain.y = config["red_base_gain_y"].as<double>();
-        config_.blue_base_gain.x = config["blue_base_gain_x"].as<double>();
-        config_.blue_base_gain.y = config["blue_base_gain_y"].as<double>();
-        config_.red_fortress_occupy.x = config["red_fortress_occupy_x"].as<double>();
-        config_.red_fortress_occupy.y = config["red_fortress_occupy_y"].as<double>();
-        config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"].as<double>();
-        config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"].as<double>();
-        config_.red_fortress_gain.x = config["red_fortress_gain_x"].as<double>();
-        config_.red_fortress_gain.y = config["red_fortress_gain_y"].as<double>();
-        config_.blue_fortress_gain.x = config["blue_fortress_gain_x"].as<double>();
-        config_.blue_fortress_gain.y = config["blue_fortress_gain_y"].as<double>();
+        config_.red_base_gain.x = config["red_base_gain_x"] ? config["red_base_gain_x"].as<double>() : config_.red_attack.x;
+        config_.red_base_gain.y = config["red_base_gain_y"] ? config["red_base_gain_y"].as<double>() : config_.red_attack.y;
+        config_.blue_base_gain.x = config["blue_base_gain_x"] ? config["blue_base_gain_x"].as<double>() : config_.blue_attack.x;
+        config_.blue_base_gain.y = config["blue_base_gain_y"] ? config["blue_base_gain_y"].as<double>() : config_.blue_attack.y;
+        config_.red_fortress_occupy.x = config["red_fortress_occupy_x"] ? config["red_fortress_occupy_x"].as<double>() : config_.red_attack.x;
+        config_.red_fortress_occupy.y = config["red_fortress_occupy_y"] ? config["red_fortress_occupy_y"].as<double>() : config_.red_attack.y;
+        config_.blue_fortress_occupy.x = config["blue_fortress_occupy_x"] ? config["blue_fortress_occupy_x"].as<double>() : config_.blue_attack.x;
+        config_.blue_fortress_occupy.y = config["blue_fortress_occupy_y"] ? config["blue_fortress_occupy_y"].as<double>() : config_.blue_attack.y;
+        config_.red_fortress_gain.x = config["red_fortress_gain_x"] ? config["red_fortress_gain_x"].as<double>() : config_.red_attack.x;
+        config_.red_fortress_gain.y = config["red_fortress_gain_y"] ? config["red_fortress_gain_y"].as<double>() : config_.red_attack.y;
+        config_.blue_fortress_gain.x = config["blue_fortress_gain_x"] ? config["blue_fortress_gain_x"].as<double>() : config_.blue_attack.x;
+        config_.blue_fortress_gain.y = config["blue_fortress_gain_y"] ? config["blue_fortress_gain_y"].as<double>() : config_.blue_attack.y;
         // 中央高地增益点坐标已删除，不再读取
-        config_.trapezoid_highland_gain.x = config["trapezoid_highland_gain_x"].as<double>();
-        config_.trapezoid_highland_gain.y = config["trapezoid_highland_gain_y"].as<double>();
+        config_.trapezoid_highland_gain.x = config["trapezoid_highland_gain_x"] ? config["trapezoid_highland_gain_x"].as<double>() : 0.0;
+        config_.trapezoid_highland_gain.y = config["trapezoid_highland_gain_y"] ? config["trapezoid_highland_gain_y"].as<double>() : 0.0;
         config_.red_enemy_outpost.x = config["red_enemy_outpost_x"] ? config["red_enemy_outpost_x"].as<double>() : 0.0;
         config_.red_enemy_outpost.y = config["red_enemy_outpost_y"] ? config["red_enemy_outpost_y"].as<double>() : 0.0;
         config_.blue_enemy_outpost.x = config["blue_enemy_outpost_x"] ? config["blue_enemy_outpost_x"].as<double>() : 0.0;
@@ -71,39 +71,43 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.red_simple_decision.y = config["red_simple_decision_y"] ? config["red_simple_decision_y"].as<double>() : config_.red_main_decision.y;
         config_.blue_simple_decision.x = config["blue_simple_decision_x"] ? config["blue_simple_decision_x"].as<double>() : config_.blue_main_decision.x;
         config_.blue_simple_decision.y = config["blue_simple_decision_y"] ? config["blue_simple_decision_y"].as<double>() : config_.blue_main_decision.y;
+        config_.red_main_route.x = config["red_main_route_x"] ? config["red_main_route_x"].as<double>() : 848.0;
+        config_.red_main_route.y = config["red_main_route_y"] ? config["red_main_route_y"].as<double>() : 184.0;
+        config_.blue_main_route.x = config["blue_main_route_x"] ? config["blue_main_route_x"].as<double>() : config_.red_main_route.x;
+        config_.blue_main_route.y = config["blue_main_route_y"] ? config["blue_main_route_y"].as<double>() : config_.red_main_route.y;
 
-        config_.arrival_wait_time = config["arrival_wait_time"].as<double>();
-        config_.deviation_threshold = config["deviation_threshold"].as<double>();
+        config_.arrival_wait_time = config["arrival_wait_time"] ? config["arrival_wait_time"].as<double>() : 1.0;
+        config_.deviation_threshold = config["deviation_threshold"] ? config["deviation_threshold"].as<double>() : 50.0;
         config_.enemy_chase_repath_threshold =
             config["enemy_chase_repath_threshold"] ? config["enemy_chase_repath_threshold"].as<double>() : 100.0;
-        config_.init_attack_duration = config["init_attack_duration"].as<double>();
-        config_.attack_duration = config["attack_duration"].as<double>();
-        config_.defend_duration = config["defend_duration"].as<double>();
+        config_.init_attack_duration = config["init_attack_duration"] ? config["init_attack_duration"].as<double>() : 60.0;
+        config_.attack_duration = config["attack_duration"] ? config["attack_duration"].as<double>() : 8.0;
+        config_.defend_duration = config["defend_duration"] ? config["defend_duration"].as<double>() : 10.0;
 
-        config_.hp_weight = config["hp_weight"].as<double>();
-        config_.ammo_weight = config["ammo_weight"].as<double>();
-        config_.base_weight = config["base_weight"].as<double>();
+        config_.hp_weight = config["hp_weight"] ? config["hp_weight"].as<double>() : 0.3;
+        config_.ammo_weight = config["ammo_weight"] ? config["ammo_weight"].as<double>() : 0.3;
+        config_.base_weight = config["base_weight"] ? config["base_weight"].as<double>() : 0.4;
 
-        config_.supply_threshold = config["supply_threshold"].as<double>();
-        config_.max_hp = config["max_hp"].as<double>();
-        config_.max_ammo = config["max_ammo"].as<double>();
+        config_.supply_threshold = config["supply_threshold"] ? config["supply_threshold"].as<double>() : 0.3;
+        config_.max_hp = config["max_hp"] ? config["max_hp"].as<double>() : 400.0;
+        config_.max_ammo = config["max_ammo"] ? config["max_ammo"].as<double>() : 300.0;
 
-        config_.hero_attack_z_threshold = config["hero_attack_z_threshold"].as<double>();
-        config_.hero_attack_h_threshold = config["hero_attack_h_threshold"].as<double>();
-        config_.hero_high_priority_z_threshold = config["hero_high_priority_z_threshold"].as<double>();
-        config_.target_selection_z_high = config["target_selection_z_high"].as<double>();
-        config_.target_selection_z_mid = config["target_selection_z_mid"].as<double>();
-        config_.target_selection_threshold_high = config["target_selection_threshold_high"].as<double>();
-        config_.target_selection_threshold_mid = config["target_selection_threshold_mid"].as<double>();
-        config_.target_selection_threshold_low = config["target_selection_threshold_low"].as<double>();
-        config_.gain_point_z_high = config["gain_point_z_high"].as<double>();
-        config_.gain_point_z_mid = config["gain_point_z_mid"].as<double>();
-        config_.gain_point_threshold_high = config["gain_point_threshold_high"].as<double>();
-        config_.gain_point_threshold_mid = config["gain_point_threshold_mid"].as<double>();
-        config_.gain_point_threshold_low = config["gain_point_threshold_low"].as<double>();
-        config_.fortress_occupy_z_threshold = config["fortress_occupy_z_threshold"].as<double>();
-        config_.fortress_occupy_f_threshold = config["fortress_occupy_f_threshold"].as<double>();
-        config_.fortress_occupy_hp_ratio = config["fortress_occupy_hp_ratio"].as<double>();
+        config_.hero_attack_z_threshold = config["hero_attack_z_threshold"] ? config["hero_attack_z_threshold"].as<double>() : 0.4;
+        config_.hero_attack_h_threshold = config["hero_attack_h_threshold"] ? config["hero_attack_h_threshold"].as<double>() : 0.5;
+        config_.hero_high_priority_z_threshold = config["hero_high_priority_z_threshold"] ? config["hero_high_priority_z_threshold"].as<double>() : 0.3;
+        config_.target_selection_z_high = config["target_selection_z_high"] ? config["target_selection_z_high"].as<double>() : 0.6;
+        config_.target_selection_z_mid = config["target_selection_z_mid"] ? config["target_selection_z_mid"].as<double>() : 0.4;
+        config_.target_selection_threshold_high = config["target_selection_threshold_high"] ? config["target_selection_threshold_high"].as<double>() : 0.6;
+        config_.target_selection_threshold_mid = config["target_selection_threshold_mid"] ? config["target_selection_threshold_mid"].as<double>() : 0.5;
+        config_.target_selection_threshold_low = config["target_selection_threshold_low"] ? config["target_selection_threshold_low"].as<double>() : 0.7;
+        config_.gain_point_z_high = config["gain_point_z_high"] ? config["gain_point_z_high"].as<double>() : 0.6;
+        config_.gain_point_z_mid = config["gain_point_z_mid"] ? config["gain_point_z_mid"].as<double>() : 0.4;
+        config_.gain_point_threshold_high = config["gain_point_threshold_high"] ? config["gain_point_threshold_high"].as<double>() : 0.5;
+        config_.gain_point_threshold_mid = config["gain_point_threshold_mid"] ? config["gain_point_threshold_mid"].as<double>() : 0.4;
+        config_.gain_point_threshold_low = config["gain_point_threshold_low"] ? config["gain_point_threshold_low"].as<double>() : 0.6;
+        config_.fortress_occupy_z_threshold = config["fortress_occupy_z_threshold"] ? config["fortress_occupy_z_threshold"].as<double>() : 0.6;
+        config_.fortress_occupy_f_threshold = config["fortress_occupy_f_threshold"] ? config["fortress_occupy_f_threshold"].as<double>() : 0.7;
+        config_.fortress_occupy_hp_ratio = config["fortress_occupy_hp_ratio"] ? config["fortress_occupy_hp_ratio"].as<double>() : 0.7;
         config_.enemy_fortress_occupy_time = config["enemy_fortress_occupy_time"] ? config["enemy_fortress_occupy_time"].as<double>() : 180.0;
         config_.enemy_fortress_hp_threshold = config["enemy_fortress_hp_threshold"] ? config["enemy_fortress_hp_threshold"].as<double>() : 0.7;
         config_.enemy_fortress_ammo_threshold = config["enemy_fortress_ammo_threshold"] ? config["enemy_fortress_ammo_threshold"].as<double>() : 0.7;
@@ -126,6 +130,14 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
         config_.blue_patrol.x = config["blue_patrol_x"] ? config["blue_patrol_x"].as<double>() : 846.0;
         config_.blue_patrol.y = config["blue_patrol_y"] ? config["blue_patrol_y"].as<double>() : 200.0;
         config_.patrol_stay_duration = config["patrol_stay_duration"] ? config["patrol_stay_duration"].as<double>() : 10.0;
+        config_.main_first_switch_remaining_time =
+            config["main_first_switch_remaining_time"] ? config["main_first_switch_remaining_time"].as<double>() : 320.0;
+        config_.main_second_switch_remaining_time =
+            config["main_second_switch_remaining_time"] ? config["main_second_switch_remaining_time"].as<double>() : 280.0;
+        config_.main_third_switch_remaining_time =
+            config["main_third_switch_remaining_time"] ? config["main_third_switch_remaining_time"].as<double>() : 250.0;
+        config_.main_second_route_point_stay_duration =
+            config["main_second_route_point_stay_duration"] ? config["main_second_route_point_stay_duration"].as<double>() : 60.0;
 
         return true;
     } catch (const YAML::Exception& e) {
@@ -149,6 +161,7 @@ geometry_msgs::msg::Point Blackboard::getTrapezoidHighlandGain() const { return 
 geometry_msgs::msg::Point Blackboard::getEnemyOutpostPoint() const { return (robot_id_ == 1) ? config_.blue_enemy_outpost : config_.red_enemy_outpost; }
 geometry_msgs::msg::Point Blackboard::getMainDecisionPoint() const { return (robot_id_ == 1) ? config_.blue_main_decision : config_.red_main_decision; }
 geometry_msgs::msg::Point Blackboard::getSimpleDecisionPoint() const { return (robot_id_ == 1) ? config_.blue_simple_decision : config_.red_simple_decision; }
+geometry_msgs::msg::Point Blackboard::getMainRoutePoint() const { return (robot_id_ == 1) ? config_.blue_main_route : config_.red_main_route; }
 
 geometry_msgs::msg::Point Blackboard::getPatrolPoint() const {
     return (robot_id_ == 1) ? config_.blue_patrol : config_.red_patrol;
@@ -187,6 +200,10 @@ double Blackboard::getFortressOccupyZThreshold() const { return config_.fortress
 double Blackboard::getFortressOccupyFThreshold() const { return config_.fortress_occupy_f_threshold; }
 double Blackboard::getFortressOccupyHpRatio() const { return config_.fortress_occupy_hp_ratio; }
 double Blackboard::getPatrolStayDuration() const { return config_.patrol_stay_duration; }
+double Blackboard::getMainFirstSwitchRemainingTime() const { return config_.main_first_switch_remaining_time; }
+double Blackboard::getMainSecondSwitchRemainingTime() const { return config_.main_second_switch_remaining_time; }
+double Blackboard::getMainThirdSwitchRemainingTime() const { return config_.main_third_switch_remaining_time; }
+double Blackboard::getMainSecondRoutePointStayDuration() const { return config_.main_second_route_point_stay_duration; }
 
 void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     if (!msg) return;

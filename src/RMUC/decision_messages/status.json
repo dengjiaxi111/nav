@@ -1,8 +1,8 @@
 {
   "game_state": {
-    "stage": 0,
-    "stage_remaining_time": 420,
-    "is_running": false,
+    "stage": 4,
+    "stage_remaining_time": 109.76368951797485,
+    "is_running": true,
     "competition_type": 1
   },
   "red_robots": {
@@ -31,8 +31,8 @@
       "allowance": 0
     },
     "7": {
-      "x": 408,
-      "y": 808,
+      "x": 1494.0,
+      "y": 380.0,
       "hp": 400,
       "allowance": 300
     }
@@ -87,8 +87,8 @@
     "central_highland_occupation": 0,
     "outpost_gain_point_occupation": 0
   },
-  "our_robot_id": 0,
+  "our_robot_id": 1,
   "meta": {
-    "write_ts": 1779338942.849741
+    "write_ts": 1779394085.8880675
   }
 }

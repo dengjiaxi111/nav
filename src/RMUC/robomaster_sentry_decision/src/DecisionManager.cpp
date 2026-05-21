@@ -196,12 +196,15 @@ bool DecisionManager::beginTargetOffsetCorrection(State move_state, DecisionOutp
         return false;
     }
 
+    State resume_state = current_state_;
     correcting_target_offset_ = true;
-    correction_resume_state_ = current_state_;
+    correction_resume_state_ = resume_state;
     correction_target_ = target;
     transitionTo(move_state);
     blackboard_->current_behavior.target = correction_target_;
-    blackboard_->updateControlMsg(blackboard_->getControlMsg()->gimbal_mode, SPIN_OFF, POSTURE_MOVE);
+    uint8_t gimbal_mode = (resume_state == State::INIT_ATTACK) ?
+                          GIMBAL_OUTPOST : blackboard_->getControlMsg()->gimbal_mode;
+    blackboard_->updateControlMsg(gimbal_mode, SPIN_OFF, POSTURE_MOVE);
     output.target_position = correction_target_;
     output.target_needs_publishing = true;
     output.control_needs_publishing = true;
@@ -229,6 +232,31 @@ geometry_msgs::msg::Point DecisionManager::getSimpleDecisionTarget() const {
     return constrainTargetPoint(blackboard_->getSimpleDecisionPoint(), false);
 }
 
+geometry_msgs::msg::Point DecisionManager::getMainRouteTarget() const {
+    return constrainTargetPoint(blackboard_->getMainRoutePoint(), false);
+}
+
+bool DecisionManager::hasPassedRemainingTime(double remaining_time) const {
+    return blackboard_->stage_remaining_time <= remaining_time;
+}
+
+bool DecisionManager::shouldStartMainRoute() const {
+    return hasPassedRemainingTime(blackboard_->getMainFirstSwitchRemainingTime());
+}
+
+bool DecisionManager::shouldReturnFromMainRoute() const {
+    return hasPassedRemainingTime(blackboard_->getMainSecondSwitchRemainingTime());
+}
+
+bool DecisionManager::shouldStartSecondMainRoute() const {
+    return hasPassedRemainingTime(blackboard_->getMainThirdSwitchRemainingTime());
+}
+
+bool DecisionManager::shouldFinishSecondMainRoute() const {
+    return main_second_route_started_ &&
+           blackboard_->getExecutionElapsedTime() >= blackboard_->getMainSecondRoutePointStayDuration();
+}
+
 void DecisionManager::transitionTo(State new_state) {
     if (current_state_ == new_state) return;
     current_state_ = new_state;
@@ -250,7 +278,7 @@ void DecisionManager::transitionTo(State new_state) {
             break;
         case State::INIT_MOVE:
             blackboard_->startBehavior(BehaviorType::INIT_MOVE, constrainTargetPoint(blackboard_->getAttackPoint(), false), 0.0);
-            blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_OFF, POSTURE_MOVE);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_ATTACK:
             blackboard_->current_behavior.type = BehaviorType::INIT_ATTACK;
@@ -323,13 +351,13 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->current_behavior.type = BehaviorType::SUPPLY;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_DEFENSE);
             break;
         case State::RESURRECTING:
             blackboard_->current_behavior.type = BehaviorType::RESURRECTING;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
-            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_DEFENSE);
             break;
         case State::BASE_DEFENSE:
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
@@ -368,6 +396,26 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::MAIN_POINT_ATTACK:
+            blackboard_->current_behavior.type = BehaviorType::MAIN_POINT_ATTACK;
+            blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
+            blackboard_->startExecutionTime();
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+            break;
+        case State::MOVE_TO_MAIN_ROUTE_POINT:
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_MAIN_POINT, getMainRouteTarget(), 0.0);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        case State::MAIN_ROUTE_ATTACK:
+            blackboard_->current_behavior.type = BehaviorType::MAIN_POINT_ATTACK;
+            blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
+            blackboard_->startExecutionTime();
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+            break;
+        case State::MOVE_TO_MAIN_RETURN_POINT:
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_MAIN_POINT, getMainDecisionTarget(), 0.0);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        case State::MAIN_RETURN_ATTACK:
             blackboard_->current_behavior.type = BehaviorType::MAIN_POINT_ATTACK;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
             blackboard_->startExecutionTime();
@@ -416,6 +464,10 @@ std::string DecisionManager::stateToString(State state) const {
         case State::PATROL: return "PATROL";
         case State::MOVE_TO_MAIN_POINT: return "MOVE_TO_MAIN_POINT";
         case State::MAIN_POINT_ATTACK: return "MAIN_POINT_ATTACK";
+        case State::MOVE_TO_MAIN_ROUTE_POINT: return "MOVE_TO_MAIN_ROUTE_POINT";
+        case State::MAIN_ROUTE_ATTACK: return "MAIN_ROUTE_ATTACK";
+        case State::MOVE_TO_MAIN_RETURN_POINT: return "MOVE_TO_MAIN_RETURN_POINT";
+        case State::MAIN_RETURN_ATTACK: return "MAIN_RETURN_ATTACK";
         case State::MOVE_TO_SIMPLE_POINT: return "MOVE_TO_SIMPLE_POINT";
         case State::SIMPLE_POINT_ATTACK: return "SIMPLE_POINT_ATTACK";
         default: return "UNKNOWN";
@@ -430,6 +482,8 @@ DecisionOutput DecisionManager::executeDecision() {
     updateHeroDeployFlag();
 
     if (blackboard_->stage != STAGE_BATTLE) {
+        main_second_route_started_ = false;
+        main_second_route_completed_ = false;
         if (current_state_ != State::IDLE) transitionTo(State::IDLE);
         else {
             uint8_t gimbal = (blackboard_->stage_remaining_time <= 5.0) ? GIMBAL_ENEMY : GIMBAL_IDLE;
@@ -445,143 +499,64 @@ DecisionOutput DecisionManager::executeDecision() {
         return output;
     }
 
+    auto cancelCorrection = [this]() {
+        correcting_target_offset_ = false;
+        correction_resume_state_ = State::IDLE;
+        correction_target_ = geometry_msgs::msg::Point();
+    };
+
+    auto transitionToMainScriptState = [&]() {
+        cancelCorrection();
+        if (main_second_route_completed_) {
+            transitionTo(State::MOVE_TO_MAIN_RETURN_POINT);
+        } else if (shouldStartSecondMainRoute()) {
+            transitionTo(State::MOVE_TO_MAIN_ROUTE_POINT);
+        } else if (shouldReturnFromMainRoute()) {
+            transitionTo(State::MOVE_TO_MAIN_RETURN_POINT);
+        } else if (shouldStartMainRoute()) {
+            transitionTo(State::MOVE_TO_MAIN_ROUTE_POINT);
+        } else {
+            transitionTo(State::MOVE_TO_MAIN_POINT);
+        }
+    };
+
+    auto moveToTarget = [&](const geometry_msgs::msg::Point& normal_target,
+                            State move_state,
+                            State attack_state) {
+        geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : normal_target;
+        if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+            if (!blackboard_->at_current_target) {
+                blackboard_->setTargetReached(true);
+                transitionTo(consumeCorrectionResumeState(attack_state));
+            }
+        } else {
+            if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+            blackboard_->current_behavior.target = target;
+            output.target_position = target;
+            output.target_needs_publishing = true;
+        }
+        (void)move_state;
+    };
+
     switch (current_state_) {
         case State::IDLE: {
             if (blackboard_->resurrection_flag) {
                 transitionTo(State::RESURRECTION_MOVE);
             } else if (needSupply()) {
                 transitionTo(State::MOVE_TO_SUPPLY);
-            } else if (blackboard_->getDecisionMode() == 1) {
-                transitionTo(State::MOVE_TO_SIMPLE_POINT);
             } else if (!blackboard_->initialization_complete) {
                 transitionTo(State::INIT_PRE_MOVE);
             } else {
-                transitionTo(State::MOVE_TO_MAIN_POINT);
-            }
-            break;
-        }
-
-        case State::MOVE_TO_SIMPLE_POINT: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getSimpleDecisionTarget();
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::SIMPLE_POINT_ATTACK));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-
-        case State::SIMPLE_POINT_ATTACK: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_SIMPLE_POINT, output)) break;
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
-                output.control_needs_publishing = true;
-            }
-            break;
-        }
-
-        case State::MOVE_TO_MAIN_POINT: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getMainDecisionTarget();
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::MAIN_POINT_ATTACK));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-
-        case State::MAIN_POINT_ATTACK: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_MAIN_POINT, output)) break;
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
-                output.control_needs_publishing = true;
-            }
-            break;
-        }
-
-        case State::MOVE_TO_PATROL: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : blackboard_->getPatrolPoint();
-            if (!correcting_target_offset_)
-                target = constrainTargetPoint(target);
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::PATROL));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-        case State::PATROL: {
-            if (shouldInterruptForResurrectionOrSupply()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_PATROL, output)) break;
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getPatrolStayDuration()) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
-                output.control_needs_publishing = true;
+                transitionToMainScriptState();
             }
             break;
         }
 
         case State::INIT_PRE_MOVE: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getInitPreAttackTarget();
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::INIT_MOVE));
-                    if (current_state_ == State::INIT_MOVE) {
-                        output.target_position = constrainTargetPoint(blackboard_->getAttackPoint(), false);
-                        output.target_needs_publishing = true;
-                    }
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
+            moveToTarget(getInitPreAttackTarget(), State::INIT_PRE_MOVE, State::INIT_MOVE);
+            if (current_state_ == State::INIT_MOVE) {
+                output.target_position = constrainTargetPoint(blackboard_->getAttackPoint(), false);
                 output.target_needs_publishing = true;
             }
             break;
@@ -589,20 +564,11 @@ DecisionOutput DecisionManager::executeDecision() {
 
         case State::INIT_MOVE: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getAttackPoint(), false);
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::INIT_ATTACK));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
+            moveToTarget(constrainTargetPoint(blackboard_->getAttackPoint(), false),
+                         State::INIT_MOVE, State::INIT_ATTACK);
             break;
         }
+
         case State::INIT_ATTACK: {
             if (shouldInterruptForResurrectionOrSupply()) {
                 blackboard_->init_attack_elapsed_time = std::min(
@@ -637,251 +603,126 @@ DecisionOutput DecisionManager::executeDecision() {
             }
             break;
         }
-        case State::MOVE_TO_ENEMY_FORTRESS: {
+
+        case State::MOVE_TO_MAIN_POINT: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : blackboard_->getEnemyFortressPoint();
-            if (!correcting_target_offset_)
-                target = constrainTargetPoint(target);
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::OCCUPY_ENEMY_FORTRESS));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
+            if (!main_second_route_completed_ && shouldStartMainRoute()) {
+                transitionToMainScriptState();
+                break;
             }
+            moveToTarget(getMainDecisionTarget(), State::MOVE_TO_MAIN_POINT, State::MAIN_POINT_ATTACK);
             break;
         }
-        case State::OCCUPY_ENEMY_FORTRESS: {
+
+        case State::MAIN_POINT_ATTACK: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_ENEMY_FORTRESS, output)) break;
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getDefendDuration())
-                transitionTo(State::IDLE);
+            if (!main_second_route_completed_ && shouldStartMainRoute()) {
+                transitionToMainScriptState();
+                break;
+            }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_MAIN_POINT, output)) break;
             if (!blackboard_->isControlPublished()) {
                 blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
             }
             break;
         }
-        case State::MOVE_TO_ATTACK_HERO:
-        case State::MOVE_TO_ATTACK_ROBOT: {
+
+        case State::MOVE_TO_MAIN_ROUTE_POINT: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getTargetPointForEnemy(current_enemy_id_);
-            if (target.x == 0 && target.y == 0) {
-                transitionTo(State::IDLE);
+            if (!main_second_route_completed_ &&
+                shouldReturnFromMainRoute() && !shouldStartSecondMainRoute()) {
+                transitionToMainScriptState();
                 break;
             }
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    State normal_state = (current_state_ == State::MOVE_TO_ATTACK_HERO) ?
-                                         State::ATTACK_HERO : State::ATTACK_ROBOT;
-                    transitionTo(consumeCorrectionResumeState(normal_state));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
+            moveToTarget(getMainRouteTarget(), State::MOVE_TO_MAIN_ROUTE_POINT, State::MAIN_ROUTE_ATTACK);
             break;
         }
-        case State::ATTACK_HERO:
-        case State::ATTACK_ROBOT: {
+
+        case State::MAIN_ROUTE_ATTACK: {
             if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = getTargetPointForEnemy(current_enemy_id_);
-            if (target.x == 0 || target.y == 0) {
-                transitionTo(State::IDLE);
+            if (!main_second_route_completed_ && shouldStartSecondMainRoute()) {
+                if (!main_second_route_started_) {
+                    main_second_route_started_ = true;
+                    blackboard_->startExecutionTime();
+                    blackboard_->setControlPublished(false);
+                    output.target_position = getMainRouteTarget();
+                    output.target_needs_publishing = true;
+                }
+                if (shouldFinishSecondMainRoute()) {
+                    main_second_route_completed_ = true;
+                    transitionTo(State::MOVE_TO_MAIN_RETURN_POINT);
+                    break;
+                }
+            } else if (!main_second_route_completed_ && shouldReturnFromMainRoute()) {
+                transitionToMainScriptState();
                 break;
             }
-            if (!blackboard_->isAtTarget(target, blackboard_->getEnemyChaseRepathThreshold())) {
-                if (current_state_ == State::ATTACK_HERO)
-                    transitionTo(State::MOVE_TO_ATTACK_HERO);
-                else
-                    transitionTo(State::MOVE_TO_ATTACK_ROBOT);
-                break;
-            }
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getAttackDuration())
-                transitionTo(State::IDLE);
+            if (beginTargetOffsetCorrection(State::MOVE_TO_MAIN_ROUTE_POINT, output)) break;
             if (!blackboard_->isControlPublished()) {
                 blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
             }
             break;
         }
+
+        case State::MOVE_TO_MAIN_RETURN_POINT: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (!main_second_route_completed_ && shouldStartSecondMainRoute()) {
+                transitionToMainScriptState();
+                break;
+            }
+            moveToTarget(getMainDecisionTarget(), State::MOVE_TO_MAIN_RETURN_POINT, State::MAIN_RETURN_ATTACK);
+            break;
+        }
+
+        case State::MAIN_RETURN_ATTACK: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            if (!main_second_route_completed_ && shouldStartSecondMainRoute()) {
+                transitionToMainScriptState();
+                break;
+            }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_MAIN_RETURN_POINT, output)) break;
+            if (!blackboard_->isControlPublished()) {
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+                output.control_needs_publishing = true;
+            }
+            break;
+        }
+
         case State::MOVE_TO_SUPPLY:
         case State::RESURRECTION_MOVE: {
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getSupplyPoint(), false);
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    State normal_state = (current_state_ == State::RESURRECTION_MOVE) ?
-                                         State::RESURRECTING : State::SUPPLYING;
-                    transitionTo(consumeCorrectionResumeState(normal_state));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
+            moveToTarget(constrainTargetPoint(blackboard_->getSupplyPoint(), false),
+                         current_state_,
+                         current_state_ == State::RESURRECTION_MOVE ? State::RESURRECTING : State::SUPPLYING);
             break;
         }
+
         case State::SUPPLYING: {
             if (beginTargetOffsetCorrection(State::MOVE_TO_SUPPLY, output)) break;
             if (blackboard_->current_hp >= blackboard_->getMaxHp())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
         }
+
         case State::RESURRECTING: {
             if (beginTargetOffsetCorrection(State::RESURRECTION_MOVE, output)) break;
             if (!blackboard_->resurrection_flag && blackboard_->current_hp >= blackboard_->getMaxHp())
                 transitionTo(State::IDLE);
             if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_DEFENSE);
                 output.control_needs_publishing = true;
             }
             break;
         }
-        case State::MOVE_TO_BASE_DEFENSE: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getBaseGainPoint(), false);
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::BASE_DEFENSE));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
+
+        default:
+            transitionTo(State::IDLE);
             break;
-        }
-        case State::BASE_DEFENSE: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_BASE_DEFENSE, output)) break;
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getDefendDuration())
-                transitionTo(State::IDLE);
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
-                output.control_needs_publishing = true;
-            }
-            break;
-        }
-        case State::MOVE_TO_GAIN_POINT: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target;
-            if (correcting_target_offset_) {
-                target = correction_target_;
-            } else {
-                auto best = getBestGainPoint();
-                if (best.name.empty()) {
-                    transitionTo(State::IDLE);
-                    break;
-                }
-                target = constrainTargetPoint(best.position);
-            }
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::OCCUPY_GAIN_POINT));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-        case State::OCCUPY_GAIN_POINT: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_GAIN_POINT, output)) break;
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getDefendDuration())
-                transitionTo(State::IDLE);
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
-                output.control_needs_publishing = true;
-            }
-            break;
-        }
-        case State::MOVE_TO_FORTRESS: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : constrainTargetPoint(blackboard_->getFortressOccupyPoint(), false);
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::OCCUPY_FORTRESS));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-        case State::OCCUPY_FORTRESS: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_FORTRESS, output)) break;
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= blackboard_->getDefendDuration())
-                transitionTo(State::IDLE);
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
-                output.control_needs_publishing = true;
-            }
-            break;
-        }
-        case State::MOVE_TO_GUARD: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            geometry_msgs::msg::Point target;
-            if (correcting_target_offset_) {
-                target = correction_target_;
-            } else {
-                target.x = GUARD_X; target.y = GUARD_Y;
-                target = constrainTargetPoint(target, false);
-            }
-            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
-                if (!blackboard_->at_current_target) {
-                    blackboard_->setTargetReached(true);
-                    transitionTo(consumeCorrectionResumeState(State::GUARD));
-                }
-            } else {
-                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
-                blackboard_->current_behavior.target = target;
-                output.target_position = target;
-                output.target_needs_publishing = true;
-            }
-            break;
-        }
-        case State::GUARD: {
-            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
-            if (beginTargetOffsetCorrection(State::MOVE_TO_GUARD, output)) break;
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (elapsed >= 5.0) {
-                transitionTo(State::IDLE);
-                break;
-            }
-            if (!blackboard_->isControlPublished()) {
-                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_DEFENSE);
-                output.control_needs_publishing = true;
-            }
-            break;
-        }
     }
 
     if (blackboard_->enemy_engineer.visible && blackboard_->enemy_engineer.hp > 0) {

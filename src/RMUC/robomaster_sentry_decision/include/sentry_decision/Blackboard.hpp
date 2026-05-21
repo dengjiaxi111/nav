@@ -112,6 +112,7 @@ public:
     geometry_msgs::msg::Point getEnemyOutpostPoint() const;
     geometry_msgs::msg::Point getMainDecisionPoint() const;
     geometry_msgs::msg::Point getSimpleDecisionPoint() const;
+    geometry_msgs::msg::Point getMainRoutePoint() const;
     geometry_msgs::msg::Point getPatrolPoint() const;
 
     int getDecisionMode() const;
@@ -128,6 +129,10 @@ public:
     double getEnemyFortressHpThreshold() const;
     double getEnemyFortressAmmoThreshold() const;
     double getPatrolStayDuration() const;
+    double getMainFirstSwitchRemainingTime() const;
+    double getMainSecondSwitchRemainingTime() const;
+    double getMainThirdSwitchRemainingTime() const;
+    double getMainSecondRoutePointStayDuration() const;
 
     double getHpWeight() const;
     double getAmmoWeight() const;
@@ -257,6 +262,8 @@ private:
         geometry_msgs::msg::Point blue_main_decision;
         geometry_msgs::msg::Point red_simple_decision;
         geometry_msgs::msg::Point blue_simple_decision;
+        geometry_msgs::msg::Point red_main_route;
+        geometry_msgs::msg::Point blue_main_route;
 
         geometry_msgs::msg::Point red_patrol;
         geometry_msgs::msg::Point blue_patrol;
@@ -303,6 +310,11 @@ private:
         double enemy_fortress_ammo_threshold;
 
         double patrol_stay_duration;
+
+        double main_first_switch_remaining_time;
+        double main_second_switch_remaining_time;
+        double main_third_switch_remaining_time;
+        double main_second_route_point_stay_duration;
     } config_;
 
     std::shared_ptr<SentryControl> control_msg_;

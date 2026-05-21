@@ -42,6 +42,10 @@ enum class State {
     PATROL,
     MOVE_TO_MAIN_POINT,
     MAIN_POINT_ATTACK,
+    MOVE_TO_MAIN_ROUTE_POINT,
+    MAIN_ROUTE_ATTACK,
+    MOVE_TO_MAIN_RETURN_POINT,
+    MAIN_RETURN_ATTACK,
     MOVE_TO_SIMPLE_POINT,
     SIMPLE_POINT_ATTACK
 };
@@ -74,6 +78,8 @@ private:
     bool correcting_target_offset_ = false;
     State correction_resume_state_ = State::IDLE;
     geometry_msgs::msg::Point correction_target_;
+    bool main_second_route_started_ = false;
+    bool main_second_route_completed_ = false;
 
     bool needSupply() const;
     bool shouldInterruptForResurrectionOrSupply() const;
@@ -97,6 +103,12 @@ private:
     geometry_msgs::msg::Point getInitPreAttackTarget() const;
     geometry_msgs::msg::Point getMainDecisionTarget() const;
     geometry_msgs::msg::Point getSimpleDecisionTarget() const;
+    geometry_msgs::msg::Point getMainRouteTarget() const;
+    bool shouldStartMainRoute() const;
+    bool shouldReturnFromMainRoute() const;
+    bool shouldStartSecondMainRoute() const;
+    bool shouldFinishSecondMainRoute() const;
+    bool hasPassedRemainingTime(double remaining_time) const;
 
     void transitionTo(State new_state);
     std::string stateToString(State state) const;
