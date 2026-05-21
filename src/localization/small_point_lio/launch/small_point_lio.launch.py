@@ -18,7 +18,7 @@ def generate_launch_description():
     lidar_x = "0.2"
     lidar_y = "0.0"
     lidar_z = "0.05"
-    lidar_roll = "0.52"
+    lidar_roll = "0.5236"  # 30度朝下
     lidar_pitch = "0.0"
     lidar_yaw = "1.5708"
 

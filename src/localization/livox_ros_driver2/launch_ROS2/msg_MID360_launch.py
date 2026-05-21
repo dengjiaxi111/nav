@@ -30,7 +30,7 @@ livox_ros2_params = [
     {"user_config_path": user_config_path},
     {"cmdline_input_bd_code": cmdline_bd_code},
     {"enable_timestamp_logging": False},
-    {"timestamp_log_file", "/home/lehan/navigation2026/performance_test/driver/livox_ros2_timestamp_log.csv"}
+    {"timestamp_log_file": "/home/nuc/navigation2026/performance_test/driver/livox_ros2_timestamp_log.csv"}
 ]
 
 
