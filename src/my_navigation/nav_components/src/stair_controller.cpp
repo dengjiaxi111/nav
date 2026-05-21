@@ -78,6 +78,7 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.enable_stair_cooldown", true);
     declare_if_needed("special_terrain.stair_cooldown_fail_threshold", 3);
     declare_if_needed("special_terrain.stair_cooldown_duration_sec", 30.0);
+    declare_if_needed("planner.skip_next_stair_hard_constraint", false);
 
     declare_if_needed("special_terrain.fly_slope_mode_trigger_distance_m", 1.0);
     declare_if_needed("special_terrain.fly_slope_mode_lookahead_dist_m", 3.0);
@@ -843,6 +844,7 @@ nav_core::TerrainControlDecision StairController::update(
                 } else {
                     onStairAttemptSucceeded(active_feature_.feature_id);
                 }
+                markTerrainFeatureConsumed(active_terrain_type_, active_feature_.feature_id);
                 transitionFsmState(StairFsmState::NORMAL, "verify success");
                 active_terrain_type_ = TerrainType::NONE;
                 decision = nav_core::TerrainControlDecision::PASS_THROUGH;
@@ -934,6 +936,10 @@ nav_core::TerrainControlDecision StairController::update(
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
                 } else if (active_attempt_count_ < std::max(1, retry_max(active_terrain_type_))) {
                     transitionFsmState(StairFsmState::PRE_ALIGN, "backoff done -> retry");
+                    if (node_ && active_terrain_type_ != TerrainType::FLY_SLOPE) {
+                        node_->set_parameter(
+                            rclcpp::Parameter("planner.skip_next_stair_hard_constraint", true));
+                    }
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN; // 触发重规划以刷新实际距离
                 } else {
                     if (recovery_on_max(active_terrain_type_)) {
@@ -1816,7 +1822,6 @@ void StairController::triggerStairModePulse(uint8_t mode) {
     stair_mode_pulse_active_ = true;
     stair_mode_pulse_mode_ = mode;
     stair_mode_pulse_start_time_ = std::chrono::steady_clock::now();
-    markTerrainFeatureConsumed(active_terrain_type_, active_feature_.feature_id);
     publishStairMode(mode, true, true);
 }
 

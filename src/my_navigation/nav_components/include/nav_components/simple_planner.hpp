@@ -131,6 +131,7 @@ private:
     bool publish_astar_raw_path_ = true;  // 发布原始A*路径（平滑前）
     bool allow_raw_fallback_on_smooth_fail_ = false;  // 平滑失败时是否回退原始A*
     std::string stair_constraint_mode_ = "soft";  // soft/hard
+    bool skip_next_stair_hard_constraint_ = false;  // 退让重规划后一次性跳过台阶 hard
     double stair_hard_dist_delta_m_ = 0.0;  // 硬约束 pre/post 距离相对 B-spline 参数的偏移量
     std::string fly_slope_constraint_mode_ = "soft";  // soft/hard
     double fly_slope_hard_dist_delta_m_ = 0.0;  // 飞坡硬约束 pre/post 距离偏移量
