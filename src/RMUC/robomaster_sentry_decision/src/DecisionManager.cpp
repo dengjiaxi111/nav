@@ -217,8 +217,16 @@ State DecisionManager::consumeCorrectionResumeState(State normal_state) {
     return resume_state;
 }
 
+geometry_msgs::msg::Point DecisionManager::getInitPreAttackTarget() const {
+    return constrainTargetPoint(blackboard_->getInitPreAttackPoint(), false);
+}
+
 geometry_msgs::msg::Point DecisionManager::getMainDecisionTarget() const {
     return constrainTargetPoint(blackboard_->getMainDecisionPoint(), false);
+}
+
+geometry_msgs::msg::Point DecisionManager::getSimpleDecisionTarget() const {
+    return constrainTargetPoint(blackboard_->getSimpleDecisionPoint(), false);
 }
 
 void DecisionManager::transitionTo(State new_state) {
@@ -234,6 +242,10 @@ void DecisionManager::transitionTo(State new_state) {
             correction_resume_state_ = State::IDLE;
             correction_target_ = geometry_msgs::msg::Point();
             blackboard_->resetCurrentBehavior();
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        case State::INIT_PRE_MOVE:
+            blackboard_->startBehavior(BehaviorType::INIT_PRE_MOVE, getInitPreAttackTarget(), 0.0);
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_MOVE:
@@ -361,6 +373,16 @@ void DecisionManager::transitionTo(State new_state) {
             blackboard_->startExecutionTime();
             blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
             break;
+        case State::MOVE_TO_SIMPLE_POINT:
+            blackboard_->startBehavior(BehaviorType::MOVE_TO_SIMPLE_POINT, getSimpleDecisionTarget(), 0.0);
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_OFF, POSTURE_MOVE);
+            break;
+        case State::SIMPLE_POINT_ATTACK:
+            blackboard_->current_behavior.type = BehaviorType::SIMPLE_POINT_ATTACK;
+            blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
+            blackboard_->startExecutionTime();
+            blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+            break;
         default:
             break;
     }
@@ -369,6 +391,7 @@ void DecisionManager::transitionTo(State new_state) {
 std::string DecisionManager::stateToString(State state) const {
     switch (state) {
         case State::IDLE: return "IDLE";
+        case State::INIT_PRE_MOVE: return "INIT_PRE_MOVE";
         case State::INIT_MOVE: return "INIT_MOVE";
         case State::INIT_ATTACK: return "INIT_ATTACK";
         case State::MOVE_TO_ATTACK_HERO: return "MOVE_TO_ATTACK_HERO";
@@ -393,6 +416,8 @@ std::string DecisionManager::stateToString(State state) const {
         case State::PATROL: return "PATROL";
         case State::MOVE_TO_MAIN_POINT: return "MOVE_TO_MAIN_POINT";
         case State::MAIN_POINT_ATTACK: return "MAIN_POINT_ATTACK";
+        case State::MOVE_TO_SIMPLE_POINT: return "MOVE_TO_SIMPLE_POINT";
+        case State::SIMPLE_POINT_ATTACK: return "SIMPLE_POINT_ATTACK";
         default: return "UNKNOWN";
     }
 }
@@ -426,10 +451,45 @@ DecisionOutput DecisionManager::executeDecision() {
                 transitionTo(State::RESURRECTION_MOVE);
             } else if (needSupply()) {
                 transitionTo(State::MOVE_TO_SUPPLY);
+            } else if (blackboard_->getDecisionMode() == 1) {
+                transitionTo(State::MOVE_TO_SIMPLE_POINT);
             } else if (!blackboard_->initialization_complete) {
-                transitionTo(State::INIT_MOVE);
+                transitionTo(State::INIT_PRE_MOVE);
             } else {
                 transitionTo(State::MOVE_TO_MAIN_POINT);
+            }
+            break;
+        }
+
+        case State::MOVE_TO_SIMPLE_POINT: {
+            if (shouldInterruptForResurrectionOrSupply()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getSimpleDecisionTarget();
+            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+                if (!blackboard_->at_current_target) {
+                    blackboard_->setTargetReached(true);
+                    transitionTo(consumeCorrectionResumeState(State::SIMPLE_POINT_ATTACK));
+                }
+            } else {
+                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
+                output.target_position = target;
+                output.target_needs_publishing = true;
+            }
+            break;
+        }
+
+        case State::SIMPLE_POINT_ATTACK: {
+            if (shouldInterruptForResurrectionOrSupply()) {
+                transitionTo(State::IDLE);
+                break;
+            }
+            if (beginTargetOffsetCorrection(State::MOVE_TO_SIMPLE_POINT, output)) break;
+            if (!blackboard_->isControlPublished()) {
+                blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
+                output.control_needs_publishing = true;
             }
             break;
         }
@@ -502,6 +562,27 @@ DecisionOutput DecisionManager::executeDecision() {
             if (!blackboard_->isControlPublished()) {
                 blackboard_->updateControlMsg(GIMBAL_ENEMY, SPIN_ON, POSTURE_ATTACK);
                 output.control_needs_publishing = true;
+            }
+            break;
+        }
+
+        case State::INIT_PRE_MOVE: {
+            if (shouldInterruptForResurrectionOrSupply()) { transitionTo(State::IDLE); break; }
+            geometry_msgs::msg::Point target = correcting_target_offset_ ? correction_target_ : getInitPreAttackTarget();
+            if (blackboard_->isAtTarget(target, blackboard_->getDeviationThreshold())) {
+                if (!blackboard_->at_current_target) {
+                    blackboard_->setTargetReached(true);
+                    transitionTo(consumeCorrectionResumeState(State::INIT_MOVE));
+                    if (current_state_ == State::INIT_MOVE) {
+                        output.target_position = constrainTargetPoint(blackboard_->getAttackPoint(), false);
+                        output.target_needs_publishing = true;
+                    }
+                }
+            } else {
+                if (blackboard_->at_current_target) blackboard_->setTargetReached(false);
+                blackboard_->current_behavior.target = target;
+                output.target_position = target;
+                output.target_needs_publishing = true;
             }
             break;
         }

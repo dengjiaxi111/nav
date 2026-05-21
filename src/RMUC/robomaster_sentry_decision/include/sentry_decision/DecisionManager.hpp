@@ -17,6 +17,7 @@ struct DecisionOutput {
 
 enum class State {
     IDLE,
+    INIT_PRE_MOVE,
     INIT_MOVE,
     INIT_ATTACK,
     MOVE_TO_ATTACK_HERO,
@@ -40,7 +41,9 @@ enum class State {
     MOVE_TO_PATROL,
     PATROL,
     MOVE_TO_MAIN_POINT,
-    MAIN_POINT_ATTACK
+    MAIN_POINT_ATTACK,
+    MOVE_TO_SIMPLE_POINT,
+    SIMPLE_POINT_ATTACK
 };
 
 struct PriorityTargetResult {
@@ -91,7 +94,9 @@ private:
     Models::GainPointScore getBestGainPoint() const;
     bool beginTargetOffsetCorrection(State move_state, DecisionOutput& output);
     State consumeCorrectionResumeState(State normal_state);
+    geometry_msgs::msg::Point getInitPreAttackTarget() const;
     geometry_msgs::msg::Point getMainDecisionTarget() const;
+    geometry_msgs::msg::Point getSimpleDecisionTarget() const;
 
     void transitionTo(State new_state);
     std::string stateToString(State state) const;

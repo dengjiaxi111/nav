@@ -26,6 +26,7 @@ enum class BehaviorState {
 
 enum class BehaviorType {
     NONE,
+    INIT_PRE_MOVE,
     INIT_MOVE,
     INIT_ATTACK,
     MOVE_TO_ATTACK_HERO,
@@ -49,7 +50,9 @@ enum class BehaviorType {
     MOVE_TO_PATROL,
     PATROL,
     MOVE_TO_MAIN_POINT,
-    MAIN_POINT_ATTACK
+    MAIN_POINT_ATTACK,
+    MOVE_TO_SIMPLE_POINT,
+    SIMPLE_POINT_ATTACK
 };
 
 struct BehaviorInfo {
@@ -98,6 +101,7 @@ public:
 
     bool loadConfigFromYAML(const std::string& filepath);
 
+    geometry_msgs::msg::Point getInitPreAttackPoint() const;
     geometry_msgs::msg::Point getAttackPoint() const;
     geometry_msgs::msg::Point getSupplyPoint() const;
     geometry_msgs::msg::Point getBaseGainPoint() const;
@@ -107,8 +111,10 @@ public:
     geometry_msgs::msg::Point getTrapezoidHighlandGain() const;
     geometry_msgs::msg::Point getEnemyOutpostPoint() const;
     geometry_msgs::msg::Point getMainDecisionPoint() const;
+    geometry_msgs::msg::Point getSimpleDecisionPoint() const;
     geometry_msgs::msg::Point getPatrolPoint() const;
 
+    int getDecisionMode() const;
     double getArrivalWaitTime() const;
     double getDeviationThreshold() const;
     double getEnemyChaseRepathThreshold() const;
@@ -230,6 +236,7 @@ public:
 
 private:
     struct Config {
+        geometry_msgs::msg::Point init_pre_attack;
         geometry_msgs::msg::Point red_attack;
         geometry_msgs::msg::Point blue_attack;
         geometry_msgs::msg::Point red_supply;
@@ -248,9 +255,13 @@ private:
         geometry_msgs::msg::Point blue_enemy_fortress;
         geometry_msgs::msg::Point red_main_decision;
         geometry_msgs::msg::Point blue_main_decision;
+        geometry_msgs::msg::Point red_simple_decision;
+        geometry_msgs::msg::Point blue_simple_decision;
 
         geometry_msgs::msg::Point red_patrol;
         geometry_msgs::msg::Point blue_patrol;
+
+        int decision_mode;
 
         double arrival_wait_time;
         double deviation_threshold;

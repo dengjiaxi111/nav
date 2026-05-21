@@ -6,6 +6,10 @@ red_attack_y: 1026.0
 blue_attack_x: 1392.0
 blue_attack_y: 468.0
 
+# 初始化前置点：决策模式0下，开局先到这里，再发送前哨站目标点
+init_pre_attack_x: 850.0
+init_pre_attack_y: 96.0
+
 red_supply_x: 176.0
 red_supply_y: 262.0
 blue_supply_x: 2578.0
@@ -41,6 +45,15 @@ red_main_decision_x: 2116.0
 red_main_decision_y: 954.0
 blue_main_decision_x: 2116.0
 blue_main_decision_y: 954.0
+
+# 决策模式：0 使用当前完整决策；1 使用简单固定点决策
+decision_mode: 0
+
+# 简单固定点决策目标：开局/补给或复活后移动到这里，到达后进攻姿态打人并开启小陀螺
+red_simple_decision_x: 2116.0
+red_simple_decision_y: 954.0
+blue_simple_decision_x: 2116.0
+blue_simple_decision_y: 954.0
 
 # 敌方前哨站坐标（用于 target_yaw_deg 计算，后续标定）
 red_enemy_outpost_x: 0.0
