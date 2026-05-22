@@ -33,8 +33,6 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
         node_->declare_parameter("planner.allow_raw_fallback_on_smooth_fail", false);
     stair_constraint_mode_ =
         node_->declare_parameter("planner.stair_constraint_mode", std::string("soft"));
-    skip_next_stair_hard_constraint_ =
-        node_->declare_parameter("planner.skip_next_stair_hard_constraint", false);
     stair_hard_dist_delta_m_ =
         node_->declare_parameter("planner.stair_hard_dist_delta_m", 0.0);
     fly_slope_constraint_mode_ =
@@ -686,14 +684,6 @@ bool SimplePlanner::plan(
     const int threshold_step = astar_threshold_step_;
     const int original_threshold = obstacle_threshold_;
     int attempts_done = 0;
-    skip_next_stair_hard_constraint_ =
-        node_->get_parameter("planner.skip_next_stair_hard_constraint").as_bool();
-    if (skip_next_stair_hard_constraint_) {
-        node_->set_parameter(
-            rclcpp::Parameter("planner.skip_next_stair_hard_constraint", false));
-        RCLCPP_INFO(node_->get_logger(),
-            "退让后重规划: 本次跳过台阶 hard 约束，使用 soft 台阶规划");
-    }
     
     bool hard_compare_logged_this_request = false;
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
@@ -707,8 +697,7 @@ bool SimplePlanner::plan(
         int fail_best_x = sx;
         int fail_best_y = sy;
     bool astar_success = false;
-        const bool enable_stair_hard =
-            (stair_constraint_mode_ == "hard") && !skip_next_stair_hard_constraint_;
+        const bool enable_stair_hard = (stair_constraint_mode_ == "hard");
         const bool enable_fly_hard = (fly_slope_constraint_mode_ == "hard");
         if (enable_stair_hard || enable_fly_hard) {
             astar_success = runAstarWithHardTerrainConstraint(
@@ -1199,8 +1188,7 @@ bool SimplePlanner::runAstarWithHardTerrainConstraint(
         return true;
     }
 
-    const bool enable_stair_hard =
-        (stair_constraint_mode_ == "hard") && !skip_next_stair_hard_constraint_;
+    const bool enable_stair_hard = (stair_constraint_mode_ == "hard");
     const bool enable_fly_hard = (fly_slope_constraint_mode_ == "hard");
     if (!enable_stair_hard && !enable_fly_hard) {
         constrained_path = soft_seed_path;

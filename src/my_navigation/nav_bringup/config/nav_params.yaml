@@ -298,7 +298,6 @@ nav_server:
       publish_astar_raw_path: true   # 发布原始A*路径到 /plan_astar_raw（平滑前）
       allow_raw_fallback_on_smooth_fail: false  # 平滑后验证失败时是否回退原始A*（建议关闭）
       stair_constraint_mode: "hard"  # 台阶约束模式: "soft"=现有软约束A*; "hard"=强制经过台阶 pre/post 垂直点
-      skip_next_stair_hard_constraint: false  # 运行时一次性标志：退让后下一次规划跳过台阶 hard，自动清回 false
       stair_hard_dist_delta_m: 0.2   # 仅 hard 模式生效: pre/post 距离相对 stair_align_*_pre/post_dist_m 的统一偏移量(米)
                 # 例如 -0.1 且 stair_align_up_pre_dist_m=1.0 时，硬约束 pre 点距离变为 0.9m
       # 飞坡硬约束（与台阶 hard 同级）

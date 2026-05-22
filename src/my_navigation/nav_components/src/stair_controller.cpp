@@ -78,7 +78,6 @@ void StairController::initialize(rclcpp::Node* node) {
     declare_if_needed("special_terrain.enable_stair_cooldown", true);
     declare_if_needed("special_terrain.stair_cooldown_fail_threshold", 3);
     declare_if_needed("special_terrain.stair_cooldown_duration_sec", 30.0);
-    declare_if_needed("planner.skip_next_stair_hard_constraint", false);
 
     declare_if_needed("special_terrain.fly_slope_mode_trigger_distance_m", 1.0);
     declare_if_needed("special_terrain.fly_slope_mode_lookahead_dist_m", 3.0);
@@ -936,10 +935,6 @@ nav_core::TerrainControlDecision StairController::update(
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
                 } else if (active_attempt_count_ < std::max(1, retry_max(active_terrain_type_))) {
                     transitionFsmState(StairFsmState::PRE_ALIGN, "backoff done -> retry");
-                    if (node_ && active_terrain_type_ != TerrainType::FLY_SLOPE) {
-                        node_->set_parameter(
-                            rclcpp::Parameter("planner.skip_next_stair_hard_constraint", true));
-                    }
                     decision = nav_core::TerrainControlDecision::REQUEST_REPLAN; // 触发重规划以刷新实际距离
                 } else {
                     if (recovery_on_max(active_terrain_type_)) {
