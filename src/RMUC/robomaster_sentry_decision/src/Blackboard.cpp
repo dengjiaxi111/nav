@@ -207,14 +207,6 @@ double Blackboard::getMainSecondRoutePointStayDuration() const { return config_.
 
 void Blackboard::updateOurState(const OurRobotState::SharedPtr msg) {
     if (!msg) return;
-    if (current_behavior.type == BehaviorType::INIT_ATTACK &&
-        current_behavior.state == BehaviorState::EXECUTING &&
-        current_behavior.execution_start_time >= 0.0) {
-        init_attack_elapsed_time = std::min(getInitAttackDuration(),
-                                            init_attack_elapsed_time + getExecutionElapsedTime());
-        current_behavior.execution_start_time = current_time;
-    }
-
     current_hp = static_cast<double>(msg->current_hp);
     allowance_17mm = static_cast<double>(msg->allowance_17mm);
     our_base_hp = static_cast<double>(msg->base_hp);
@@ -303,6 +295,7 @@ void Blackboard::resetForNewMatch() {
     resetCurrentBehavior();
     initialization_complete = false;
     init_attack_elapsed_time = 0.0;
+    init_attack_start_time = -1.0;
     resurrection_flag = false;
     at_current_target = false;
     target_arrival_time = -1.0;

@@ -1,31 +1,31 @@
 # ========== 坐标点（单位：cm） ==========
 # 初始化前置安全点：开局先到这里，再发送前哨站攻击点
-init_pre_attack_x: 1956.0
-init_pre_attack_y: 1316.0
+init_pre_attack_x: 1978.0
+init_pre_attack_y: 1429.0
 
 # 前哨站攻击点：初始化打前哨站，以及主流程最后固定驻守点
-red_attack_x: 1494.0
-red_attack_y: 380.0
-blue_attack_x: 1494.0
-blue_attack_y: 380.0
+red_attack_x: 1464.0
+red_attack_y: 364.0
+blue_attack_x: 1464.0
+blue_attack_y: 364.0
 
 # 补给区仍按红蓝方分开
-red_supply_x: 176.0
-red_supply_y: 262.0
-blue_supply_x: 2578.0
-blue_supply_y: 1214.0
+red_supply_x: 2561.0
+red_supply_y: 1292.0
+blue_supply_x: 2561.0
+blue_supply_y: 1292.0
 
 # 主流程中间点：红蓝方当前使用同一个点
-red_main_route_x: 848.0
-red_main_route_y: 184.0
-blue_main_route_x: 848.0
-blue_main_route_y: 184.0
+red_main_route_x: 823.0
+red_main_route_y: 90.0
+blue_main_route_x: 823.0
+blue_main_route_y: 90.0
 
 # 主流程驻守点：使用前哨站攻击点，补给/复活后也按时间脚本回到对应点
-red_main_decision_x: 1494.0
-red_main_decision_y: 380.0
-blue_main_decision_x: 1494.0
-blue_main_decision_y: 380.0
+red_main_decision_x: 1464.0
+red_main_decision_y: 364.0
+blue_main_decision_x: 1464.0
+blue_main_decision_y: 364.0
 
 # 敌方前哨站坐标：用于初始化阶段 GIMBAL_OUTPOST + 不转时计算 target_yaw_deg
 red_enemy_outpost_x: 0.0

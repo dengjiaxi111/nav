@@ -283,7 +283,10 @@ void DecisionManager::transitionTo(State new_state) {
         case State::INIT_ATTACK:
             blackboard_->current_behavior.type = BehaviorType::INIT_ATTACK;
             blackboard_->updateBehaviorState(BehaviorState::EXECUTING);
-            blackboard_->startExecutionTime();
+            if (blackboard_->init_attack_start_time < 0.0) {
+                blackboard_->init_attack_start_time = blackboard_->current_time;
+            }
+            blackboard_->current_behavior.execution_start_time = blackboard_->init_attack_start_time;
             blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);
             break;
         case State::MOVE_TO_ATTACK_HERO:
@@ -520,6 +523,18 @@ DecisionOutput DecisionManager::executeDecision() {
         }
     };
 
+    if (!blackboard_->initialization_complete &&
+        blackboard_->init_attack_start_time >= 0.0 &&
+        blackboard_->current_time - blackboard_->init_attack_start_time >= blackboard_->getInitAttackDuration()) {
+        blackboard_->init_attack_elapsed_time = blackboard_->getInitAttackDuration();
+        blackboard_->initialization_complete = true;
+        if (current_state_ == State::INIT_PRE_MOVE ||
+            current_state_ == State::INIT_MOVE ||
+            current_state_ == State::INIT_ATTACK) {
+            transitionTo(State::IDLE);
+        }
+    }
+
     auto moveToTarget = [&](const geometry_msgs::msg::Point& normal_target,
                             State move_state,
                             State attack_state) {
@@ -570,32 +585,21 @@ DecisionOutput DecisionManager::executeDecision() {
         }
 
         case State::INIT_ATTACK: {
+            if (blackboard_->init_attack_start_time >= 0.0 &&
+                blackboard_->current_time - blackboard_->init_attack_start_time >= blackboard_->getInitAttackDuration()) {
+                blackboard_->init_attack_elapsed_time = blackboard_->getInitAttackDuration();
+                blackboard_->initialization_complete = true;
+                transitionTo(State::IDLE);
+                break;
+            }
             if (shouldInterruptForResurrectionOrSupply()) {
-                blackboard_->init_attack_elapsed_time = std::min(
-                    blackboard_->getInitAttackDuration(),
-                    blackboard_->init_attack_elapsed_time + blackboard_->getExecutionElapsedTime());
                 transitionTo(State::IDLE);
                 break;
             }
             const auto& init_target = blackboard_->current_behavior.target;
             if (!((init_target.x == 0.0 && init_target.y == 0.0) ||
                   blackboard_->isAtTarget(init_target, blackboard_->getDeviationThreshold()))) {
-                blackboard_->init_attack_elapsed_time = std::min(
-                    blackboard_->getInitAttackDuration(),
-                    blackboard_->init_attack_elapsed_time + blackboard_->getExecutionElapsedTime());
                 if (beginTargetOffsetCorrection(State::INIT_MOVE, output)) break;
-            }
-            if (blackboard_->enemy_outpost_destroyed) {
-                blackboard_->initialization_complete = true;
-                transitionTo(State::IDLE);
-                break;
-            }
-            double elapsed = blackboard_->getExecutionElapsedTime();
-            if (blackboard_->init_attack_elapsed_time + elapsed >= blackboard_->getInitAttackDuration()) {
-                blackboard_->init_attack_elapsed_time = blackboard_->getInitAttackDuration();
-                blackboard_->initialization_complete = true;
-                transitionTo(State::IDLE);
-                break;
             }
             if (!blackboard_->isControlPublished()) {
                 blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_ON, POSTURE_ATTACK);

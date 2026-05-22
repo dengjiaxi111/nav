@@ -179,6 +179,7 @@ public:
     bool resurrection_flag = false;
     bool initialization_complete = false;
     double init_attack_elapsed_time = 0.0;
+    double init_attack_start_time = -1.0;
     bool at_supply_point = false;
     bool hero_in_deploy_zone = false;
 
