@@ -164,7 +164,7 @@ private:
         msg->point.x = target.x / 100.0;
         msg->point.y = target.y / 100.0;
         target_pub_->publish(*msg);
-        std::cout << "[TARGET] (" << msg->point.x << ", " << msg->point.y << ")" << std::endl;
+        RCLCPP_INFO(this->get_logger(), "[TARGET] (%.2f, %.2f)", msg->point.x, msg->point.y);
     }
 
     void publishControl(const sentry_decision::msg::SentryControl& ctrl) {
@@ -174,9 +174,10 @@ private:
         const char* gimbal_str[] = {"不动","打人","打前哨站","打基地"};
         const char* spin_str[] = {"不转","转动"};
         const char* posture_str[] = {"","进攻姿态","防御姿态","移动姿态"};
-        std::cout << "[CONTROL] " << gimbal_str[ctrl.gimbal_mode] << ", "
-                  << spin_str[ctrl.spin_mode] << ", "
-                  << posture_str[ctrl.posture] << std::endl;
+        RCLCPP_INFO(this->get_logger(), "[CONTROL] %s, %s, %s",
+                    gimbal_str[ctrl.gimbal_mode],
+                    spin_str[ctrl.spin_mode],
+                    posture_str[ctrl.posture]);
     }
 
     void publishStopControl() {
