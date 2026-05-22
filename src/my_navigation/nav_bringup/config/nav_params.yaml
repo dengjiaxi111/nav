@@ -10,7 +10,7 @@ nav_server:
     # 地图路径由 navigation.launch.py 注入
     map_file: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map3.pgm"
     control_rate: 50.0
-    goal_timeout: 60.0      # 总任务超时(s)，从收到目标开始超过该时间仍未完成则触发 TIMEOUT recovery
+    goal_timeout: 1000.0    # 总任务超时(s)，从收到目标开始超过该时间仍未完成则触发 TIMEOUT recovery
     goal_tolerance: 0.1
     yaw_tolerance: 0.1
     
