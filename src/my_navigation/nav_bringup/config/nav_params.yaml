@@ -372,8 +372,8 @@ nav_server:
       capacitor_limit:
         v_safe: 16.0             # 电容健康电压；高于该值不缩放加速度
         v_low: 8.0              # 明显保护电压；低于该值使用低电压固定倍率
-        protect_scale: 0.6       # V_low <= V < V_safe 时的加速度倍率
-        low_scale: 0.3           # V < V_low 时的加速度倍率
+        protect_scale: 1.0       # V_low <= V < V_safe 时的加速度倍率
+        low_scale: 1.0           # V < V_low 时的加速度倍率
         filter_alpha: 0.1        # 电压低通系数，1.0表示完全使用最新电压
       
       # === 局部参考轨迹提取 ===
