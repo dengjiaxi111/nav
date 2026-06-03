@@ -54,7 +54,7 @@ small_point_lio:
         use_batch_update: true                     # 是否启用Batch点云更新模式（打包多个点联合更新）
         batch_point_size: 100                       # Batch中一次性更新的点数（推荐30-100）
         batch_max_points: 500                      # Batch最大累积点数（防止内存过大）
-        batch_max_duration: 0.002                  # Batch最大时间跨度，防止遮挡低点率时长时间窗退化
+        batch_max_duration: 0.001                  # Batch最大时间跨度，防止遮挡低点率时长时间窗退化
 
         # 性能调试参数
         enable_performance_debug: false            # 是否开启性能调试模式（打印各环节耗时）

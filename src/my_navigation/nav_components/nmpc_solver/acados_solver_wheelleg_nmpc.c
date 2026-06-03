@@ -352,6 +352,8 @@ void wheelleg_nmpc_acados_create_setup_functions(wheelleg_nmpc_solver_capsule* c
             MAP_CASADI_FNC(expl_vde_forw[i], wheelleg_nmpc_expl_vde_forw);
         }
 
+        
+
         capsule->expl_ode_fun = (external_function_external_param_casadi *) malloc(sizeof(external_function_external_param_casadi)*N);
         for (int i = 0; i < N; i++) {
             MAP_CASADI_FNC(expl_ode_fun[i], wheelleg_nmpc_expl_ode_fun);
@@ -418,18 +420,18 @@ void wheelleg_nmpc_acados_create_set_default_parameters(wheelleg_nmpc_solver_cap
     // initialize parameters to nominal value
     double* p = calloc(NP, sizeof(double));
     p[7] = 10;
-    p[8] = 1;
-    p[9] = 10;
-    p[10] = 5;
-    p[11] = 1;
-    p[12] = 0.1;
-    p[13] = 0.1;
-    p[14] = 20;
-    p[15] = 0.5;
-    p[16] = 50;
-    p[17] = 0.6;
-    p[18] = 0.6;
-    p[19] = 5;
+    p[12] = 1;
+    p[13] = 10;
+    p[14] = 5;
+    p[15] = 1;
+    p[16] = 0.1;
+    p[17] = 0.1;
+    p[18] = 20;
+    p[19] = 0.5;
+    p[20] = 50;
+    p[21] = 0.6;
+    p[22] = 0.6;
+    p[23] = 5;
 
     for (int i = 0; i <= N; i++) {
         wheelleg_nmpc_acados_update_params(capsule, i, p, NP);
@@ -543,6 +545,7 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     for (int i = 0; i < N; i++)
     {
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_vde_forw", &capsule->expl_vde_forw[i]);
+        
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_ode_fun", &capsule->expl_ode_fun[i]);
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_vde_adj", &capsule->expl_vde_adj[i]);
         ocp_nlp_dynamics_model_set_external_param_fun(nlp_config, nlp_dims, nlp_in, i, "expl_ode_hess", &capsule->expl_ode_hess[i]);
@@ -1020,7 +1023,7 @@ int wheelleg_nmpc_acados_update_params(wheelleg_nmpc_solver_capsule* capsule, in
 {
     int solver_status = 0;
 
-    int casadi_np = 20;
+    int casadi_np = 24;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);
@@ -1091,12 +1094,14 @@ int wheelleg_nmpc_acados_free(wheelleg_nmpc_solver_capsule* capsule)
     for (int i = 0; i < N; i++)
     {
         external_function_external_param_casadi_free(&capsule->expl_vde_forw[i]);
+        
         external_function_external_param_casadi_free(&capsule->expl_ode_fun[i]);
         external_function_external_param_casadi_free(&capsule->expl_vde_adj[i]);
         external_function_external_param_casadi_free(&capsule->expl_ode_hess[i]);
     }
     free(capsule->expl_vde_adj);
     free(capsule->expl_vde_forw);
+    
     free(capsule->expl_ode_fun);
     free(capsule->expl_ode_hess);
 

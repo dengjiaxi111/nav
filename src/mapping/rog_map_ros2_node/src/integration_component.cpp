@@ -6,7 +6,6 @@
 #include "rog_map_ros2_node/integration_component.hpp"
 #include "rog_map_ros2_node/rog_map_component.hpp"
 #include "rog_map_ros2_node/map_2d_projector.hpp"
-#include "rog_map_ros2_node/stair_detector.hpp"
 #include <rclcpp/executors/multi_threaded_executor.hpp>
 
 namespace rog_map_ros2_node {
@@ -98,56 +97,7 @@ IntegrationComponent::IntegrationComponent(const rclcpp::NodeOptions& options)
     
     RCLCPP_INFO(this->get_logger(), "  Map2DProjector created");
     
-    const auto stair_enable_it = param_overrides.find("stair_detector.enable");
-    const bool stair_detector_enabled =
-        stair_enable_it == param_overrides.end() || rclcpp::Parameter(
-            "stair_detector.enable", stair_enable_it->second).as_bool();
-
-    if (stair_detector_enabled) {
-        // Step 3: 创建 StairDetector（依赖注入 ROGMapROS*）
-        rclcpp::NodeOptions detector_options;
-        detector_options.use_intra_process_comms(true);
-
-        // 直接声明并获取所有 stair_detector 参数
-        std::vector<std::string> detector_param_names = {
-            "roi_x_min", "roi_x_max", "roi_y_min", "roi_y_max", "roi_z_min", "roi_z_max",
-            "cluster_tolerance", "min_cluster_size", "max_cluster_size",
-            "single_stair_height", "double_stair_height", "height_tolerance",
-            "min_stair_width", "min_stair_depth", "max_z_thickness",
-            "cell_size_xy", "min_cell_points", "min_cell_height", "max_cell_height", "max_cell_top_z",
-            "min_detection_frames", "lowpass_alpha", "blind_zone_distance",
-            "input_cloud_topic", "output_target_topic", "output_marker_topic",
-            "target_frame", "map_frame", "enable_visualization", "update_rate"
-        };
-
-        // 从 launch 文件的 parameter overrides 中加载参数
-        RCLCPP_INFO(this->get_logger(), "Loading StairDetector parameters:");
-
-        for (const auto& param_name : detector_param_names) {
-            std::string full_name = "stair_detector." + param_name;
-
-            // 检查参数是否在 overrides 中
-            auto it = param_overrides.find(full_name);
-            if (it != param_overrides.end()) {
-                // 参数存在，传递给子节点（去掉 stair_detector. 前缀）
-                detector_options.append_parameter_override(param_name, it->second);
-                RCLCPP_INFO(this->get_logger(), "  ✓ %s = %s",
-                            full_name.c_str(), rclcpp::Parameter(full_name, it->second).value_to_string().c_str());
-            } else {
-                RCLCPP_DEBUG(this->get_logger(), "  ○ %s not set (will use default)", full_name.c_str());
-            }
-        }
-
-        stair_detector_ = std::make_shared<stair_detector::StairDetector>(
-            detector_options, rog_map_ptr);
-        executor_->add_node(stair_detector_);
-
-        RCLCPP_INFO(this->get_logger(), "  StairDetector created");
-    } else {
-        RCLCPP_INFO(this->get_logger(), "  StairDetector disabled by stair_detector.enable=false");
-    }
-    
-    // Step 4: 启动 executor 线程
+    // Step 3: 启动 executor 线程
     executor_thread_ = std::thread([this]() {
         RCLCPP_INFO(this->get_logger(), "  Executor thread started");
         executor_->spin();

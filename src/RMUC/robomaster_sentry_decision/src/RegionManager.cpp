@@ -527,7 +527,7 @@ std::vector<geometry_msgs::msg::Point> RegionManager::calculateHexagonPoints(dou
 
 geometry_msgs::msg::Point RegionManager::findSameRegionHexPoint(double target_x, double target_y,
                                                                double robot_x, double robot_y) const {
-    auto hex_points = calculateHexagonPoints(target_x, target_y, 300.0);
+    auto hex_points = calculateHexagonPoints(target_x, target_y, 200.0);
     std::string target_region = getRegionName(target_x, target_y);
 
     std::vector<geometry_msgs::msg::Point> same_region_points;

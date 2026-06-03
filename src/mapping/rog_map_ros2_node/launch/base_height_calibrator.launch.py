@@ -23,7 +23,7 @@ def generate_launch_description():
             description="Raw PointCloud2 topic when pointcloud_type:=pointcloud2",
         ),
         DeclareLaunchArgument("odom_topic", default_value="/Odometry"),
-        DeclareLaunchArgument("current_roll", default_value="0.52"),
+        DeclareLaunchArgument("current_roll", default_value="0.5236"),
         DeclareLaunchArgument("current_pitch", default_value="0.0"),
         DeclareLaunchArgument("current_yaw", default_value="1.5708"),
         DeclareLaunchArgument("lidar_x", default_value="0.2"),

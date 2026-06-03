@@ -30,7 +30,9 @@ void ROGMap::init() {
     initProbMap();
 
     map_info_log_file_.open(DEBUG_FILE_DIR("rm_info_log.csv"), std::ios::out | std::ios::trunc);
-    time_log_file_.open(DEBUG_FILE_DIR("rm_performance_log.csv"), std::ios::out | std::ios::trunc);
+    if (cfg_.enable_performance_log) {
+        time_log_file_.open(DEBUG_FILE_DIR("rm_performance_log.csv"), std::ios::out | std::ios::trunc);
+    }
 
 
     robot_state_.p = cfg_.fix_map_origin;
@@ -50,13 +52,15 @@ void ROGMap::init() {
 
     writeMapInfoToLog(map_info_log_file_);
     map_info_log_file_.close();
-    for (int i = 0; i < time_consuming_name_.size(); i++) {
-        time_log_file_ << time_consuming_name_[i];
-        if (i != time_consuming_name_.size() - 1) {
-            time_log_file_ << ", ";
+    if (cfg_.enable_performance_log) {
+        for (int i = 0; i < time_consuming_name_.size(); i++) {
+            time_log_file_ << time_consuming_name_[i];
+            if (i != time_consuming_name_.size() - 1) {
+                time_log_file_ << ", ";
+            }
         }
+        time_log_file_ << endl;
     }
-    time_log_file_ << endl;
 
 
     if (cfg_.load_pcd_en) {
@@ -258,7 +262,9 @@ void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
     updateProbMap(cloud, pose);
 
 
-    writeTimeConsumingToLog(time_log_file_);
+    if (cfg_.enable_performance_log) {
+        writeTimeConsumingToLog(time_log_file_);
+    }
 }
 
 RobotState ROGMap::getRobotState() const {

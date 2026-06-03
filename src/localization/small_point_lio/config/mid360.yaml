@@ -51,7 +51,7 @@ small_point_lio:
         match_sqaured: 81.0                        # 当前点是否在平面上的阈值，越小表示越严格
 
         # Batch更新参数
-        use_batch_update: true                     # 是否启用Batch点云更新模式（打包多个点联合更新）
+        use_batch_update: false                    # 是否启用Batch点云更新模式（打包多个点联合更新）
         batch_point_size: 100                       # Batch中一次性更新的点数
         batch_max_points: 500                      # Batch最大累积点数
         batch_max_duration: 0.001                  # Batch最大时间跨度，防止遮挡低点率时长时间窗退化

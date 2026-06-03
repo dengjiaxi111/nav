@@ -1,11 +1,11 @@
 /**
  * @file integration_component.hpp
- * @brief 集成组件 - 管理 ROGMap, Map2DProjector, StairDetector 的生命周期和依赖注入
+ * @brief 集成组件 - 管理 ROGMap 和 Map2DProjector 的生命周期和依赖注入
  * 
  * 架构模式：
  * 1. IntegrationComponent 创建 ROGMapComponent
  * 2. 获取 ROGMapROS* 指针
- * 3. 创建 Map2DProjector 和 StairDetector，传递指针
+ * 3. 创建 Map2DProjector，传递指针
  * 4. 所有组件在同一进程内运行，零拷贝通信
  */
 
@@ -29,10 +29,6 @@ namespace map_2d_projector {
     class Map2DProjector;
 }
 
-namespace stair_detector {
-    class StairDetector;
-}
-
 namespace rog_map_ros2_node {
 
 /**
@@ -41,7 +37,6 @@ namespace rog_map_ros2_node {
  * 依赖关系：
  * - ROGMapComponent (核心地图)
  * - Map2DProjector (依赖 ROGMapROS*)
- * - StairDetector (依赖 ROGMapROS*)
  */
 class IntegrationComponent : public rclcpp::Node {
 public:
@@ -52,7 +47,6 @@ private:
     // 子组件实例（按依赖顺序）
     std::shared_ptr<ROGMapComponent> rog_map_component_;
     std::shared_ptr<map_2d_projector::Map2DProjector> map_2d_projector_;
-    std::shared_ptr<stair_detector::StairDetector> stair_detector_;
     
     // Executor 管理
     std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor_;

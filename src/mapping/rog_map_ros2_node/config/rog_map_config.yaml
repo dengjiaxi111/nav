@@ -3,7 +3,7 @@ rog_map:
   esdf:
     resolution: 0.1
     enable: false
-    local_update_box: [10.0, 10.0, 3.0]
+    local_update_box: [16.0, 16.0, 3.0]
 
   # PCD loading
   load_pcd_en: false
@@ -30,13 +30,13 @@ rog_map:
   # Visualization
   visualization:
     enable: true
-    use_dynamic_reconfigure: false
+    use_dynamic_reconfigure: true
     pub_unknown_map_en: false   
     frame_id: "odom"
     time_rate: 10.0           
-    starvation_timeout: 1.0   # [s] 可视化抢不到地图锁超过该时间后，阻塞刷新一次防止 /rog_map/occ 饥饿；0 表示禁用保底
+    starvation_timeout: 0.3   # [s] 可视化抢不到地图锁超过该时间后，阻塞刷新一次防止 /rog_map/occ 饥饿；0 表示禁用保底
     frame_rate: 100
-    range: [15.0, 15.0, 2.0]
+    range: [16.0, 16.0, 2.0]
 
 
   # === 分辨率配置 ===
@@ -54,7 +54,7 @@ rog_map:
   intensity_thresh: -1
 
   # Map size - 减小z方向范围
-  map_size: [15.0, 15.0, 2.0]  
+  map_size: [16.0, 16.0, 2.0]  
 
   # Point filtering 
   point_filt_num: 1           
@@ -62,18 +62,18 @@ rog_map:
   # Raycasting - 性能优化配置
   raycasting:
     enable: true
-    batch_update_size: 2       
+    batch_update_size: 1       
     unk_thresh: 0.5
     
     # === 概率更新参数 ===
-    p_hit: 0.65
-    p_miss: 0.40
+    p_hit: 0.90
+    p_miss: 0.45
     p_min: 0.12
-    p_max: 0.90
-    p_occ: 0.65
+    p_max: 0.94
+    p_occ: 0.56
     p_free: 0.35
-    ray_range: [0.3, 15.0]     
-    local_update_box: [8.0, 8.0, 1.5]  # ← 缩小更新范围
+    ray_range: [0.1, 10.0]     
+    local_update_box: [16.0, 16.0, 1.8]  # ← 缩小更新范围
     
     # TBB Parallelization - 优化并行参数
     parallel_enable: true
@@ -83,7 +83,7 @@ rog_map:
     
     # Fading机制
     fading_enable: true
-    fading_frame_thresh: 80       
+    fading_frame_thresh: 60       
 
   # Virtual ground and ceiling
   virtual_ground_height: -1.0

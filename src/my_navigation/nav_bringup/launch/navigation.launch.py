@@ -3,21 +3,27 @@
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('nav_bringup')
+    acados_lib_dir = '/home/nuc/dependency/acados/lib'
+    existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+    ld_library_path = (
+        acados_lib_dir if not existing_ld_library_path
+        else f"{acados_lib_dir}:{existing_ld_library_path}"
+    )
     
     params_file = LaunchConfiguration('params_file')
     map_file = LaunchConfiguration('map_file')
     stair_mask_yaml = LaunchConfiguration('stair_mask_yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
 
-    default_map = '/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/map.yaml'
-    default_stair_mask = "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"
+    default_map = '/home/nuc/navigation2026/map/map_test.yaml'
+    default_stair_mask = "/home/nuc/navigation2026/map/stair_test.yaml"
     
     # 注意: map → odom TF 现在由 localization_initializer (NDT重定位) 发布
     # 不再需要临时的 static_tf_map_odom
@@ -42,6 +48,8 @@ def generate_launch_description():
     # )
     
     return LaunchDescription([
+        SetEnvironmentVariable('LD_LIBRARY_PATH', ld_library_path),
+
         DeclareLaunchArgument(
             'params_file',
             default_value=os.path.join(pkg_dir, 'config', 'nav_params.yaml'),

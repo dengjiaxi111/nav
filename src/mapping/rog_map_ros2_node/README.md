@@ -3,8 +3,8 @@
 `rog_map_ros2_node` 是 `rog_map` 的 ROS2 包装层，提供：
 
 - `rog_map_node`：ROG-Map 3D 概率地图
-- `map_2d_projector`：3D→2D 投影（在 `rog_map_node` 内部创建）
-- `stair_detector_node`：台阶检测（独立节点）
+- `integration_node`：ROG-Map 3D 概率地图 + 2D 投影
+- `map_2d_projector`：3D→2D 投影
 
 ## 目录结构（当前有效）
 
@@ -16,9 +16,9 @@ rog_map_ros2_node/
 ├── launch/
 │   └── rog_map.launch.py        # ROG-Map + 2D投影 + RViz
 ├── src/
-│   ├── rog_map_node.cpp         # 实例化 ROGMapROS + Map2DProjector
-│   ├── map_2d_projector.cpp     # 3D→2D 投影
-│   └── stair_detector.cpp       # 台阶检测
+│   ├── rog_map_node.cpp         # 独立 ROG-Map 3D 建图
+│   ├── integration_component.cpp # ROG-Map + 2D投影集成节点
+│   └── map_2d_projector.cpp     # 3D→2D 投影
 └── rviz/
     └── rog_map.rviz
 ```
@@ -29,7 +29,6 @@ rog_map_ros2_node/
 | --- | --- | --- | --- |
 | ROG-Map核心 | `config/rog_map_config.yaml` | 库内部读取 | `-p config_file:=...` |
 | 2D投影器 | `config/projector_params.yaml` | ROS2参数 | `parameters=[projector_params.yaml]` |
-| 台阶检测 | 由外部launch传入 | ROS2参数 | `stair_detector_node` 参数文件 |
 
 > `rog_map_config.yaml` 不再包含 `projector` 配置，避免“改了不生效”。
 
@@ -57,22 +56,6 @@ ros2 launch rog_map_ros2_node rog_map.launch.py
 | 发布 | `/rog_map/occ` | 原始占据点云 |
 | 发布 | `/rog_map/map_2d` | 2D投影地图（OccupancyGrid） |
 
-## 已知问题（需注意）
+## 说明
 
-1. **`rog_map.launch.py` 中台阶检测参数为空**
-   - 当前从 `rog_map_config.yaml` 读取 `stair_detector`，但文件内已移除该段。
-   - 结果：`stair_detector_node` 使用默认值。
-   - 建议：为台阶检测增加标准参数文件并在 launch 中传入。
-
-2. **README 曾包含不存在模块**
-   - 旧文档中提到 `obstacle_perception`/`integration.launch.py` 等文件，当前仓库已不存在。
-
----
-
-如需我继续：
-
-- 补齐 `stair_detector` 参数文件与 launch 对接
-- 统一各参数默认值与配置注释
-- 添加一页“参数快速对照表”
-
-请直接告诉我范围。
+台阶检测模块已从 `rog_map_ros2_node` 中移除；当前包只负责 3D ROG-Map 和 2D 投影。

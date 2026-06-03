@@ -27,9 +27,16 @@ include_directories(include)
 
 # ========== NMPC acados solver 集成 ==========
 set(ACADOS_SOLVER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nmpc_solver)
+set(ACADOS_SOURCE_DIR "$ENV{ACADOS_SOURCE_DIR}" CACHE PATH "acados install/source prefix")
+if(NOT ACADOS_SOURCE_DIR)
+    set(ACADOS_SOURCE_DIR "/home/nuc/dependency/acados" CACHE PATH "acados install/source prefix" FORCE)
+endif()
+set(ACADOS_INCLUDE_DIR ${ACADOS_SOURCE_DIR}/include)
+set(ACADOS_LIB_DIR ${ACADOS_SOURCE_DIR}/lib)
 
 if(EXISTS ${ACADOS_SOLVER_DIR}/libacados_ocp_solver_wheelleg_nmpc.so)
     message(STATUS "✓ 找到 NMPC solver: ${ACADOS_SOLVER_DIR}")
+    message(STATUS "✓ 使用 acados: ${ACADOS_SOURCE_DIR}")
     
     # 添加 acados include 路径
     include_directories(${ACADOS_SOLVER_DIR})
@@ -78,18 +85,18 @@ ament_target_dependencies(two_point_patrol ${DEPS})
 
 target_include_directories(nav_server
   PRIVATE
-    $ENV{ACADOS_SOURCE_DIR}/include
-    $ENV{ACADOS_SOURCE_DIR}/include/blasfeo/include
-    $ENV{ACADOS_SOURCE_DIR}/include/hpipm/include
+    ${ACADOS_INCLUDE_DIR}
+    ${ACADOS_INCLUDE_DIR}/blasfeo/include
+    ${ACADOS_INCLUDE_DIR}/hpipm/include
 )
 
 # 链接 acados solver
 if(HAS_NMPC)
     target_link_libraries(nav_server 
         acados_nmpc_solver
-        $ENV{ACADOS_SOURCE_DIR}/lib/libacados.so
-        $ENV{ACADOS_SOURCE_DIR}/lib/libhpipm.so
-        $ENV{ACADOS_SOURCE_DIR}/lib/libblasfeo.so
+        ${ACADOS_LIB_DIR}/libacados.so
+        ${ACADOS_LIB_DIR}/libhpipm.so
+        ${ACADOS_LIB_DIR}/libblasfeo.so
     )
 endif()
 

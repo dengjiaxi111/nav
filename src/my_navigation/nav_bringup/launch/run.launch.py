@@ -31,6 +31,12 @@ def generate_launch_description():
     nav_bringup_dir = get_package_share_directory('nav_bringup')
     rog_map_dir = get_package_share_directory('rog_map_ros2_node')
     loc_init_dir = get_package_share_directory('localization_initializer')
+    acados_lib_dir = '/home/nuc/dependency/acados/lib'
+    existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+    ld_library_path = (
+        acados_lib_dir if not existing_ld_library_path
+        else f"{acados_lib_dir}:{existing_ld_library_path}"
+    )
     
     # ==================== 配置文件 ====================
     nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
@@ -65,7 +71,6 @@ def generate_launch_description():
 
     rog_map_config = os.path.join(rog_map_dir, 'config', 'rog_map_config.yaml')
     projector_params = os.path.join(rog_map_dir, 'config', 'projector_params.yaml')
-    stair_detector_params = os.path.join(rog_map_dir, 'config', 'stair_detector_params.yaml')
     
     # RViz 配置 - 使用导航专用配置
     rviz_config_file = os.path.join(nav_bringup_dir, 'rviz', 'navigation_full.rviz')
@@ -95,6 +100,12 @@ def generate_launch_description():
         description='使用仿真时间'
     )
 
+    declare_enable_lio = DeclareLaunchArgument(
+        'enable_lio',
+        default_value='true',
+        description='true: 启动 small_point_lio; false: 用 bag 中已有的 /cloud_registered、/Odometry 和 odom->base_link'
+    )
+
     declare_use_static_map_odom = DeclareLaunchArgument(
         'use_static_map_odom',
         default_value=default_use_static_map_odom,
@@ -118,7 +129,8 @@ def generate_launch_description():
         ]),
         launch_arguments={
             'use_sim_time': LaunchConfiguration('use_sim_time')
-        }.items()
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('enable_lio'))
     )
 
     # ==================== 2. NDT 重定位 (map → odom TF) ====================
@@ -194,7 +206,7 @@ def generate_launch_description():
     )
 
     
-    # ==================== 2. ROG-Map 集成节点 (3D地图 + 2D投影 + 台阶检测) ====================
+    # ==================== 2. ROG-Map 集成节点 (3D地图 + 2D投影) ====================
     # 使用组件化的 integration_node，直接调用内部 API，避免 topic 开销
     integration_node = Node(
         package='rog_map_ros2_node',
@@ -203,7 +215,6 @@ def generate_launch_description():
         parameters=[
             {'config_file': LaunchConfiguration('rog_map_config_file')},
             projector_params,
-            stair_detector_params,
             {'use_sim_time': LaunchConfiguration('use_sim_time')}
         ],
         output='screen',
@@ -244,12 +255,14 @@ def generate_launch_description():
     return LaunchDescription([
         # 增加栈空间到 16MB，避免大点云处理时栈溢出
         SetEnvironmentVariable('ROS_STACK_SIZE', '16777216'),
+        SetEnvironmentVariable('LD_LIBRARY_PATH', ld_library_path),
 
         # 声明参数
         declare_nav_params,
         declare_rog_map_config,
         declare_rviz_config,
         declare_use_sim_time,
+        declare_enable_lio,
         declare_use_static_map_odom,
         declare_debug_reset_odom_to_base,
         
@@ -259,7 +272,7 @@ def generate_launch_description():
         static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0 等待 RViz)
         odom_base_debug_rebaser,   # 2c. 调试模式: 强制 odom==base_link
         pcd_map_publisher_node,    # 2b. 静态 TF 模式下发布地图点云
-        integration_node,          # 3. ROG-Map (3D地图 + 2D投影 + 台阶检测)
+        integration_node,          # 3. ROG-Map (3D地图 + 2D投影)
         navigation_launch,         # 4. 导航服务器 (规划 + NMPC)
         rviz_node,                 # 5. RViz (含 2D Pose Estimate)
     ])

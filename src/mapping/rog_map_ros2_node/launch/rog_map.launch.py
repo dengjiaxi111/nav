@@ -24,8 +24,6 @@ def generate_launch_description():
     )
     
     projector_params_file = os.path.join(config_dir, 'projector_params.yaml')
-    stair_detector_params_file = os.path.join(config_dir, 'stair_detector_params.yaml')
-    
     rviz_config = os.path.join(package_dir, 'rviz', 'rog_map.rviz')
     
     # ROG-Map 节点
@@ -36,18 +34,6 @@ def generate_launch_description():
         parameters=[
             {'config_file': LaunchConfiguration('config_file')},
             projector_params_file,
-            {'use_sim_time': LaunchConfiguration('use_sim_time')}
-        ],
-        output='screen'
-    )
-    
-    # 台阶检测节点
-    stair_detector_node = Node(
-        package='rog_map_ros2_node',
-        executable='stair_detector_node',
-        name='stair_detector',
-        parameters=[
-            stair_detector_params_file,
             {'use_sim_time': LaunchConfiguration('use_sim_time')}
         ],
         output='screen'
@@ -67,6 +53,5 @@ def generate_launch_description():
         declare_use_sim_time,
         config_file_arg,
         rog_map_node,
-        stair_detector_node,
         rviz_node
     ])

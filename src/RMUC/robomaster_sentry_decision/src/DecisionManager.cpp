@@ -251,8 +251,7 @@ void DecisionManager::transitionTo(State new_state) {
             break;
         case State::INIT_MOVE:
             blackboard_->startBehavior(BehaviorType::INIT_MOVE, constrainTargetPoint(blackboard_->getAttackPoint(), false), 0.0);
-            blackboard_->updateControlMsg(isInitAttackForcedTimerActive() ? GIMBAL_OUTPOST : GIMBAL_ENEMY,
-                                          SPIN_OFF, POSTURE_MOVE);
+            blackboard_->updateControlMsg(GIMBAL_OUTPOST, SPIN_OFF, POSTURE_MOVE);
             break;
         case State::INIT_ATTACK:
             blackboard_->current_behavior.type = BehaviorType::INIT_ATTACK;

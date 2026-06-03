@@ -10,10 +10,10 @@ def generate_launch_description():
             name='removing_ground',
             output='screen',
             parameters=[{
-                #存放pcd文件的路径
-                'pcd_path': '/home/li/navigation2026/src/tools/pcd_transform/RMUC_final.pcd',
+                 #存放pcd文件的路径
+                'pcd_path': '/home/nuc/navigation2026/src/localization/small_point_lio/pcd/scan.pcd',
                 #pcd文件输出路径
-                'output_path': '/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd',
+                'output_path': '/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd',
                 # none: 不旋转; auto: 平面拟合自动旋平; manual_extrinsic: 使用旧的固定外参旋转
                 'level_method': 'manual_extrinsic',
                 # 自动拟合主地面平面并旋平：保证后续PGM沿真实竖直方向投影
@@ -34,17 +34,17 @@ def generate_launch_description():
                 # 若后续候选比第一个大平面低超过该阈值，认为已找到地面并提前停止
                 'level_early_stop_below_first_m': 0.10,
                 # manual_extrinsic 模式参数，默认恢复旧实现的三段变换
-                'manual_level_roll1': 0.5,
+                'manual_level_roll1': 0.5236,
                 'manual_level_pitch1': 0.0,
                 'manual_level_yaw1': 0.0,
                 'manual_level_roll2': 0.0,
                 'manual_level_pitch2': 0.0,
-                'manual_level_yaw2': -1.5708,
+                'manual_level_yaw2': 1.5708,
                 'manual_level_x': 0.2,
                 'manual_level_y': 0.0,
                 'manual_level_z': 0.05,
                 # 保存旋平后的完整点云，方便RViz检查；PGM仍使用去地面后的output_path
-                'leveled_full_output_path': '/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
+                'leveled_full_output_path': '/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
             }])
 
     pcd2pgm = Node(
@@ -54,13 +54,13 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 #存放pcd文件的路径
-                'file_directory': '/home/li/navigation2026/src/tools/pcd2pgm/save_pcd/',
+                'file_directory': '/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/',
                 #pcd文件名称
                 'file_name': 'GlobalMap_processed',
                 #选取的范围　最小的高度
                 'thre_z_min': 0.05,
                 #选取的范围　最大的高度
-                'thre_z_max': 1.6,
+                'thre_z_max': 2.0,
                 #0 选取高度范围内的，１选取高度范围外的
                 'flag_pass_through': 0,
                 #半径滤波的半径
@@ -98,7 +98,7 @@ def handle_pcd2pgm_output(event: ProcessIO):
             name = 'map_saver_cli',
             output = 'screen',
             parameters=[{}],
-            arguments = ['-f', '/home/li/navigation2026/map/map']
+            arguments = ['-f', '/home/nuc/navigation2026/map/map']
     )
     output = event.text.decode().strip()
     print(output)

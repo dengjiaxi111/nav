@@ -52,9 +52,6 @@ def generate_launch_description():
     default_loc_config = os.path.join(loc_init_dir, "config", "initializer_omni.yaml")
     default_rog_map_config = os.path.join(rog_map_dir, "config", "rog_map_omni.yaml")
     default_projector_params = os.path.join(rog_map_dir, "config", "projector_omni.yaml")
-    default_stair_detector_params = os.path.join(
-        rog_map_dir, "config", "stair_detector_omni.yaml"
-    )
     default_rviz_config = os.path.join(nav_bringup_dir, "rviz", "navigation_full.rviz")
 
     default_use_static_map_odom = _bool_default_from_nav_params(
@@ -84,11 +81,6 @@ def generate_launch_description():
         "projector_params_file",
         default_value=default_projector_params,
         description="ROG-Map 2D projector parameter file",
-    )
-    declare_stair_detector_params = DeclareLaunchArgument(
-        "stair_detector_params_file",
-        default_value=default_stair_detector_params,
-        description="Stair detector parameter file; kept for integration_node compatibility",
     )
     declare_rviz_config = DeclareLaunchArgument(
         "rviz_config",
@@ -254,11 +246,9 @@ def generate_launch_description():
         parameters=[
             {"config_file": LaunchConfiguration("rog_map_config_file")},
             LaunchConfiguration("projector_params_file"),
-            LaunchConfiguration("stair_detector_params_file"),
             {
                 "projector.frame_id": LaunchConfiguration("rog_map_frame"),
                 "projector.topic_name": LaunchConfiguration("dynamic_layer_topic"),
-                "stair_detector.map_frame": LaunchConfiguration("rog_map_frame"),
             },
             {"use_sim_time": LaunchConfiguration("use_sim_time")},
         ],
@@ -343,7 +333,6 @@ def generate_launch_description():
         declare_localization_config,
         declare_rog_map_config,
         declare_projector_params,
-        declare_stair_detector_params,
         declare_rviz_config,
         declare_use_sim_time,
         declare_use_static_map_odom,

@@ -236,6 +236,7 @@ namespace rog_map {
 
             loader.LoadParam(name_space + "/virtual_ground_height", virtual_ground_height, -0.1);
             loader.LoadParam(name_space + "/virtual_ceil_height", virtual_ceil_height, -0.1);
+            loader.LoadParam(name_space + "/enable_performance_log", enable_performance_log, false);
 
             resetMapSize();
 
@@ -368,6 +369,7 @@ namespace rog_map {
         /* Fading - decay obstacles not seen for a long time */
         bool fading_enable{false};
         int fading_frame_thresh{500};  // Frames before an occupied cell fades to unknown
+        bool enable_performance_log{false};
 
         /* for unknown inflation */
         bool unk_inflation_en{false};

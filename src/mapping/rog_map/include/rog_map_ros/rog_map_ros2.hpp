@@ -240,23 +240,24 @@ namespace rog_map {
             auto t_update_end = std::chrono::high_resolution_clock::now();
             double update_ms = std::chrono::duration<double, std::milli>(t_update_end - t_update_start).count();
 
-            // Log statistics every 50 frames
-            static int update_count = 0;
-            static double update_sum = 0.0, update_max = 0.0, update_min = 1e6;
-            update_sum += update_ms;
-            update_max = std::max(update_max, update_ms);
-            update_min = std::min(update_min, update_ms);
-            update_count++;
+            if (cfg_.enable_performance_log) {
+                static int update_count = 0;
+                static double update_sum = 0.0, update_max = 0.0, update_min = 1e6;
+                update_sum += update_ms;
+                update_max = std::max(update_max, update_ms);
+                update_min = std::min(update_min, update_ms);
+                update_count++;
 
-            if (update_count % 5000 == 0) {
-                double update_avg = update_sum / update_count;
-                std::cout << YELLOW << "[ROG-Map Update Perf] frames=" << update_count
-                          << " avg=" << update_avg << "ms"
-                          << " min=" << update_min << "ms"
-                          << " max=" << update_max << "ms" << RESET << std::endl;
+                if (update_count % 5000 == 0) {
+                    double update_avg = update_sum / update_count;
+                    std::cout << YELLOW << "[ROG-Map Update Perf] frames=" << update_count
+                              << " avg=" << update_avg << "ms"
+                              << " min=" << update_min << "ms"
+                              << " max=" << update_max << "ms" << RESET << std::endl;
+                }
+
+                writeTimeConsumingToLog(time_log_file_);
             }
-
-            writeTimeConsumingToLog(time_log_file_);
         }
 
         void stopUpdateWorker() {

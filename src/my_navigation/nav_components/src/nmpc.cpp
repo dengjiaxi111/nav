@@ -530,8 +530,6 @@ nav_core::ControlResult NMPC::computeVelocity(
     double alpha_cmd = u_opt[1];
     double v_cmd = x0[5] + a_cmd * dt;
     double omega_cmd = x0[6] + alpha_cmd * dt;
-    const double ref_v0 = yref_sequence.front()[3];
-    const double ref_omega0 = yref_sequence.front()[4];
     
     // 限幅
     if (!params_.allow_reverse) {
@@ -544,12 +542,6 @@ nav_core::ControlResult NMPC::computeVelocity(
         v_cmd = std::min(v_cmd, goal_v_limit);
     }
     if (pivot_turn_active_) {
-        if (std::abs(v_cmd) > 1e-4) {
-            RCLCPP_INFO_THROTTLE(
-                node_->get_logger(), *node_->get_clock(), 500,
-                "NMPC pivot hold: forcing v_cmd %.3f -> 0.000, heading_err=%.1fdeg, dist=%.3f",
-                v_cmd, pivot_turn_heading_error_ * 180.0 / M_PI, dist);
-        }
         v_cmd = 0.0;
     }
     
@@ -598,15 +590,6 @@ nav_core::ControlResult NMPC::computeVelocity(
         speed_observation_pub_->publish(obs);
     }
 
-    if (std::abs(v_cmd) < 1e-3 && std::abs(omega_cmd) > 0.1) {
-        RCLCPP_WARN_THROTTLE(
-            node_->get_logger(), *node_->get_clock(), 500,
-            "NMPC zero linear cmd: dist=%.3f ref_v0=%.3f ref_w0=%.3f a_cmd=%.3f alpha_cmd=%.3f "
-            "x0_v=%.3f x0_vcmd=%.3f nearest_idx=%d",
-            dist, ref_v0, ref_omega0, a_cmd, alpha_cmd,
-            x0[3], x0[5], nearest_idx_);
-    }
-    
     // 更新状态: last_state_[3]/[4] 保存实际速度估计, last_state_[5]/[6] 保存命令速度状态.
     // 在开环或低里程计反馈权重下, 用最终下发命令按一阶滞后模型滚动一拍,
     // 避免把实际速度直接写成命令速度而抹掉模型中的滞后误差.
@@ -745,12 +728,10 @@ double NMPC::applyCapacitorOutputLimit(
     geometry_msgs::msg::Twist& cmd_vel)
 {
     double filtered_voltage = 0.0;
-    double raw_voltage = 0.0;
     bool voltage_received = false;
     {
         std::lock_guard<std::mutex> lock(odom_mutex_);
         filtered_voltage = capacitor_voltage_filtered_;
-        raw_voltage = capacitor_voltage_raw_;
         voltage_received = capacitor_voltage_received_;
     }
 
@@ -779,15 +760,6 @@ double NMPC::applyCapacitorOutputLimit(
         cmd_vel.angular.z = prev_w + std::clamp(cmd_vel.angular.z - prev_w,
                                                 -dw_limit, dw_limit);
     }
-
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(), *node_->get_clock(), 1000,
-        "NMPC 电容限幅: Vraw=%.2fV, Vf=%.2fV, scale=%.2f, vx=%.2f, wz=%.2f",
-        raw_voltage,
-        filtered_voltage,
-        scale,
-        cmd_vel.linear.x,
-        cmd_vel.angular.z);
 
     return scale;
 }
@@ -1027,13 +999,6 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
         updateNMPCParameters();
     }
 
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(), *node_->get_clock(), 1000,
-        "NMPC 参数热更新生效: v_max=%.2f a_acc=%.2f a_dec=%.2f v_cruise=%.2f ay_max=%.2f window=%.2f",
-        params_.max_linear_vel, params_.max_linear_accel, params_.max_linear_decel,
-        params_.speed_profile_v_cruise, params_.speed_profile_max_lateral_accel,
-        params_.speed_profile_curvature_window_m);
-
     return result;
 }
 
@@ -1232,13 +1197,6 @@ bool NMPC::applyStartupAlignmentGate(
         speed_observation_pub_->publish(obs);
     }
 
-    RCLCPP_INFO_THROTTLE(
-        node_->get_logger(), *node_->get_clock(), 500,
-        "NMPC startup align: holding v=0, heading_err=%.1fdeg, target=%.1fdeg, w=%.2f",
-        startup_align_heading_error_ * 180.0 / M_PI,
-        target_yaw * 180.0 / M_PI,
-        omega_cmd);
-
     return true;
 }
 
@@ -1426,20 +1384,6 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
                     desired_v = std::max(params_.speed_profile_v_min, desired_v);
                 }
 
-                if (i == 0 &&
-                    (dist_to_goal_now < s_brake ||
-                     desired_v < 0.05 || pivot_turn_stop)) {
-                    RCLCPP_INFO_THROTTLE(
-                        node_->get_logger(), *node_->get_clock(), 500,
-                        "NMPC ref[0]: dist_goal=%.3f remain=%.3f v_ref=%.3f v_limit=%.3f "
-                        "v_curve=%.3f heading_err=%.1fdeg pivot_stop=%d remain_stop=%d "
-                        "idx=%d",
-                        dist_to_goal_now, remaining_dist, desired_v, v_limit,
-                        v_curve_limit, heading_err * 180.0 / M_PI,
-                        pivot_turn_stop, remaining_dist_stop,
-                        nearest_idx_);
-                }
-                
                 // 速度-几何解耦：
                 // 不再使用 implicit_v = step_dist / dt 对 desired_v 做硬钳制，
                 // 避免“前视长度同时决定几何与速度上限”的参数耦合。
@@ -1535,9 +1479,6 @@ int NMPC::findNearestPathPoint(const geometry_msgs::msg::Pose& pose) {
     // 阶段2: 回退机制 - 如果偏离过远,执行全局搜索
     const double deviation_threshold = 2.0;  // 2米阈值
     if (min_dist > deviation_threshold) {
-        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
-            "NMPC: 机器人偏离路径过远 (%.2f m > %.2f m)", 
-            min_dist, deviation_threshold);
         used_global_relocalization = true;
         
         min_dist = std::numeric_limits<double>::max();

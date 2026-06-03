@@ -277,6 +277,12 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
 
     // ------------------ RobotStatus ------------------
     robot_status_.robot_id = msg._robot_id;
+    // RCLCPP_INFO_THROTTLE(
+    //     this->get_logger(),
+    //     *this->get_clock(),
+    //     1000,
+    //     "myprotocol.hpp:233:17 _robot_id=%u",
+    //     static_cast<unsigned>(msg._robot_id));
     robot_status_.x = msg._x;
     robot_status_.y = msg._y;
     robot_status_.angle = msg._angle;

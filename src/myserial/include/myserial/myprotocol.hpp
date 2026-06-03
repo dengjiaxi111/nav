@@ -70,7 +70,7 @@ namespace rm
         // 1B
         uint8_t _mode_cmd = 0;
         /*
-            bit0: autodrivemode: 0-abnormal;1-normal;
+            bit0: _send_frame_._sentry_cmd: 0-abnormal;1-normal;
             bit1-2: gimbalmode: 00:stop; 01:patrol&aim; 10:target_angle(single_shot); 11:small_buff
             bit3-4: chassismode: 00-stop; 01-spin_high; 10-spin_low; 11-follow
             bit5: buybullet
@@ -195,7 +195,7 @@ namespace rm
          * @brief: 接收自瞄相关数据 
          */
         // 14B
-        uint8_t _enemy_outpost_alive = 0; // 雷达前哨站存活状态：1 存活，0 已摧毁
+        uint8_t _enemy_outpost_alive = 0; // 敌方前哨站是否存活：0 死亡，1 存活
         float _base_yaw = 0; // 大小yaw偏角
         float leg_length =0;
         uint8_t _enemy_id = 0;

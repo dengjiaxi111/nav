@@ -775,6 +775,7 @@ private:
                                static_cast<double>(std::max<std::size_t>(1, transformed->size()));
 
         if (valid_distances.empty()) {
+            metrics.trimmed_distance = max_correspondence_dist * 10.0;
             return metrics;
         }
 
@@ -1883,6 +1884,22 @@ private:
             RCLCPP_INFO(get_logger(), "📊 三阶段纯 NDT 最终质量: score=%.4f trim=%.4f inlier=%.3f ndt=%.3f",
                        final_combined_score, final_quality.trimmed_distance,
                        final_quality.inlier_ratio, final_ndt_score);
+
+            if (final_quality.valid_points == 0 ||
+                !std::isfinite(final_quality.trimmed_distance) ||
+                !std::isfinite(final_ndt_score)) {
+                RCLCPP_ERROR(
+                    get_logger(),
+                    "❌ 配准质量不可信，拒绝发布 TF: valid=%d/%zu, inlier=%.3f, "
+                    "trim=%.4f, ndt=%.3f",
+                    final_quality.valid_points,
+                    scan_cloud->size(),
+                    final_quality.inlier_ratio,
+                    final_quality.trimmed_distance,
+                    final_ndt_score
+                );
+                return false;
+            }
         } else {
             RCLCPP_WARN(get_logger(), "⚠️ GICP 已启用 (不推荐!)，跳过 NDT 阶段3");
         }
