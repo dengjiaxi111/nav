@@ -15,15 +15,58 @@
 
 namespace small_point_lio {
 
+    void SmallPointLioNode::cacheExtrinsicTransform(const geometry_msgs::msg::TransformStamped& transform) {
+        // lookupTransform(lidar_frame, "base_link", t) 返回的是 T_lidar_base。
+        // 保持原变量名和后续计算兼容：T_base_to_lidar_ 实际缓存 T_lidar_base。
+        T_base_to_lidar_ = Eigen::Isometry3f::Identity();
+        T_base_to_lidar_.translation() <<
+                static_cast<float>(transform.transform.translation.x),
+                static_cast<float>(transform.transform.translation.y),
+                static_cast<float>(transform.transform.translation.z);
+        T_base_to_lidar_.linear() = Eigen::Quaternionf(
+                static_cast<float>(transform.transform.rotation.w),
+                static_cast<float>(transform.transform.rotation.x),
+                static_cast<float>(transform.transform.rotation.y),
+                static_cast<float>(transform.transform.rotation.z))
+                .toRotationMatrix();
+
+        T_lidar_to_base_ = T_base_to_lidar_.inverse();
+        tf2::fromMsg(transform.transform, tf_base_link_to_lidar_);
+    }
+
+    bool SmallPointLioNode::updateDynamicExtrinsic(const builtin_interfaces::msg::Time& stamp) {
+        try {
+            const auto transform = tf_buffer->lookupTransform(
+                    lidar_frame_, "base_link", rclcpp::Time(stamp));
+            cacheExtrinsicTransform(transform);
+            return true;
+        } catch (tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                "Dynamic extrinsic TF %s -> base_link at stamp %d.%09u unavailable: %s",
+                lidar_frame_.c_str(), stamp.sec, stamp.nanosec, ex.what());
+            return false;
+        }
+    }
+
     SmallPointLioNode::SmallPointLioNode(const rclcpp::NodeOptions &options)
         : Node("small_point_lio", options) {
         std::string lidar_topic = declare_parameter<std::string>("lidar_topic");
         std::string imu_topic = declare_parameter<std::string>("imu_topic");
         std::string lidar_type = declare_parameter<std::string>("lidar_type");
         std::string lidar_frame = declare_parameter<std::string>("lidar_frame");
+        lidar_frame_ = lidar_frame;
+        std::string lidar_mount_mode = declare_parameter<std::string>("lidar_mount_mode", "fixed");
+        if (lidar_mount_mode == "gimbal_yaw") {
+            use_dynamic_lidar_extrinsic_ = true;
+        } else if (lidar_mount_mode != "fixed") {
+            RCLCPP_WARN(get_logger(),
+                "Unknown lidar_mount_mode '%s', falling back to fixed",
+                lidar_mount_mode.c_str());
+        }
         bool save_pcd = declare_parameter<bool>("save_pcd");
         gravity_alignment_enabled_ = declare_parameter<bool>("gravity_alignment", true);
         gravity_alignment_debug_ = declare_parameter<bool>("gravity_alignment_debug", false);
+        RCLCPP_INFO(get_logger(), "LiDAR mount mode: %s", use_dynamic_lidar_extrinsic_ ? "gimbal_yaw" : "fixed");
         
         RCLCPP_INFO(get_logger(), "Gravity alignment enabled: %s", gravity_alignment_enabled_ ? "true" : "false");
         if (gravity_alignment_debug_) {
@@ -55,27 +98,16 @@ namespace small_point_lio {
                     auto transform = tf_buffer->lookupTransform(
                         lidar_frame, "base_link", tf2::TimePointZero);
 
-                    // 缓存 base_link → lidar 变换，然后求逆得到 lidar → base_link
-                    T_base_to_lidar_ = Eigen::Isometry3f::Identity();
-                    T_base_to_lidar_.translation() <<
-                            static_cast<float>(transform.transform.translation.x),
-                            static_cast<float>(transform.transform.translation.y),
-                            static_cast<float>(transform.transform.translation.z);
-                    T_base_to_lidar_.linear() = Eigen::Quaternionf(
-                            static_cast<float>(transform.transform.rotation.w),
-                            static_cast<float>(transform.transform.rotation.x),
-                            static_cast<float>(transform.transform.rotation.y),
-                            static_cast<float>(transform.transform.rotation.z))
-                            .toRotationMatrix();
-
-                    // lidar → base_link（用于点云变换）
-                    T_lidar_to_base_ = T_base_to_lidar_.inverse();
-
-                    // 缓存 tf2::Transform 用于 TF 广播
-                    tf2::fromMsg(transform.transform, tf_base_link_to_lidar_);
+                    cacheExtrinsicTransform(transform);
 
                     extrinsic_valid_ = true;
-                    RCLCPP_INFO(get_logger(), "Extrinsic calibration cached: base_link -> %s", lidar_frame.c_str());
+                    if (use_dynamic_lidar_extrinsic_) {
+                        RCLCPP_INFO(get_logger(),
+                            "Dynamic extrinsic TF chain is available: base_link -> ... -> %s",
+                            lidar_frame.c_str());
+                    } else {
+                        RCLCPP_INFO(get_logger(), "Extrinsic calibration cached: base_link -> %s", lidar_frame.c_str());
+                    }
                 } catch (tf2::TransformException &ex) {
                     retry_count++;
                     if (retry_count >= 10) {
@@ -147,6 +179,10 @@ namespace small_point_lio {
             builtin_interfaces::msg::Time time_msg;
             time_msg.sec = std::floor(odometry.timestamp);
             time_msg.nanosec = static_cast<uint32_t>((odometry.timestamp - time_msg.sec) * 1e9);
+
+            if (use_dynamic_lidar_extrinsic_ && !updateDynamicExtrinsic(time_msg)) {
+                return;
+            }
 
             geometry_msgs::msg::TransformStamped transform_stamped;
             transform_stamped.header.stamp = time_msg;
@@ -387,6 +423,10 @@ namespace small_point_lio {
                 builtin_interfaces::msg::Time time_msg;
                 time_msg.sec = std::floor(last_odometry.timestamp);
                 time_msg.nanosec = static_cast<uint32_t>((last_odometry.timestamp - time_msg.sec) * 1e9);
+
+                if (use_dynamic_lidar_extrinsic_ && !updateDynamicExtrinsic(time_msg)) {
+                    return;
+                }
 
                 // ============================================================
                 // 点云变换流程：

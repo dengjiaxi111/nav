@@ -100,6 +100,12 @@ def generate_launch_description():
         description='使用仿真时间'
     )
 
+    declare_lidar_mount_mode = DeclareLaunchArgument(
+        'lidar_mount_mode',
+        default_value='fixed',
+        description='fixed: 原底盘固定雷达TF; gimbal_yaw: 云台yaw雷达TF链'
+    )
+
     declare_enable_lio = DeclareLaunchArgument(
         'enable_lio',
         default_value='true',
@@ -128,9 +134,35 @@ def generate_launch_description():
             ])
         ]),
         launch_arguments={
-            'use_sim_time': LaunchConfiguration('use_sim_time')
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'lidar_mount_mode': LaunchConfiguration('lidar_mount_mode'),
         }.items(),
         condition=IfCondition(LaunchConfiguration('enable_lio'))
+    )
+
+    gimbal_yaw_tf_node = Node(
+        package='nav_bringup',
+        executable='gimbal_yaw_tf_publisher.py',
+        name='gimbal_yaw_tf_publisher',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('lidar_mount_mode'), "' == 'gimbal_yaw'"
+        ])),
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'gimbal_angle_topic': '/ChassisOdom',
+            'parent_frame': 'base_link',
+            'child_frame': 'gimbal_yaw_link',
+            # 实车若云台旋转轴不在 base_link 原点，直接改这里的三维偏移。
+            'gimbal_axis_x': 0.0,
+            'gimbal_axis_y': 0.0,
+            'gimbal_axis_z': 0.0,
+            'yaw_unit': 'deg',
+            'yaw_sign': 1.0,
+            'yaw_offset_rad': 0.0,
+            'publish_rate_hz': 100.0,
+            'publish_before_first_msg': True,
+        }],
+        output='screen'
     )
 
     # ==================== 2. NDT 重定位 (map → odom TF) ====================
@@ -259,11 +291,13 @@ def generate_launch_description():
         declare_local_obstacle_params,
         declare_rviz_config,
         declare_use_sim_time,
+        declare_lidar_mount_mode,
         declare_enable_lio,
         declare_use_static_map_odom,
         declare_debug_reset_odom_to_base,
         
         # 启动节点 (按依赖顺序)
+        gimbal_yaw_tf_node,       # 0. 云台 yaw TF (gimbal_yaw 模式)
         small_point_lio_launch,    # 1. LIO 里程计 (odom → base_link)
         localization_init_node,    # 2a. NDT 重定位 (map → odom)
         static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0 等待 RViz)

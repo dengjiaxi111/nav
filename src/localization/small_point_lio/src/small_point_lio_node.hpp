@@ -9,6 +9,8 @@
 #include "common/common.h"
 #include "lidar_adapter/base_lidar.h"
 #include "small_point_lio/small_point_lio.h"
+#include <builtin_interfaces/msg/time.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -43,6 +45,8 @@ namespace small_point_lio {
 
         // 缓存的静态外参变换（只在启动时计算一次）
         bool extrinsic_valid_{false};
+        bool use_dynamic_lidar_extrinsic_{false};
+        std::string lidar_frame_;
         Eigen::Isometry3f T_base_to_lidar_{Eigen::Isometry3f::Identity()};  // base_link -> lidar_frame
         Eigen::Isometry3f T_lidar_to_base_{Eigen::Isometry3f::Identity()};  // 点云变换用
         tf2::Transform tf_base_link_to_lidar_;  // TF 广播用
@@ -66,6 +70,8 @@ namespace small_point_lio {
 
         // 计算重力对齐变换
         void computeGravityAlignment(const Eigen::Vector3d& measured_gravity);
+        void cacheExtrinsicTransform(const geometry_msgs::msg::TransformStamped& transform);
+        bool updateDynamicExtrinsic(const builtin_interfaces::msg::Time& stamp);
 
     public:
         explicit SmallPointLioNode(const rclcpp::NodeOptions &options);

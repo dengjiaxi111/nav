@@ -8,6 +8,7 @@ install(DIRECTORY launch config maps rviz DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS
   scripts/static_relocator.py
   scripts/odom_base_debug_rebaser.py
+  scripts/gimbal_yaw_tf_publisher.py
   scripts/omni_cmd_adapter.py
   scripts/omni_stage3_check.py
   DESTINATION lib/${PROJECT_NAME}
