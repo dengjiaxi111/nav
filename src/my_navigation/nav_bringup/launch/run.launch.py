@@ -4,7 +4,7 @@
 启动组件:
   1. small_point_lio - LiDAR-惯性SLAM定位
   2. localization_initializer - NDT 三阶段重定位 (map → odom TF)
-  3. rog_map - 概率占用栅格地图
+  3. pointcloud_obstacle_layer - 点云局部障碍层
   4. nav_server - 导航服务器 (规划器 + NMPC控制器)
   5. RViz2 - 可视化 (含 2D Pose Estimate 支持)
 """
@@ -29,7 +29,7 @@ import yaml
 def generate_launch_description():
     # ==================== 包路径 ====================
     nav_bringup_dir = get_package_share_directory('nav_bringup')
-    rog_map_dir = get_package_share_directory('rog_map_ros2_node')
+    pointcloud_obstacle_dir = get_package_share_directory('pointcloud_obstacle_layer')
     loc_init_dir = get_package_share_directory('localization_initializer')
     acados_lib_dir = '/home/nuc/dependency/acados/lib'
     existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
@@ -69,8 +69,8 @@ def generate_launch_description():
     except Exception as e:
         print(f"[Warning] Failed to parse initializer_params.yaml for pcd map_file: {e}")
 
-    rog_map_config = os.path.join(rog_map_dir, 'config', 'rog_map_config.yaml')
-    projector_params = os.path.join(rog_map_dir, 'config', 'projector_params.yaml')
+    local_obstacle_params = os.path.join(
+        pointcloud_obstacle_dir, 'config', 'legged_local_obstacle.yaml')
     
     # RViz 配置 - 使用导航专用配置
     rviz_config_file = os.path.join(nav_bringup_dir, 'rviz', 'navigation_full.rviz')
@@ -82,10 +82,10 @@ def generate_launch_description():
         description='导航参数文件路径'
     )
     
-    declare_rog_map_config = DeclareLaunchArgument(
-        'rog_map_config_file',
-        default_value=rog_map_config,
-        description='ROG-Map 配置文件路径'
+    declare_local_obstacle_params = DeclareLaunchArgument(
+        'local_obstacle_params_file',
+        default_value=local_obstacle_params,
+        description='腿车点云局部障碍层参数文件路径'
     )
     
     declare_rviz_config = DeclareLaunchArgument(
@@ -206,27 +206,24 @@ def generate_launch_description():
     )
 
     
-    # ==================== 2. ROG-Map 集成节点 (3D地图 + 2D投影) ====================
-    # 使用组件化的 integration_node，直接调用内部 API，避免 topic 开销
-    integration_node = Node(
-        package='rog_map_ros2_node',
-        executable='integration_node',
-        name='rog_map_integration',
-        parameters=[
-            {'config_file': LaunchConfiguration('rog_map_config_file')},
-            projector_params,
-            {'use_sim_time': LaunchConfiguration('use_sim_time')}
-        ],
-        output='screen',
-        remappings=[
-            # small_point_lio 输出
-            ('/cloud_registered', '/cloud_registered'),
-            ('/Odometry', '/Odometry')
-        ]
+    # ==================== 3. 点云局部障碍层 ====================
+    # 输出仍使用 /rog_map/map_2d，保持 nav_server 的 dynamic_layer_topic 不变。
+    local_obstacle_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('pointcloud_obstacle_layer'),
+                'launch',
+                'local_obstacle_layer.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'params_file': LaunchConfiguration('local_obstacle_params_file'),
+            'use_sim_time': LaunchConfiguration('use_sim_time')
+        }.items()
     )
 
     
-    # ==================== 3. 导航服务器 (规划 + NMPC控制) ====================
+    # ==================== 4. 导航服务器 (规划 + NMPC控制) ====================
     navigation_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
@@ -241,7 +238,7 @@ def generate_launch_description():
         }.items()
     )
     
-    # ==================== 4. RViz2 ====================
+    # ==================== 5. RViz2 ====================
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -259,7 +256,7 @@ def generate_launch_description():
 
         # 声明参数
         declare_nav_params,
-        declare_rog_map_config,
+        declare_local_obstacle_params,
         declare_rviz_config,
         declare_use_sim_time,
         declare_enable_lio,
@@ -272,7 +269,7 @@ def generate_launch_description():
         static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0 等待 RViz)
         odom_base_debug_rebaser,   # 2c. 调试模式: 强制 odom==base_link
         pcd_map_publisher_node,    # 2b. 静态 TF 模式下发布地图点云
-        integration_node,          # 3. ROG-Map (3D地图 + 2D投影)
+        local_obstacle_launch,     # 3. 点云局部障碍层 (/cloud_registered -> /rog_map/map_2d)
         navigation_launch,         # 4. 导航服务器 (规划 + NMPC)
         rviz_node,                 # 5. RViz (含 2D Pose Estimate)
     ])
