@@ -36,6 +36,9 @@ nav_server:
     nmpc:
       odom_topic: "/Odometry/fake"
       chassis_odom_topic: "/Odometry/fake"
+      velocity_feedback_source: "last_state"
+      chassis_velocity_timeout_sec: 0.15
+      chassis_velocity_filter_alpha: 1.0
       odom_feedback_alpha: 0.0
 
       max_linear_vel: 0.5

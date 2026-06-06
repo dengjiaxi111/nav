@@ -77,6 +77,11 @@ void NMPC::initialize(rclcpp::Node* node) {
     node_->declare_parameter("nmpc.horizon_kappa_scale", params_.horizon_kappa_scale);
     node_->declare_parameter("nmpc.horizon_min_length", params_.horizon_min_length);
     node_->declare_parameter("nmpc.odom_feedback_alpha", params_.odom_feedback_alpha);
+    node_->declare_parameter("nmpc.velocity_feedback_source", params_.velocity_feedback_source);
+    node_->declare_parameter("nmpc.chassis_velocity_timeout_sec",
+                             params_.chassis_velocity_timeout_sec);
+    node_->declare_parameter("nmpc.chassis_velocity_filter_alpha",
+                             params_.chassis_velocity_filter_alpha);
     node_->declare_parameter("nmpc.vel_lag_tau", params_.vel_lag_tau);
     node_->declare_parameter("nmpc.omega_lag_tau", params_.omega_lag_tau);
     node_->declare_parameter("nmpc.capacitor_limit.v_safe", params_.capacitor_v_safe);
@@ -188,6 +193,13 @@ void NMPC::initialize(rclcpp::Node* node) {
         std::max(1e-4, params_.speed_profile_kappa_epsilon);
     params_.speed_profile_curvature_window_m =
         std::max(0.05, params_.speed_profile_curvature_window_m);
+    params_.velocity_feedback_source =
+        node_->get_parameter("nmpc.velocity_feedback_source").as_string();
+    params_.chassis_velocity_timeout_sec =
+        std::max(0.0, node_->get_parameter("nmpc.chassis_velocity_timeout_sec").as_double());
+    params_.chassis_velocity_filter_alpha =
+        std::clamp(node_->get_parameter("nmpc.chassis_velocity_filter_alpha").as_double(),
+                   0.0, 1.0);
     params_.enable_curvature_horizon_adapt =
         node_->get_parameter("nmpc.enable_curvature_horizon_adapt").as_bool();
     params_.horizon_kappa_scale =
@@ -292,14 +304,22 @@ void NMPC::initialize(rclcpp::Node* node) {
         "NMPC: 订阅底盘观测话题 %s (仅调试，不参与控制)",
         chassis_odom_topic.c_str());
 
-    std::string capacitor_voltage_topic =
+    std::string default_chassis_feedback_topic =
         node_->declare_parameter("nmpc.capacitor_voltage_topic", "/ChassisOdom");
-    capacitor_odom_sub_ = node_->create_subscription<robots_msgs::msg::ChassisOdom>(
-        capacitor_voltage_topic, rclcpp::SensorDataQoS(),
-        std::bind(&NMPC::capacitorOdomCallback, this, std::placeholders::_1));
+    std::string chassis_velocity_topic =
+        node_->declare_parameter("nmpc.chassis_velocity_topic", default_chassis_feedback_topic);
+    chassis_feedback_sub_ = node_->create_subscription<robots_msgs::msg::ChassisOdom>(
+        chassis_velocity_topic, rclcpp::SensorDataQoS(),
+        std::bind(&NMPC::chassisFeedbackCallback, this, std::placeholders::_1));
     RCLCPP_INFO(node_->get_logger(),
-        "NMPC: 电容限幅订阅 %s, V_low=%.2f, V_safe=%.2f, scale=(%.2f/%.2f/1.00), hysteresis=%.2fV, filter_alpha=%.2f",
-        capacitor_voltage_topic.c_str(),
+        "NMPC: ChassisOdom反馈订阅 %s, velocity_source=%s, timeout=%.2fs, vel_filter_alpha=%.2f",
+        chassis_velocity_topic.c_str(),
+        params_.velocity_feedback_source.c_str(),
+        params_.chassis_velocity_timeout_sec,
+        params_.chassis_velocity_filter_alpha);
+    RCLCPP_INFO(node_->get_logger(),
+        "NMPC: 电容限幅使用 %s, V_low=%.2f, V_safe=%.2f, scale=(%.2f/%.2f/1.00), hysteresis=%.2fV, filter_alpha=%.2f",
+        chassis_velocity_topic.c_str(),
         params_.capacitor_v_low,
         params_.capacitor_v_safe,
         params_.capacitor_low_scale,
@@ -384,6 +404,7 @@ nav_core::ControlResult NMPC::computeVelocity(
 {
     static int call_count = 0;
     call_count++;
+    const double dt = T_horizon_ / static_cast<double>(std::max(1, N_horizon_));
     
     if (!initialized_ || global_path_.poses.empty()) {
         if (call_count % 50 == 1) {
@@ -393,6 +414,9 @@ nav_core::ControlResult NMPC::computeVelocity(
         }
         cmd_vel.linear.x = 0.0;
         cmd_vel.angular.z = 0.0;
+        updateLastStateFromCommand(last_state_, 0.0, 0.0, dt);
+        std::fill(last_control_.begin(), last_control_.end(), 0.0);
+        predicted_stage1_valid_ = false;
         return nav_core::ControlResult::FAILED;
     }
     
@@ -402,27 +426,15 @@ nav_core::ControlResult NMPC::computeVelocity(
     x0[1] = current_pose.pose.position.y;
     x0[2] = tf2::getYaw(current_pose.pose.orientation);
     
-    // 速度反馈融合（缓解里程计滞后导致的“回正拖拽”）
-    // x0_vel = alpha * odom_vel + (1-alpha) * last_cmd_vel
-    // alpha 越小，越接近“轨迹发生器”行为，反向回正更积极
-    {
-        std::lock_guard<std::mutex> lock(odom_mutex_);
-        if (odom_received_) {
-            double odom_v = latest_odom_.twist.twist.linear.x;
-            double odom_w = latest_odom_.twist.twist.angular.z;
-            double a = params_.odom_feedback_alpha;
-            x0[3] = a * odom_v + (1.0 - a) * last_state_[3];
-            x0[4] = a * odom_w + (1.0 - a) * last_state_[4];
-        } else {
-            // 里程计尚未收到，使用上次输出（开环估计）
-            x0[3] = last_state_[3];
-            x0[4] = last_state_[4];
-            if (call_count % 100 == 1) {
-                RCLCPP_WARN(node_->get_logger(), 
-                    "NMPC: 未收到里程计，使用开环速度估计");
-            }
-        }
-    }
+    // 速度反馈融合：优先使用 ChassisOdom 实车速度；超时/无效时回退到 last_state_[3]/[4]。
+    double measured_v = last_state_[3];
+    double measured_w = last_state_[4];
+    const bool has_measured_velocity = getMeasuredVelocity(measured_v, measured_w);
+    const double velocity_feedback_alpha = params_.odom_feedback_alpha;
+    x0[3] = velocity_feedback_alpha * measured_v +
+        (1.0 - velocity_feedback_alpha) * last_state_[3];
+    x0[4] = velocity_feedback_alpha * measured_w +
+        (1.0 - velocity_feedback_alpha) * last_state_[4];
     x0[5] = last_state_[5];
     x0[6] = last_state_[6];
     
@@ -435,11 +447,14 @@ nav_core::ControlResult NMPC::computeVelocity(
     if (dist < xy_tolerance_) {
         cmd_vel.linear.x = 0.0;
         cmd_vel.angular.z = 0.0;
+        updateLastStateFromCommand(x0, 0.0, 0.0, dt);
+        std::fill(last_control_.begin(), last_control_.end(), 0.0);
+        predicted_stage1_valid_ = false;
         RCLCPP_INFO(node_->get_logger(), "NMPC: 到达目标 (xy距离=%.3fm)", dist);
         return nav_core::ControlResult::SUCCEEDED;
     }
 
-    if (applyStartupAlignmentGate(current_pose, cmd_vel)) {
+    if (applyStartupAlignmentGate(current_pose, cmd_vel, x0)) {
         return nav_core::ControlResult::RUNNING;
     }
     
@@ -453,6 +468,9 @@ nav_core::ControlResult NMPC::computeVelocity(
             yref_sequence.size(), N_horizon_ + 1);
         cmd_vel.linear.x = 0.0;
         cmd_vel.angular.z = 0.0;
+        updateLastStateFromCommand(x0, 0.0, 0.0, dt);
+        std::fill(last_control_.begin(), last_control_.end(), 0.0);
+        predicted_stage1_valid_ = false;
         return nav_core::ControlResult::FAILED;
     }
     
@@ -470,6 +488,9 @@ nav_core::ControlResult NMPC::computeVelocity(
                 i, step_dist, max_step);
             cmd_vel.linear.x = 0.0;
             cmd_vel.angular.z = 0.0;
+            updateLastStateFromCommand(x0, 0.0, 0.0, dt);
+            std::fill(last_control_.begin(), last_control_.end(), 0.0);
+            predicted_stage1_valid_ = false;
             return nav_core::ControlResult::FAILED;
         }
     }
@@ -501,17 +522,28 @@ nav_core::ControlResult NMPC::computeVelocity(
                 "NMPC: 连续求解失败 %d 次，停止控制", stats_.consecutive_failures);
             cmd_vel.linear.x = 0.0;
             cmd_vel.angular.z = 0.0;
+            updateLastStateFromCommand(x0, 0.0, 0.0, dt);
+            std::fill(last_control_.begin(), last_control_.end(), 0.0);
+            predicted_stage1_valid_ = false;
             return nav_core::ControlResult::FAILED;
         }
         
         // 平滑停车：逐渐减速而非突然停止
         double decay = 0.8;  // 每周期衰减到 80%
-        cmd_vel.linear.x = last_state_[3] * decay;
-        cmd_vel.angular.z = last_state_[4] * decay;
-        last_state_[3] = cmd_vel.linear.x;
-        last_state_[4] = cmd_vel.angular.z;
-        last_state_[5] = cmd_vel.linear.x;
-        last_state_[6] = cmd_vel.angular.z;
+        cmd_vel.linear.x = last_state_[5] * decay;
+        cmd_vel.angular.z = last_state_[6] * decay;
+        if (!params_.allow_reverse) {
+            cmd_vel.linear.x = std::max(0.0, cmd_vel.linear.x);
+        }
+        cmd_vel.linear.x = std::clamp(cmd_vel.linear.x,
+                                      -params_.max_linear_vel,
+                                      params_.max_linear_vel);
+        cmd_vel.angular.z = std::clamp(cmd_vel.angular.z,
+                                       -params_.max_angular_vel,
+                                       params_.max_angular_vel);
+        updateLastStateFromCommand(x0, cmd_vel.linear.x, cmd_vel.angular.z, dt);
+        std::fill(last_control_.begin(), last_control_.end(), 0.0);
+        predicted_stage1_valid_ = false;
         return nav_core::ControlResult::RUNNING;  // 继续尝试
     }
     
@@ -525,7 +557,6 @@ nav_core::ControlResult NMPC::computeVelocity(
     
     // 6. 应用控制
     // u_opt = [a_cmd, alpha_cmd] (加速度命令)
-    double dt = T_horizon_ / N_horizon_;  // 与 solver 步长一致
     double a_cmd = u_opt[0];
     double alpha_cmd = u_opt[1];
     double v_cmd = x0[5] + a_cmd * dt;
@@ -576,11 +607,8 @@ nav_core::ControlResult NMPC::computeVelocity(
         obs.twist.angular.y = params_.vel_lag_tau;
         obs.twist.angular.z = std::numeric_limits<double>::quiet_NaN();
 
-        {
-            std::lock_guard<std::mutex> lock(odom_mutex_);
-            if (chassis_odom_received_) {
-                obs.twist.linear.y = latest_chassis_odom_.twist.twist.linear.x;
-            }
+        if (has_measured_velocity) {
+            obs.twist.linear.y = measured_v;
         }
         if (predicted_stage1_valid_) {
             obs.twist.linear.z = predicted_stage1_state_[3];
@@ -590,21 +618,7 @@ nav_core::ControlResult NMPC::computeVelocity(
         speed_observation_pub_->publish(obs);
     }
 
-    // 更新状态: last_state_[3]/[4] 保存实际速度估计, last_state_[5]/[6] 保存命令速度状态.
-    // 在开环或低里程计反馈权重下, 用最终下发命令按一阶滞后模型滚动一拍,
-    // 避免把实际速度直接写成命令速度而抹掉模型中的滞后误差.
-    const double tau_v = std::max(0.05, params_.vel_lag_tau);
-    const double tau_w = std::max(0.05, params_.omega_lag_tau);
-    const double v_lag_alpha = 1.0 - std::exp(-dt / tau_v);
-    const double w_lag_alpha = 1.0 - std::exp(-dt / tau_w);
-    const double v_est_next = x0[3] + v_lag_alpha * (v_cmd - x0[3]);
-    const double w_est_next = x0[4] + w_lag_alpha * (omega_cmd - x0[4]);
-
-    last_state_ = x0;
-    last_state_[3] = v_cmd;
-    last_state_[4] = omega_cmd;
-    last_state_[5] = v_cmd;
-    last_state_[6] = omega_cmd;
+    updateLastStateFromCommand(x0, v_cmd, omega_cmd, dt);
     last_control_ = u_opt;
     
     // 发布调试信息
@@ -629,6 +643,11 @@ void NMPC::reset() {
     stats_ = {};
     odom_received_ = false;
     chassis_odom_received_ = false;
+    chassis_feedback_received_ = false;
+    chassis_velocity_valid_ = false;
+    chassis_filter_initialized_ = false;
+    filtered_chassis_v_ = 0.0;
+    filtered_chassis_w_ = 0.0;
     predicted_stage1_valid_ = false;
     path_remaining_dist_ = std::numeric_limits<double>::infinity();
     startup_pivot_phase_active_ = false;
@@ -656,21 +675,117 @@ void NMPC::chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     chassis_odom_received_ = true;
 }
 
-void NMPC::capacitorOdomCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg) {
+void NMPC::chassisFeedbackCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg) {
+    const double speed_x = static_cast<double>(msg->speed_x);
+    const double speed_w = static_cast<double>(msg->speed_w);
     const double voltage = static_cast<double>(msg->capacitor_voltage);
-    if (!std::isfinite(voltage) || voltage < 0.0) {
-        return;
+    const double alpha = params_.chassis_velocity_filter_alpha;
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+
+    latest_chassis_feedback_ = *msg;
+    latest_chassis_feedback_stamp_ = node_->now();
+    chassis_feedback_received_ = true;
+
+    if (std::isfinite(speed_x) && std::isfinite(speed_w)) {
+        chassis_velocity_valid_ = true;
+        if (!chassis_filter_initialized_ || alpha >= 0.999) {
+            filtered_chassis_v_ = speed_x;
+            filtered_chassis_w_ = speed_w;
+            chassis_filter_initialized_ = true;
+        } else {
+            filtered_chassis_v_ += alpha * (speed_x - filtered_chassis_v_);
+            filtered_chassis_w_ += alpha * (speed_w - filtered_chassis_w_);
+        }
+    } else {
+        chassis_velocity_valid_ = false;
     }
 
-    std::lock_guard<std::mutex> lock(odom_mutex_);
-    capacitor_voltage_raw_ = voltage;
-    if (!capacitor_voltage_received_) {
-        capacitor_voltage_filtered_ = voltage;
-        capacitor_voltage_received_ = true;
-        return;
+    if (std::isfinite(voltage) && voltage >= 0.0) {
+        capacitor_voltage_raw_ = voltage;
+        if (!capacitor_voltage_received_) {
+            capacitor_voltage_filtered_ = voltage;
+            capacitor_voltage_received_ = true;
+            return;
+        }
+        capacitor_voltage_filtered_ +=
+            params_.capacitor_filter_alpha * (voltage - capacitor_voltage_filtered_);
     }
-    capacitor_voltage_filtered_ +=
-        params_.capacitor_filter_alpha * (voltage - capacitor_voltage_filtered_);
+}
+
+bool NMPC::getMeasuredVelocity(double& v, double& w) {
+    if (params_.velocity_feedback_source != "chassis_odom") {
+        return false;
+    }
+
+    bool received = false;
+    bool valid = false;
+    bool stale = false;
+    double age = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(odom_mutex_);
+        received = chassis_feedback_received_;
+        valid = chassis_velocity_valid_;
+        if (received) {
+            age = (node_->now() - latest_chassis_feedback_stamp_).seconds();
+            stale = !std::isfinite(age) || age < 0.0 ||
+                age > params_.chassis_velocity_timeout_sec;
+        }
+
+        if (received && valid && !stale) {
+            v = filtered_chassis_v_;
+            w = filtered_chassis_w_;
+            return true;
+        }
+    }
+
+    if (!received) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+            "NMPC velocity feedback: 未收到 ChassisOdom，fallback 到 last_state");
+    } else if (!valid) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+            "NMPC velocity feedback: ChassisOdom 速度无效，fallback 到 last_state");
+    } else if (stale) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+            "NMPC velocity feedback stale (age=%.3fs > %.3fs), fallback 到 last_state",
+            age, params_.chassis_velocity_timeout_sec);
+    }
+    return false;
+}
+
+void NMPC::updateLastStateFromCommand(
+    const std::vector<double>& base_state,
+    double v_cmd,
+    double omega_cmd,
+    double dt)
+{
+    if (last_state_.size() < 7) {
+        last_state_.resize(7, 0.0);
+    }
+    if (base_state.size() >= 7) {
+        last_state_ = base_state;
+    }
+    if (!std::isfinite(v_cmd)) {
+        v_cmd = 0.0;
+    }
+    if (!std::isfinite(omega_cmd)) {
+        omega_cmd = 0.0;
+    }
+    if (!std::isfinite(dt) || dt <= 0.0) {
+        dt = T_horizon_ / static_cast<double>(std::max(1, N_horizon_));
+    }
+
+    // last_state_[3]/[4] 是实际速度估计，不能直接写成命令速度。
+    const double tau_v = std::max(0.05, params_.vel_lag_tau);
+    const double tau_w = std::max(0.05, params_.omega_lag_tau);
+    const double v_lag_alpha = 1.0 - std::exp(-dt / tau_v);
+    const double w_lag_alpha = 1.0 - std::exp(-dt / tau_w);
+    const double v_est_next = last_state_[3] + v_lag_alpha * (v_cmd - last_state_[3]);
+    const double w_est_next = last_state_[4] + w_lag_alpha * (omega_cmd - last_state_[4]);
+
+    last_state_[3] = v_est_next;
+    last_state_[4] = w_est_next;
+    last_state_[5] = v_cmd;
+    last_state_[6] = omega_cmd;
 }
 
 double NMPC::getCapacitorLimitScale(double filtered_voltage) {
@@ -881,6 +996,15 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
             } else if (name == "nmpc.odom_feedback_alpha") {
                 params_.odom_feedback_alpha = p.as_double();
                 changed = true;
+            } else if (name == "nmpc.velocity_feedback_source") {
+                params_.velocity_feedback_source = p.as_string();
+                changed = true;
+            } else if (name == "nmpc.chassis_velocity_timeout_sec") {
+                params_.chassis_velocity_timeout_sec = p.as_double();
+                changed = true;
+            } else if (name == "nmpc.chassis_velocity_filter_alpha") {
+                params_.chassis_velocity_filter_alpha = p.as_double();
+                changed = true;
             } else if (name == "nmpc.vel_lag_tau") {
                 params_.vel_lag_tau = p.as_double();
                 changed = true;
@@ -957,6 +1081,10 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
     params_.max_linear_decel = std::max(0.0, params_.max_linear_decel);
     params_.max_angular_accel = std::max(0.0, params_.max_angular_accel);
     params_.odom_feedback_alpha = std::clamp(params_.odom_feedback_alpha, 0.0, 1.0);
+    params_.chassis_velocity_timeout_sec =
+        std::max(0.0, params_.chassis_velocity_timeout_sec);
+    params_.chassis_velocity_filter_alpha =
+        std::clamp(params_.chassis_velocity_filter_alpha, 0.0, 1.0);
     params_.goal_crawl_speed = std::max(0.0, params_.goal_crawl_speed);
     params_.goal_slowdown_dist = std::max(xy_tolerance_, params_.goal_slowdown_dist);
     params_.goal_min_moving_speed = std::max(0.0, params_.goal_min_moving_speed);
@@ -1113,7 +1241,8 @@ bool NMPC::computeStartupAlignmentTargetYaw(
 
 bool NMPC::applyStartupAlignmentGate(
     const geometry_msgs::msg::PoseStamped& current_pose,
-    geometry_msgs::msg::Twist& cmd_vel)
+    geometry_msgs::msg::Twist& cmd_vel,
+    const std::vector<double>& x0)
 {
     if (!params_.startup_align_enable || !startup_align_active_) {
         return false;
@@ -1163,13 +1292,11 @@ bool NMPC::applyStartupAlignmentGate(
     cmd_vel.angular.x = 0.0;
     cmd_vel.angular.y = 0.0;
     cmd_vel.angular.z = omega_cmd;
-    applyCapacitorOutputLimit(T_horizon_ / static_cast<double>(N_horizon_), cmd_vel);
+    const double dt = T_horizon_ / static_cast<double>(std::max(1, N_horizon_));
+    applyCapacitorOutputLimit(dt, cmd_vel);
     omega_cmd = cmd_vel.angular.z;
 
-    last_state_[3] = cmd_vel.linear.x;
-    last_state_[4] = omega_cmd;
-    last_state_[5] = cmd_vel.linear.x;
-    last_state_[6] = omega_cmd;
+    updateLastStateFromCommand(x0, cmd_vel.linear.x, omega_cmd, dt);
     last_control_[0] = 0.0;
     last_control_[1] = 0.0;
     predicted_stage1_valid_ = false;
@@ -1181,18 +1308,17 @@ bool NMPC::applyStartupAlignmentGate(
             obs.header.stamp = node_->now();
         }
         obs.header.frame_id = "base_link";
-        obs.twist.linear.x = 0.0;
+        obs.twist.linear.x = cmd_vel.linear.x;
         obs.twist.linear.y = std::numeric_limits<double>::quiet_NaN();
         obs.twist.linear.z = std::numeric_limits<double>::quiet_NaN();
         obs.twist.angular.x = 0.0;
         obs.twist.angular.y = params_.vel_lag_tau;
         obs.twist.angular.z = omega_cmd;
 
-        {
-            std::lock_guard<std::mutex> lock(odom_mutex_);
-            if (chassis_odom_received_) {
-                obs.twist.linear.y = latest_chassis_odom_.twist.twist.linear.x;
-            }
+        double measured_v = 0.0;
+        double measured_w = 0.0;
+        if (getMeasuredVelocity(measured_v, measured_w)) {
+            obs.twist.linear.y = measured_v;
         }
         speed_observation_pub_->publish(obs);
     }

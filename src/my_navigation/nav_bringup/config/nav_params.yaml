@@ -404,7 +404,7 @@ nav_server:
       horizon_min_length: 1.6   # horizon 下限 (米)，对应最低速度 = 0.75/1.5 = 0.5 m/s
       use_omega_ref_from_path: false  # 关闭 dtheta/dt 角速度参考，抑制离散路径尖峰
       goal_crawl_speed: 0.15      # 终点前最小爬行速度 (m/s)
-      enable_goal_speed_limit: true # 是否启用沿路径剩余距离的终点限速
+      enable_goal_speed_limit: false # 是否启用沿路径剩余距离的终点限速
       goal_slowdown_dist: 0.70    # 沿路径剩余距离小于该值时启用终点限速(m)
       goal_min_moving_speed: 0.12 # 终点减速区内最小可动速度(m/s)，需大于底盘死区
       goal_max_slow_speed: 0.3  # 刚进入终点减速区时的速度上限(m/s)
@@ -418,9 +418,13 @@ nav_server:
         kp: 3.0                  # 原地对准角速度比例系数
         min_angular_vel: 0.25    # 原地对准最小角速度(rad/s)
         max_angular_vel: 3.5     # 原地对准最大角速度(rad/s)
-      odom_feedback_alpha: 0.0   # 速度反馈融合系数: 0=纯上次指令, 1=纯里程计
+      odom_feedback_alpha: 0.5   # 速度反馈融合系数: 0=纯一阶预测, 1=纯实测速度
+      velocity_feedback_source: "chassis_odom" # chassis_odom=使用 /ChassisOdom.speed_x/speed_w, 其他值=回退 last_state
+      chassis_velocity_topic: "/ChassisOdom"
+      chassis_velocity_timeout_sec: 0.15
+      chassis_velocity_filter_alpha: 1.0 # 1.0=不低通；若实测速度抖动可尝试 0.8/0.6
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
-      chassis_odom_topic: "/Odometry" # 需为 nav_msgs/msg/Odometry，避免与 /ChassisOdom 多类型冲突
+      chassis_odom_topic: "/Odometry" # legacy 调试通道，nav_msgs/msg/Odometry，不参与新速度反馈
       # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
       vel_lag_tau: 0.60 #0.25           # 线速度一阶滞后时间常数(s)
       omega_lag_tau: 0.10        # 角速度一阶滞后时间常数(s)

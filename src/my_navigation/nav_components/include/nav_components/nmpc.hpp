@@ -12,6 +12,7 @@
 #include <mutex>
 #include <array>
 #include <limits>
+#include <string>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 // 前向声明 acados solver (使用正确的类型名称)
@@ -106,7 +107,8 @@ private:
      */
     bool applyStartupAlignmentGate(
         const geometry_msgs::msg::PoseStamped& current_pose,
-        geometry_msgs::msg::Twist& cmd_vel);
+        geometry_msgs::msg::Twist& cmd_vel,
+        const std::vector<double>& x0);
 
     double applyCapacitorOutputLimit(
         double dt,
@@ -140,6 +142,12 @@ private:
     double computeLocalMaxCurvature(int start_idx, int num_points) const;
     double computeLocalMaxCurvatureByDistance(int start_idx, double window_dist_m) const;
     double computeGoalApproachSpeedLimit(double path_remaining_dist) const;
+    bool getMeasuredVelocity(double& v, double& w);
+    void updateLastStateFromCommand(
+        const std::vector<double>& base_state,
+        double v_cmd,
+        double omega_cmd,
+        double dt);
     
     // ========== 状态变量 ==========
     rclcpp::Node* node_;
@@ -164,15 +172,26 @@ private:
     nav_msgs::msg::Odometry latest_odom_;
     bool odom_received_ = false;
 
-    // 底盘速度观测（来自嵌入式回传 /ChassisOdom）
+    // 旧底盘速度观测调试通道（nav_msgs/Odometry，不参与控制）
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr chassis_odom_sub_;
     nav_msgs::msg::Odometry latest_chassis_odom_;
     bool chassis_odom_received_ = false;
+
+    // 底盘实车反馈（来自嵌入式回传 /ChassisOdom，作为 NMPC 速度反馈源）
+    rclcpp::Subscription<robots_msgs::msg::ChassisOdom>::SharedPtr chassis_feedback_sub_;
+    robots_msgs::msg::ChassisOdom latest_chassis_feedback_;
+    rclcpp::Time latest_chassis_feedback_stamp_;
+    bool chassis_feedback_received_ = false;
+    bool chassis_velocity_valid_ = false;
+    double filtered_chassis_v_ = 0.0;
+    double filtered_chassis_w_ = 0.0;
+    bool chassis_filter_initialized_ = false;
+
     mutable std::mutex odom_mutex_;
     
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
-    void capacitorOdomCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg);
+    void chassisFeedbackCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg);
 
     rcl_interfaces::msg::SetParametersResult onParametersChanged(
         const std::vector<rclcpp::Parameter>& parameters);
@@ -250,9 +269,12 @@ private:
     double speed_profile_curvature_window_m = 1.5; // 曲率统计窗口长度 (m)
 
         // 速度反馈融合（用于缓解物理里程计对指令的拖拽）
-        // x0_vel = alpha * odom_vel + (1-alpha) * last_cmd_vel
-        // alpha=1.0 为纯闭环里程计；alpha=0.0 为纯指令前馈
+        // x0_vel = alpha * measured_vel + (1-alpha) * last_state_vel
+        // alpha=1.0 为纯实测速度闭环；alpha=0.0 为纯一阶预测/前馈
         double odom_feedback_alpha = 0.0;
+        std::string velocity_feedback_source = "chassis_odom";
+        double chassis_velocity_timeout_sec = 0.15;
+        double chassis_velocity_filter_alpha = 1.0;
 
         // 近端权重递增
         double near_weight_multiplier = 2.0;  // 前 1/4 时域权重倍数
@@ -278,8 +300,6 @@ private:
     // linear.x = cmd_vel.v, linear.y = /ChassisOdom.v, linear.z = v_pred_1step
     // angular.x = a_cmd, angular.y = tau_v, angular.z = v_cmd_state_pred_1step
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr speed_observation_pub_;
-
-    rclcpp::Subscription<robots_msgs::msg::ChassisOdom>::SharedPtr capacitor_odom_sub_;
 
     // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, v_cmd, omega_cmd]
     std::array<double, 7> predicted_stage1_state_{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
