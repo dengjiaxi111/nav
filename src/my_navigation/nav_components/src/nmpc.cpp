@@ -35,6 +35,8 @@ void NMPC::initialize(rclcpp::Node* node) {
     // ========== 声明所有 ROS 参数 ==========
     // 运动约束
     node_->declare_parameter("nmpc.max_linear_vel", params_.max_linear_vel);
+    node_->declare_parameter("nmpc.max_state_linear_vel", params_.max_state_linear_vel);
+    node_->declare_parameter("nmpc.min_state_linear_vel", params_.min_state_linear_vel);
     node_->declare_parameter("nmpc.max_angular_vel", params_.max_angular_vel);
     node_->declare_parameter("nmpc.max_linear_accel", params_.max_linear_accel);
     node_->declare_parameter("nmpc.max_linear_decel", params_.max_linear_decel);
@@ -119,6 +121,10 @@ void NMPC::initialize(rclcpp::Node* node) {
     
     // ========== 读取参数 ==========
     params_.max_linear_vel = node_->get_parameter("nmpc.max_linear_vel").as_double();
+    params_.max_state_linear_vel =
+        node_->get_parameter("nmpc.max_state_linear_vel").as_double();
+    params_.min_state_linear_vel =
+        node_->get_parameter("nmpc.min_state_linear_vel").as_double();
     params_.max_angular_vel = node_->get_parameter("nmpc.max_angular_vel").as_double();
     params_.max_linear_accel = node_->get_parameter("nmpc.max_linear_accel").as_double();
     params_.max_linear_decel = node_->get_parameter("nmpc.max_linear_decel").as_double();
@@ -209,6 +215,12 @@ void NMPC::initialize(rclcpp::Node* node) {
     params_.vel_lag_tau = std::max(0.05, node_->get_parameter("nmpc.vel_lag_tau").as_double());
     params_.omega_lag_tau =
         std::max(0.05, node_->get_parameter("nmpc.omega_lag_tau").as_double());
+    params_.max_linear_vel = std::max(0.0, params_.max_linear_vel);
+    params_.max_state_linear_vel =
+        std::max(params_.max_linear_vel, params_.max_state_linear_vel);
+    if (params_.min_state_linear_vel > params_.max_state_linear_vel) {
+        params_.min_state_linear_vel = -0.3;
+    }
     params_.capacitor_v_safe =
         node_->get_parameter("nmpc.capacitor_limit.v_safe").as_double();
     params_.capacitor_v_low =
@@ -895,6 +907,14 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
                 params_.max_linear_vel = p.as_double();
                 need_update_constraints = true;
                 changed = true;
+            } else if (name == "nmpc.max_state_linear_vel") {
+                params_.max_state_linear_vel = p.as_double();
+                need_update_constraints = true;
+                changed = true;
+            } else if (name == "nmpc.min_state_linear_vel") {
+                params_.min_state_linear_vel = p.as_double();
+                need_update_constraints = true;
+                changed = true;
             } else if (name == "nmpc.max_angular_vel") {
                 params_.max_angular_vel = p.as_double();
                 need_update_constraints = true;
@@ -1076,6 +1096,11 @@ rcl_interfaces::msg::SetParametersResult NMPC::onParametersChanged(
 
     // 与 initialize() 中保持一致的参数防护
     params_.max_linear_vel = std::max(0.0, params_.max_linear_vel);
+    params_.max_state_linear_vel =
+        std::max(params_.max_linear_vel, params_.max_state_linear_vel);
+    if (params_.min_state_linear_vel > params_.max_state_linear_vel) {
+        params_.min_state_linear_vel = -0.3;
+    }
     params_.max_angular_vel = std::max(0.0, params_.max_angular_vel);
     params_.max_linear_accel = std::max(0.0, params_.max_linear_accel);
     params_.max_linear_decel = std::max(0.0, params_.max_linear_decel);
@@ -1645,11 +1670,14 @@ void NMPC::updateNMPCParameters() {
     ocp_nlp_out* nlp_out = wheelleg_nmpc_acados_get_nlp_out(acados_ocp_capsule_);
     
     // ========== 1. 更新状态约束 (真实速度 + 命令速度) ==========
-    double v_lower = params_.allow_reverse ? -params_.max_linear_vel : 0.0;
+    double v_cmd_lower = params_.allow_reverse ? -params_.max_linear_vel : 0.0;
     for (int i = 1; i < N_horizon_; ++i) {
-        double lbx[4] = {v_lower, -params_.max_angular_vel, v_lower, -params_.max_angular_vel};
+        double lbx[4] = {
+            params_.min_state_linear_vel, -params_.max_angular_vel,
+            v_cmd_lower, -params_.max_angular_vel
+        };
         double ubx[4] = {
-            params_.max_linear_vel, params_.max_angular_vel,
+            params_.max_state_linear_vel, params_.max_angular_vel,
             params_.max_linear_vel, params_.max_angular_vel
         };
         

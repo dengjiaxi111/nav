@@ -208,6 +208,8 @@ private:
     struct NMPCParams {
         // 运动约束
         double max_linear_vel = 2.0;
+        double max_state_linear_vel = 2.4;
+        double min_state_linear_vel = -0.3;
         double max_angular_vel = 2.0;
         double max_linear_accel = 2.0;
         double max_linear_decel = 2.0;

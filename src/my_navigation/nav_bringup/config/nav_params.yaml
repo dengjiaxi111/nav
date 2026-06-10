@@ -336,6 +336,8 @@ nav_server:
       # 下方 Q/R/ESDF/contouring 参数已接入运行时注入，修改 YAML 可直接生效
       # === 运动约束 ===
       max_linear_vel: 2.0        # 最大线速度 (m/s) 
+      max_state_linear_vel: 2.4  # NMPC真实速度状态上限，允许底盘短时超调
+      min_state_linear_vel: -0.3 # NMPC真实速度状态下限，允许轮速小幅负向抖动
       max_angular_vel: 10.0      # 最大角速度 (rad/s)
       max_linear_accel: 6.0      # 最大线加速度 (m/s²)
       max_linear_decel: 4.0     # 最大线减速度 (m/s²)
@@ -402,10 +404,10 @@ nav_server:
       omega_lag_tau: 0.10        # 角速度一阶滞后时间常数(s)
 
       # === 代价权重（运行时生效） ===
-      Q_position: 25.0           # 位置(x,y)跟踪权重
+      Q_position: 5.0           # 位置(x,y)跟踪权重
       Q_orientation: 8.0         # 航向角(theta)跟踪权重
-      Q_velocity: 1.0           # 线速度跟踪权重
-      Q_omega: 1.0             # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
+      Q_velocity: 1.75           # 线速度跟踪权重
+      Q_omega: 1.75             # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
       R_linear: 0.01             # 线加速度平滑权重
       R_angular: 0.01            # 角加速度平滑权重
       contouring_weight: 7.0   # 路径横向偏离(contouring)权重
