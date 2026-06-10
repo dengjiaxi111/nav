@@ -137,10 +137,10 @@ private:
     bool hard_constraint_compare_log_once_ = false;  // 仅一次输出旧三段 vs 新分段估计
 
     // A* 台阶感知形态参数（不含外切奖励）
-    bool astar_stair_shape_enable_ = false;
+    bool astar_stair_shape_enable_ = true;
     int astar_stair_search_radius_cells_ = 4;
-    double astar_stair_trigger_dist_m_ = 1.2;
-    double astar_stair_tangent_penalty_weight_ = 2.0;
+    double astar_stair_trigger_dist_m_ = 1.5;
+    double astar_stair_tangent_penalty_weight_ = 30.0;
     double astar_stair_centerline_penalty_weight_ = 1.0;
     bool astar_stair_lock_cluster_center_ = true;
     // A* 台阶段窗口长度（与 B-spline stair_align_*_pre/post 参数同源）
@@ -149,17 +149,17 @@ private:
     double astar_stair_down_pre_dist_m_ = 0.6;
     double astar_stair_down_post_dist_m_ = 0.6;
 
-    // A* 飞坡感知形态参数（与台阶独立，初值保持一致）
-    bool astar_fly_slope_shape_enable_ = false;
-    int astar_fly_slope_search_radius_cells_ = 4;
-    double astar_fly_slope_trigger_dist_m_ = 1.2;
-    double astar_fly_slope_tangent_penalty_weight_ = 2.0;
+    // A* 飞坡感知形态参数（与台阶独立）
+    bool astar_fly_slope_shape_enable_ = true;
+    int astar_fly_slope_search_radius_cells_ = 2;
+    double astar_fly_slope_trigger_dist_m_ = 1.5;
+    double astar_fly_slope_tangent_penalty_weight_ = 30.0;
     double astar_fly_slope_centerline_penalty_weight_ = 1.0;
     bool astar_fly_slope_lock_cluster_center_ = true;
-    double astar_fly_slope_up_pre_dist_m_ = 0.6;
-    double astar_fly_slope_up_post_dist_m_ = 0.6;
-    double astar_fly_slope_down_pre_dist_m_ = 0.6;
-    double astar_fly_slope_down_post_dist_m_ = 0.6;
+    double astar_fly_slope_up_pre_dist_m_ = 2.5;
+    double astar_fly_slope_up_post_dist_m_ = 0.5;
+    double astar_fly_slope_down_pre_dist_m_ = 0.01;
+    double astar_fly_slope_down_post_dist_m_ = 0.01;
 
     // A* 单次规划内锁定的台阶簇中心与法向
     bool astar_stair_cluster_locked_ = false;

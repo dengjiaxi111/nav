@@ -46,13 +46,13 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     failure_marker_scale_ =
         node_->declare_parameter("planner.failure_marker_scale", 0.14);
     astar_stair_shape_enable_ =
-        node_->declare_parameter("planner.astar_stair_shape_enable", false);
+        node_->declare_parameter("planner.astar_stair_shape_enable", true);
     astar_stair_search_radius_cells_ =
         node_->declare_parameter("planner.astar_stair_search_radius_cells", 4);
     astar_stair_trigger_dist_m_ =
-        node_->declare_parameter("planner.astar_stair_trigger_dist_m", 1.2);
+        node_->declare_parameter("planner.astar_stair_trigger_dist_m", 1.5);
     astar_stair_tangent_penalty_weight_ =
-        node_->declare_parameter("planner.astar_stair_tangent_penalty_weight", 2.0);
+        node_->declare_parameter("planner.astar_stair_tangent_penalty_weight", 30.0);
     astar_stair_centerline_penalty_weight_ =
         node_->declare_parameter("planner.astar_stair_centerline_penalty_weight", 1.0);
     astar_stair_lock_cluster_center_ =
@@ -62,13 +62,13 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_stair_anchor_match_max_dist_m_ =
         node_->declare_parameter("planner.astar_stair_anchor_match_max_dist_m", 0.6);
     astar_fly_slope_shape_enable_ =
-        node_->declare_parameter("planner.astar_fly_slope_shape_enable", false);
+        node_->declare_parameter("planner.astar_fly_slope_shape_enable", true);
     astar_fly_slope_search_radius_cells_ =
-        node_->declare_parameter("planner.astar_fly_slope_search_radius_cells", 4);
+        node_->declare_parameter("planner.astar_fly_slope_search_radius_cells", 2);
     astar_fly_slope_trigger_dist_m_ =
-        node_->declare_parameter("planner.astar_fly_slope_trigger_dist_m", 1.2);
+        node_->declare_parameter("planner.astar_fly_slope_trigger_dist_m", 1.5);
     astar_fly_slope_tangent_penalty_weight_ =
-        node_->declare_parameter("planner.astar_fly_slope_tangent_penalty_weight", 2.0);
+        node_->declare_parameter("planner.astar_fly_slope_tangent_penalty_weight", 30.0);
     astar_fly_slope_centerline_penalty_weight_ =
         node_->declare_parameter("planner.astar_fly_slope_centerline_penalty_weight", 1.0);
     astar_fly_slope_lock_cluster_center_ =
@@ -173,13 +173,13 @@ void SimplePlanner::initialize(rclcpp::Node* node) {
     astar_stair_down_pre_dist_m_ = smooth_params.stair_align_down_pre_dist_m;
     astar_stair_down_post_dist_m_ = smooth_params.stair_align_down_post_dist_m;
     astar_fly_slope_up_pre_dist_m_ =
-        node_->declare_parameter("planner.astar_fly_slope_up_pre_dist_m", astar_stair_up_pre_dist_m_);
+        node_->declare_parameter("planner.astar_fly_slope_up_pre_dist_m", 2.5);
     astar_fly_slope_up_post_dist_m_ =
-        node_->declare_parameter("planner.astar_fly_slope_up_post_dist_m", astar_stair_up_post_dist_m_);
+        node_->declare_parameter("planner.astar_fly_slope_up_post_dist_m", 0.5);
     astar_fly_slope_down_pre_dist_m_ =
-        node_->declare_parameter("planner.astar_fly_slope_down_pre_dist_m", astar_stair_down_pre_dist_m_);
+        node_->declare_parameter("planner.astar_fly_slope_down_pre_dist_m", 0.01);
     astar_fly_slope_down_post_dist_m_ =
-        node_->declare_parameter("planner.astar_fly_slope_down_post_dist_m", astar_stair_down_post_dist_m_);
+        node_->declare_parameter("planner.astar_fly_slope_down_post_dist_m", 0.01);
     smooth_params.fly_slope_align_up_pre_dist_m = astar_fly_slope_up_pre_dist_m_;
     smooth_params.fly_slope_align_up_post_dist_m = astar_fly_slope_up_post_dist_m_;
     smooth_params.fly_slope_align_down_pre_dist_m = astar_fly_slope_down_pre_dist_m_;

@@ -262,26 +262,6 @@ nav_server:
       astar_max_attempts: 1           # A* 尝试次数（避免无效重试）
       astar_max_iterations: 3000000   # A* 单次搜索最大迭代次数(<=0 自动)，复杂长路径可适当调大
       astar_threshold_step: 0         # 关闭反向收紧阈值重试
-      # A* 台阶形态代价（不含外切奖励）：抑制切向掠过并约束到中垂线
-      # 说明：A* 台阶段“垂直段长度”由下方 stair_align_*_pre/post_dist_m 决定，
-      # 这里的 trigger 仅作外层兜底触发门限。
-      astar_stair_shape_enable: true
-      astar_stair_search_radius_cells: 4
-      astar_stair_trigger_dist_m: 1.5
-      astar_stair_tangent_penalty_weight: 30.0
-      astar_stair_centerline_penalty_weight: 1.0
-      astar_stair_lock_cluster_center: true  # 单次A*内锁定同一个台阶簇中心
-      # A* 飞坡形态代价（与台阶独立，初值对齐）
-      astar_fly_slope_shape_enable: true
-      astar_fly_slope_search_radius_cells: 2
-      astar_fly_slope_trigger_dist_m: 1.5
-      astar_fly_slope_tangent_penalty_weight: 30.0
-      astar_fly_slope_centerline_penalty_weight: 1.0
-      astar_fly_slope_lock_cluster_center: true
-      astar_fly_slope_up_pre_dist_m: 2.5
-      astar_fly_slope_up_post_dist_m: 0.5
-      astar_fly_slope_down_pre_dist_m: 0.01
-      astar_fly_slope_down_post_dist_m: 0.01
       prune_distance: 1.0            # 剪枝保留距离(米), 保留当前位置前方此距离内的点
       publish_astar_raw_path: true   # 发布原始A*路径到 /plan_astar_raw（平滑前）
       allow_raw_fallback_on_smooth_fail: false  # 平滑后验证失败时是否回退原始A*（建议关闭）
@@ -292,8 +272,12 @@ nav_server:
       # - soft: 仅使用 A* fly_slope 形态代价（软约束）
       # - hard: 强制经过飞坡中心法向 pre/post 约束点（结构性约束）
       fly_slope_constraint_mode: "hard"  # 飞坡约束模式
-      fly_slope_hard_dist_delta_m: 0.1    # 仅 hard 生效: 对 astar_fly_slope_*_pre/post_dist_m 的统一偏移量(米)
-      # 例如 -0.1 且 astar_fly_slope_up_pre_dist_m=1.0 时，硬约束 pre 点距离变为 0.9m
+      fly_slope_hard_dist_delta_m: 0.1    # 仅 hard 生效: 对下方飞坡 pre/post 窗口距离的统一偏移量(米)
+      # 飞坡 pre/post 窗口弧长；同时用于 A* hard 约束和 B-spline 飞坡对齐
+      astar_fly_slope_up_pre_dist_m: 2.5
+      astar_fly_slope_up_post_dist_m: 0.5
+      astar_fly_slope_down_pre_dist_m: 0.01
+      astar_fly_slope_down_post_dist_m: 0.01
       hard_constraint_compare_log_once: false  # 开启后每次plan请求最多打印一次：旧三段估计 vs 新分段A*估计
       publish_failure_debug_markers: false  # 发布规划失败点到 /debug/planner_failures
       failure_marker_scale: 0.2          # 失败点球体尺寸(米)
