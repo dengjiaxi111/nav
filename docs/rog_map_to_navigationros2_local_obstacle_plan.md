@@ -17,7 +17,6 @@
 - `/home/li/navigation2026/src/mapping/rog_map`
 - `/home/li/navigation2026/src/mapping/rog_map_ros2_node`
 - `/home/li/navigation2026/src/my_navigation/nav_bringup/launch/run.launch.py`
-- `/home/li/navigation2026/src/my_navigation/nav_bringup/launch/run_omni.launch.py`
 - `/home/li/navigation2026/src/my_navigation/nav_components/src/layered_map_manager.cpp`
 
 现有链路：
@@ -167,7 +166,7 @@ PointCloud2 -> PCL XYZ
 /rog_map/map_2d
 ```
 
-推荐第一阶段先发布 `/rog_map/map_2d`，这样 `nav_params.yaml` 和 `nav_params_omni.yaml` 可以暂时不改。稳定后再改名为 `/local_obstacle/map_2d`。
+推荐第一阶段先发布 `/rog_map/map_2d`，这样 `nav_params.yaml` 可以暂时不改。稳定后再改名为 `/local_obstacle/map_2d`。
 
 核心行为：
 
@@ -203,14 +202,6 @@ local_obstacle_grid:
 
     occupied_value: 100
     free_value: 0
-```
-
-如果全向轮版本需要更大局部窗口，可单独配置：
-
-```yaml
-range_x: 12.0
-range_y: 10.0
-publish_rate: 20.0
 ```
 
 `OccupancyGrid` 发布要求：
@@ -250,23 +241,6 @@ navigation_launch,
 ```yaml
 dynamic_layer_topic: "/local_obstacle/map_2d"
 ```
-
-### 全向轮 run_omni.launch.py
-
-当前已有：
-
-```python
-declare_dynamic_layer_topic(default_value="/rog_map/map_2d")
-integration_node
-navigation_launch(... dynamic_layer_topic ...)
-```
-
-建议：
-
-- 加 `enable_rog_map` 或直接移除 `integration_node`
-- 新增 `local_obstacle_launch`
-- `dynamic_layer_topic` 第一阶段仍用 `/rog_map/map_2d`
-- 稳定后默认值改成 `/local_obstacle/map_2d`
 
 ## CMake/package 依赖
 
@@ -363,8 +337,7 @@ dynamic_layer_topic 改回 /rog_map/map_2d
 1. `navigationros2` 的分割方法主要保留竖直/非地面结构，可能漏掉非常低、法向量接近水平的障碍。
 2. 新方案没有完整 raycasting clearing，建议靠 `voxel_decay` 时间衰减清除残留。
 3. `range_x/range_y` 过小会导致高速时避障反应不足；过大会增加点云投影开销。
-4. 全向轮导航使用 `base_link_fake` 控制框架，但雷达和点云处理仍建议使用物理 `base_link`；动态层输出仍为 `odom`。
-5. 如果场地高度变化、坡道/台阶需要语义判断，应该继续交给 `navigation2026` 现有 stair/special terrain 层，而不是在局部障碍层里重新做复杂高程分类。
+4. 如果场地高度变化、坡道/台阶需要语义判断，应该继续交给 `navigation2026` 现有 stair/special terrain 层，而不是在局部障碍层里重新做复杂高程分类。
 
 ## 推荐结论
 
@@ -376,7 +349,7 @@ dynamic_layer_topic 改回 /rog_map/map_2d
 port pointcloud_segmentation
 add local_obstacle_grid_node
 publish /rog_map/map_2d
-remove run.launch.py / run_omni.launch.py 中的 integration_node
+remove run.launch.py 中的 integration_node
 ```
 
 这样可以保留 `navigation2026` 的规划、控制、ESDF、膨胀、特殊地形层，只把复杂的 ROG-Map 局部障碍算法替换掉。

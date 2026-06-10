@@ -13,7 +13,7 @@
 
 当前第一阶段只关注 `base_link` 位姿是否正确、连续、稳定。`/Odometry.twist` 中的线速度和角速度暂不作为本阶段目标，后续再单独优化。
 
-本次实施范围只包含腿车启动链路和腿车 LIO。全向版本 `run_omni.launch.py` 和 `small_point_lio_omni.launch.py` 暂时保持原来的固定雷达 TF，不接入 `lidar_mount_mode`。
+本次实施范围只包含腿车启动链路和腿车 LIO。
 
 当前代码状态：
 
@@ -438,7 +438,7 @@ odom -> base_link 不出现明显跳变
 ```text
 /cloud_registered frame_id = odom
 /rog_map/map_2d frame_id = odom
-base_frame 仍使用 base_link 或 base_link_fake
+base_frame 仍使用 base_link
 ```
 
 本阶段暂不验收：
