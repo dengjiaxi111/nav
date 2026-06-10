@@ -32,7 +32,6 @@
 #include "nav_components/recovery_manager.hpp"
 #include "nav_components/layered_map_manager.hpp"
 #include "nav_components/stair_controller.hpp"
-#include "nav_components/dynamic_obstacle_tracker.hpp"
 #include <nav_core/special_terrain_controller.hpp>
 
 using Navigate = nav_interfaces::action::Navigate;
@@ -195,17 +194,6 @@ public:
         declare_parameter("enable_dynamic_layer", false);
         declare_parameter("dynamic_layer_topic", "/rog_map/map_2d");
 
-    // 动态障碍物跟踪层（导航侧）
-    declare_parameter("dynamic_tracking.enable", false);
-    declare_parameter("dynamic_tracking.occupied_threshold", 65);
-    declare_parameter("dynamic_tracking.min_cluster_size", 2);
-    declare_parameter("dynamic_tracking.association_distance_m", 0.6);
-    declare_parameter("dynamic_tracking.confirm_hits", 2);
-    declare_parameter("dynamic_tracking.max_missed_frames", 2);
-    declare_parameter("dynamic_tracking.velocity_smooth_alpha", 0.5);
-    declare_parameter("dynamic_tracking.obstacle_radius_m", 0.3);
-    declare_parameter("dynamic_tracking.publish_tentative_tracks", true);
-
         // 特殊地形层（stair layer）配置
         declare_parameter("special_terrain.enable_stair_layer", false);
         declare_parameter("special_terrain.stair_mask_yaml", "");
@@ -270,26 +258,6 @@ public:
         enable_static_layer_ = get_parameter("enable_static_layer").as_bool();
         enable_dynamic_layer_ = get_parameter("enable_dynamic_layer").as_bool();
         dynamic_layer_topic_ = get_parameter("dynamic_layer_topic").as_string();
-
-        dynamic_tracking_enabled_ = get_parameter("dynamic_tracking.enable").as_bool();
-        nav_components::DynamicObstacleTracker::Params tracking_params;
-        tracking_params.enabled = dynamic_tracking_enabled_;
-        tracking_params.occupied_threshold =
-            static_cast<int8_t>(get_parameter("dynamic_tracking.occupied_threshold").as_int());
-        tracking_params.min_cluster_size =
-            get_parameter("dynamic_tracking.min_cluster_size").as_int();
-        tracking_params.association_distance_m =
-            get_parameter("dynamic_tracking.association_distance_m").as_double();
-        tracking_params.confirm_hits = get_parameter("dynamic_tracking.confirm_hits").as_int();
-        tracking_params.max_missed_frames =
-            get_parameter("dynamic_tracking.max_missed_frames").as_int();
-        tracking_params.velocity_smooth_alpha =
-            get_parameter("dynamic_tracking.velocity_smooth_alpha").as_double();
-        tracking_params.obstacle_radius_m =
-            get_parameter("dynamic_tracking.obstacle_radius_m").as_double();
-        tracking_params.publish_tentative_tracks =
-            get_parameter("dynamic_tracking.publish_tentative_tracks").as_bool();
-        dynamic_tracker_ = std::make_shared<nav_components::DynamicObstacleTracker>(tracking_params);
 
         nav_components::LayeredMapManager::StairLayerConfig stair_layer_cfg;
         stair_layer_cfg.enable = get_parameter("special_terrain.enable_stair_layer").as_bool();
@@ -614,8 +582,6 @@ public:
                 dynamic_layer_topic_, qos,
                 std::bind(&NavServer::dynamicLayerCallback, this, std::placeholders::_1));
             RCLCPP_INFO(get_logger(), "动态层订阅: %s", dynamic_layer_topic_.c_str());
-            RCLCPP_INFO(get_logger(), "动态跟踪层: %s",
-                        dynamic_tracking_enabled_ ? "ENABLED" : "DISABLED");
         }
         
         action_server_ = rclcpp_action::create_server<Navigate>(
@@ -633,13 +599,7 @@ private:
     // 动态障碍物层回调
     void dynamicLayerCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
         if (map_manager_) {
-            nav_msgs::msg::OccupancyGrid::SharedPtr map_for_fusion = msg;
-            if (dynamic_tracking_enabled_ && dynamic_tracker_) {
-                map_for_fusion = dynamic_tracker_->process(msg);
-            }
-            if (map_for_fusion) {
-                map_manager_->updateDynamicLayer(map_for_fusion);
-            }
+            map_manager_->updateDynamicLayer(msg);
         }
     }
     
@@ -2647,8 +2607,6 @@ private:
     bool enable_esdf_;
     bool enable_static_layer_;   // 是否启用静态地图层
     bool enable_dynamic_layer_;  // 是否启用动态障碍物层
-    bool dynamic_tracking_enabled_{false};  // 导航侧动态障碍跟踪层开关
-    std::shared_ptr<nav_components::DynamicObstacleTracker> dynamic_tracker_;
     bool publish_stair_debug_markers_{true};
     int stair_debug_marker_max_segments_{1500};
     bool enable_stair_mode_detection_{true};
