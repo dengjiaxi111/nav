@@ -1,6 +1,6 @@
 """
 差速轮腿机器人非线性动力学模型
-状态: [x, y, theta, v, omega, v_cmd, omega_cmd]
+状态: [x, y, theta, v, omega, a_v, alpha_w, v_cmd, omega_cmd]
 控制: [a_cmd, alpha_cmd] (速度命令导数)
 运行时参数 p (外部代价版):
     [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
@@ -8,7 +8,7 @@
      q_pos, q_theta, q_vel,
      r_lin, r_ang,
      esdf_weight, esdf_safe_dist, contouring_weight,
-     vel_lag_tau, omega_lag_tau, q_omega]
+     vel_lag_tau, omega_lag_tau, vel_lag_zeta, omega_lag_zeta, q_omega]
 说明:
     - 跟踪参考 (前7个) 由上层 C++ 在每个 shooting node 注入
     - ESDF 使用一阶线性化距离:
@@ -16,7 +16,7 @@
     - weight_scale 用于近端/终端权重缩放 (含 terminal_multiplier)
     - Q/R/ESDF/contouring 权重均支持运行时注入
     - 采用增广状态建模: 通过 (v_cmd, omega_cmd) 表示下发给底层的速度目标
-    - 使用一阶滞后模型拟合底层 LQR/轮腿系统的速度响应
+    - 使用二阶滞后模型拟合底层 LQR/轮腿系统的速度过冲/回摆响应
     - 控制量保持为加速度，可更自然地约束命令变化率
     - q_vel 用于速度跟踪；在 OCP 代价中对角速度误差施加了缩放惩罚项
 """
@@ -33,17 +33,22 @@ class WheellegModel:
     def __init__(self, enable_lag_model: bool = DEFAULT_ENABLE_LAG_MODEL):
         self.enable_lag_model = bool(enable_lag_model)
 
-        # 状态变量 (7维)
+        # 状态变量 (9维)
         self.x = ca.SX.sym('x')          # 位置 x (m)
         self.y = ca.SX.sym('y')          # 位置 y (m)
         self.theta = ca.SX.sym('theta')  # 航向角 (rad)
         self.v = ca.SX.sym('v')          # 线速度 (m/s)
         self.omega = ca.SX.sym('omega')  # 角速度 (rad/s)
+        self.a_v = ca.SX.sym('a_v_state')          # 实际线加速度状态 (m/s^2)
+        self.alpha_w = ca.SX.sym('alpha_w_state')  # 实际角加速度状态 (rad/s^2)
         self.v_cmd = ca.SX.sym('v_cmd_state')          # 下发线速度命令 (m/s)
         self.omega_cmd = ca.SX.sym('omega_cmd_state')  # 下发角速度命令 (rad/s)
         
         self.state = ca.vertcat(
-            self.x, self.y, self.theta, self.v, self.omega, self.v_cmd, self.omega_cmd
+            self.x, self.y, self.theta,
+            self.v, self.omega,
+            self.a_v, self.alpha_w,
+            self.v_cmd, self.omega_cmd
         )
         
         # 控制输入 (2维): 速度命令导数（加速度）
@@ -77,9 +82,11 @@ class WheellegModel:
         self.esdf_safe_dist = ca.SX.sym('esdf_safe_dist')
         self.contouring_weight = ca.SX.sym('contouring_weight')
 
-        # 底层闭环一阶滞后时间常数（运行时注入）
+        # 底层闭环二阶滞后参数（运行时注入）
         self.vel_lag_tau = ca.SX.sym('vel_lag_tau')
         self.omega_lag_tau = ca.SX.sym('omega_lag_tau')
+        self.vel_lag_zeta = ca.SX.sym('vel_lag_zeta')
+        self.omega_lag_zeta = ca.SX.sym('omega_lag_zeta')
 
         # 角速度跟踪权重（独立于 q_vel，运行时注入）
         self.q_omega = ca.SX.sym('q_omega')
@@ -93,6 +100,7 @@ class WheellegModel:
             self.r_lin, self.r_ang,
             self.esdf_weight, self.esdf_safe_dist, self.contouring_weight,
             self.vel_lag_tau, self.omega_lag_tau,
+            self.vel_lag_zeta, self.omega_lag_zeta,
             self.q_omega
         )
         self.np = self.params.shape[0]
@@ -110,21 +118,31 @@ class WheellegModel:
         dtheta = self.omega
 
         if self.enable_lag_model:
-            # 动力学部分(含惯性): 速度命令经过一阶滞后后作用于真实速度
+            # 动力学部分(含惯性): 速度命令经过二阶滞后后作用于真实速度
             tau_v = ca.fmax(self.vel_lag_tau, 0.05)
             tau_w = ca.fmax(self.omega_lag_tau, 0.05)
-            dv = (self.v_cmd - self.v) / tau_v
-            domega = (self.omega_cmd - self.omega) / tau_w
+            zeta_v = ca.fmax(self.vel_lag_zeta, 0.05)
+            zeta_w = ca.fmax(self.omega_lag_zeta, 0.05)
+            dv = self.a_v
+            domega = self.alpha_w
+            da_v = (
+                self.v_cmd - self.v - 2.0 * zeta_v * tau_v * self.a_v
+            ) / (tau_v ** 2)
+            dalpha_w = (
+                self.omega_cmd - self.omega - 2.0 * zeta_w * tau_w * self.alpha_w
+            ) / (tau_w ** 2)
         else:
             # 动力学部分(不含惯性): 真实速度由加速度直接积分
             dv = self.a_lin
             domega = self.alpha_ang
+            da_v = 0.0
+            dalpha_w = 0.0
 
         # 控制输入作用在命令状态（控制量保持加速度）
         dv_cmd = self.a_lin
         domega_cmd = self.alpha_ang
         
-        return ca.vertcat(dx, dy, dtheta, dv, domega, dv_cmd, domega_cmd)
+        return ca.vertcat(dx, dy, dtheta, dv, domega, da_v, dalpha_w, dv_cmd, domega_cmd)
     
     @staticmethod
     def angle_diff(a, b):
@@ -165,11 +183,13 @@ class WheellegModel:
         x_min = np.array([
             -np.inf, -np.inf, -np.inf,
             -self.max_v, -self.max_omega,
+            -np.inf, -np.inf,
             -self.max_v, -self.max_omega
         ])
         x_max = np.array([
             np.inf, np.inf, np.inf,
             self.max_v, self.max_omega,
+            np.inf, np.inf,
             self.max_v, self.max_omega
         ])
         

@@ -392,16 +392,18 @@ nav_server:
         kp: 3.0                  # 原地对准角速度比例系数
         min_angular_vel: 0.25    # 原地对准最小角速度(rad/s)
         max_angular_vel: 3.5     # 原地对准最大角速度(rad/s)
-      odom_feedback_alpha: 0.5   # 速度反馈融合系数: 0=纯一阶预测, 1=纯实测速度
+      odom_feedback_alpha: 0.2   # 速度反馈融合系数: 0=纯模型预测, 1=纯实测速度；二阶模型测试先从0.2起步
       velocity_feedback_source: "chassis_odom" # chassis_odom=使用 /ChassisOdom.speed_x/speed_w, 其他值=回退 last_state
       chassis_velocity_topic: "/ChassisOdom"
       chassis_velocity_timeout_sec: 0.15
       chassis_velocity_filter_alpha: 1.0 # 1.0=不低通；若实测速度抖动可尝试 0.8/0.6
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
       chassis_odom_topic: "/Odometry" # legacy 调试通道，nav_msgs/msg/Odometry，不参与新速度反馈
-      # 一阶滞后时间常数：tau = 底层 LQR 速度闭环的等效时间常数
-      vel_lag_tau: 0.60 #0.25           # 线速度一阶滞后时间常数(s)
-      omega_lag_tau: 0.10        # 角速度一阶滞后时间常数(s)
+      # 二阶滞后参数：tau控制响应快慢，zeta控制过冲/回摆
+      vel_lag_tau: 0.60 #0.25           # 线速度二阶滞后时间常数(s)
+      omega_lag_tau: 0.10        # 角速度二阶滞后时间常数(s)
+      vel_lag_zeta: 1.0          # 线速度阻尼比：先用1.0，模型偏稳后再按0.9/0.8/0.7试
+      omega_lag_zeta: 1.0        # 角速度阻尼比：先用1.0，模型偏稳后再小步降低
 
       # === 代价权重（运行时生效） ===
       Q_position: 5.0           # 位置(x,y)跟踪权重

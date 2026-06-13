@@ -9,18 +9,24 @@
 
 ## 2. NMPC 模型与求解器
 
-- 状态维度：`x = [x, y, theta, v, omega]`（5 维）。
+- 状态维度：`x = [x, y, theta, v, omega, a_v, alpha_w, v_cmd, omega_cmd]`（9 维）。
 - 控制维度：`u = [a_lin, alpha_ang]`（2 维）。
 - 预测时域：`N=50`、`T=1.5s`（由 `export_ocp.py` 生成并在 solver 中固化）。
-- 运行时参数维度：`NP_PARAM = 17`。
+- 运行时参数维度：`NP_PARAM = 26`。
 - 参数向量布局：
 
 ```text
 p = [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
-     d_esdf, weight_scale,
+     d_esdf, x_esdf_lin, y_esdf_lin, grad_esdf_x, grad_esdf_y,
+     weight_scale,
      q_pos, q_theta, q_vel, r_lin, r_ang,
-     esdf_weight, esdf_safe_dist, contouring_weight]
+     esdf_weight, esdf_safe_dist, contouring_weight,
+     vel_lag_tau, omega_lag_tau, vel_lag_zeta, omega_lag_zeta, q_omega]
 ```
+
+- 底盘速度响应模型为二阶滞后：
+  - `a_v_dot = (v_cmd - v - 2*zeta_v*tau_v*a_v) / tau_v^2`
+  - `alpha_w_dot = (omega_cmd - omega - 2*zeta_w*tau_w*alpha_w) / tau_w^2`
 
 - 当前实现中：
   - `Q_velocity` 仅惩罚线速度误差 `(v-v_ref)^2`，不再惩罚 `(omega-omega_ref)^2`。
@@ -49,6 +55,10 @@ p = [x_ref, y_ref, theta_ref, v_ref, omega_ref, a_ref, alpha_ref,
 - `nmpc.contouring_weight`
 - `nmpc.terminal_multiplier`
 - `nmpc.near_weight_multiplier`
+- `nmpc.vel_lag_tau`
+- `nmpc.omega_lag_tau`
+- `nmpc.vel_lag_zeta`
+- `nmpc.omega_lag_zeta`
 - `nmpc.enable_esdf_cost`（影响是否查询/使用 ESDF 距离）
 
 ### 3.3 由 solver 固化的参数
@@ -129,5 +139,4 @@ ros2 param get /nav_server nmpc.Q_position
 ```
 
 ---
-
 

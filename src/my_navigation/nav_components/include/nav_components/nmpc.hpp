@@ -61,7 +61,7 @@ private:
     // ========== 核心算法 ==========
     /**
      * @brief 求解 NMPC 优化问题
-      * @param x0 当前状态 [x, y, theta, v, omega, v_cmd, omega_cmd]
+      * @param x0 当前状态 [x, y, theta, v, omega, a_v, alpha_w, v_cmd, omega_cmd]
      * @param yref 参考轨迹序列 (N+1个点)
       * @param u_opt 输出最优控制 [a_cmd, alpha_cmd]
      * @return 求解状态 (0=成功)
@@ -127,7 +127,7 @@ private:
      * 参数格式 p = [xref(7), d_esdf, x_lin, y_lin, grad_x, grad_y, weight_scale,
      *               q_pos, q_theta, q_vel, r_lin, r_ang,
      *               esdf_weight, esdf_safe_dist, contouring_weight,
-     *               vel_lag_tau, omega_lag_tau, q_omega]
+     *               vel_lag_tau, omega_lag_tau, vel_lag_zeta, omega_lag_zeta, q_omega]
      * @param yref 参考轨迹（用于查询位置）
      */
     void injectEsdfParameters(const std::vector<std::vector<double>>& yref,
@@ -160,7 +160,7 @@ private:
     double path_remaining_dist_ = std::numeric_limits<double>::infinity();
     
     // NMPC 状态
-    std::vector<double> last_state_;   // 上一次状态 [x,y,theta,v,omega,v_cmd,omega_cmd]
+    std::vector<double> last_state_;   // 上一次状态 [x,y,theta,v,omega,a_v,alpha_w,v_cmd,omega_cmd]
     std::vector<double> last_control_; // 上一次控制 [a_cmd,alpha_cmd]
     bool initialized_ = false;
     
@@ -201,8 +201,9 @@ private:
     int N_horizon_ = 50;
     double T_horizon_ = 1.5;
     
-    // 参数总数必须与 model.py 中 self.params 的维度一致（当前 24 = 原20 + ESDF线性化点/梯度）
-    static constexpr int NP_PARAM = 24;
+    static constexpr int NX_STATE = 9;
+    // 参数总数必须与 model.py 中 self.params 的维度一致
+    static constexpr int NP_PARAM = 26;
     
     // ========== 参数配置 ==========
     struct NMPCParams {
@@ -272,7 +273,7 @@ private:
 
         // 速度反馈融合（用于缓解物理里程计对指令的拖拽）
         // x0_vel = alpha * measured_vel + (1-alpha) * last_state_vel
-        // alpha=1.0 为纯实测速度闭环；alpha=0.0 为纯一阶预测/前馈
+        // alpha=1.0 为纯实测速度闭环；alpha=0.0 为纯模型预测/前馈
         double odom_feedback_alpha = 0.0;
         std::string velocity_feedback_source = "chassis_odom";
         double chassis_velocity_timeout_sec = 0.15;
@@ -284,9 +285,11 @@ private:
         // 终端权重缩放
         double terminal_multiplier = 2.0;
 
-        // 底层闭环速度一阶滞后模型时间常数（秒）
+        // 底层闭环速度二阶滞后模型参数
         double vel_lag_tau = 0.6;
         double omega_lag_tau = 0.6;
+        double vel_lag_zeta = 1.0;
+        double omega_lag_zeta = 1.0;
 
         // 电容电压保护：固定倍率 + 低通 + 滞回，现场主要只调这两个阈值
         double capacitor_v_safe = 20.0;
@@ -303,8 +306,8 @@ private:
     // angular.x = a_cmd, angular.y = tau_v, angular.z = v_cmd_state_pred_1step
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr speed_observation_pub_;
 
-    // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, v_cmd, omega_cmd]
-    std::array<double, 7> predicted_stage1_state_{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+    // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, a_v, alpha_w, v_cmd, omega_cmd]
+    std::array<double, NX_STATE> predicted_stage1_state_{};
     bool predicted_stage1_valid_ = false;
 
     // 运行时参数热更新句柄
