@@ -27,6 +27,8 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
     try {
         YAML::Node config = YAML::LoadFile(filepath);
 
+        config_.init_pre_attack.x = config["init_pre_attack_x"].as<double>();
+        config_.init_pre_attack.y = config["init_pre_attack_y"].as<double>();
         config_.red_attack.x = config["red_attack_x"].as<double>();
         config_.red_attack.y = config["red_attack_y"].as<double>();
         config_.blue_attack.x = config["blue_attack_x"].as<double>();
@@ -142,11 +144,11 @@ bool Blackboard::loadConfigFromYAML(const std::string& filepath) {
     }
 }
 
+geometry_msgs::msg::Point Blackboard::getInitPreAttackPoint() const { return config_.init_pre_attack; }
 geometry_msgs::msg::Point Blackboard::getAttackPoint() const { return (robot_id_ == 1) ? config_.blue_attack : config_.red_attack; }
 geometry_msgs::msg::Point Blackboard::getSupplyPoint() const { return (robot_id_ == 1) ? config_.blue_supply : config_.red_supply; }
 geometry_msgs::msg::Point Blackboard::getBaseGainPoint() const { return (robot_id_ == 1) ? config_.blue_base_gain : config_.red_base_gain; }
 geometry_msgs::msg::Point Blackboard::getFortressOccupyPoint() const { return (robot_id_ == 1) ? config_.blue_fortress_occupy : config_.red_fortress_occupy; }
-geometry_msgs::msg::Point Blackboard::getRampPoint() const { return (robot_id_ == 1) ? config_.blue_ramp : config_.red_ramp; }
 geometry_msgs::msg::Point Blackboard::getEnemyFortressPoint() const { return (robot_id_ == 1) ? config_.blue_enemy_fortress : config_.red_enemy_fortress; }
 geometry_msgs::msg::Point Blackboard::getFortressGainPoint() const { return (robot_id_ == 1) ? config_.blue_fortress_gain : config_.red_fortress_gain; }
 // getCentralHighlandGain() 已删除
@@ -159,15 +161,16 @@ geometry_msgs::msg::Point Blackboard::getPatrolPoint() const {
     return (robot_id_ == 1) ? config_.blue_patrol : config_.red_patrol;
 }
 
+int Blackboard::getDecisionMode() const { return config_.decision_mode; }
 double Blackboard::getArrivalWaitTime() const { return config_.arrival_wait_time; }
 double Blackboard::getDeviationThreshold() const { return config_.deviation_threshold; }
+double Blackboard::getEnemyChaseRepathThreshold() const { return config_.enemy_chase_repath_threshold; }
 double Blackboard::getInitAttackDuration() const { return config_.init_attack_duration; }
 double Blackboard::getAttackDuration() const { return config_.attack_duration; }
 double Blackboard::getDefendDuration() const { return config_.defend_duration; }
 double Blackboard::getSupplyThreshold() const { return config_.supply_threshold; }
 double Blackboard::getMaxHp() const { return config_.max_hp; }
 double Blackboard::getMaxAmmo() const { return config_.max_ammo; }
-double Blackboard::getHalfMapX() const { return config_.half_map_x; }
 double Blackboard::getEnemyFortressOccupyTime() const { return config_.enemy_fortress_occupy_time; }
 double Blackboard::getEnemyFortressHpThreshold() const { return config_.enemy_fortress_hp_threshold; }
 double Blackboard::getEnemyFortressAmmoThreshold() const { return config_.enemy_fortress_ammo_threshold; }
@@ -444,6 +447,8 @@ void Blackboard::updateGainPointStatus() {
 }
 
 void Blackboard::onRobotIdChanged(uint8_t old_id, uint8_t new_id) {
+    (void)old_id;
+    (void)new_id;
     setTargetPublished(false);
     initializeGainPoints();
 }

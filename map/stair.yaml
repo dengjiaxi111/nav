@@ -1,7 +1,7 @@
 image: stair.pgm
 mode: trinary
 resolution: 0.050
-origin: [-14.119, -24.879, 0]
+origin: [-7.744, -5.872, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196

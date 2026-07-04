@@ -205,7 +205,9 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
     p[20] = 50;
     p[21] = 0.6;
     p[22] = 0.6;
-    p[23] = 5;
+    p[23] = 1;
+    p[24] = 1;
+    p[25] = 5;
 
     wheelleg_nmpc_acados_sim_update_params(capsule, p, np);
     free(p);
@@ -213,8 +215,8 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
 
     /* initialize input */
     // x
-    double x0[7];
-    for (int ii = 0; ii < 7; ii++)
+    double x0[9];
+    for (int ii = 0; ii < 9; ii++)
         x0[ii] = 0.0;
 
     sim_in_set(wheelleg_nmpc_sim_config, wheelleg_nmpc_sim_dims,
@@ -230,11 +232,11 @@ int wheelleg_nmpc_acados_sim_create(wheelleg_nmpc_sim_solver_capsule * capsule)
                wheelleg_nmpc_sim_in, "u", u0);
 
     // S_forw
-    double S_forw[63];
-    for (int ii = 0; ii < 63; ii++)
+    double S_forw[99];
+    for (int ii = 0; ii < 99; ii++)
         S_forw[ii] = 0.0;
-    for (int ii = 0; ii < 7; ii++)
-        S_forw[ii + ii * 7 ] = 1.0;
+    for (int ii = 0; ii < 9; ii++)
+        S_forw[ii + ii * 9 ] = 1.0;
 
 
     sim_in_set(wheelleg_nmpc_sim_config, wheelleg_nmpc_sim_dims,

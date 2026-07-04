@@ -418,6 +418,12 @@ void StairController::setMap(nav_core::MapInterface::Ptr map) {
     map_manager_ = std::dynamic_pointer_cast<LayeredMapManager>(map_);
 }
 
+void StairController::onNavigationTaskStarted() {
+    resetStairModePulse(true);
+    triggered_terrain_features_.clear();
+    consumed_terrain_features_.clear();
+}
+
 void StairController::onNavStateChanged(nav_core::NavState state) {
     if (state != nav_core::NavState::CONTROLLING) {
         resetStairModePulse(true);
@@ -910,6 +916,39 @@ nav_core::TerrainControlDecision StairController::update(
                             backoff_entry_signed_dist_,
                             target_signed,
                             backoff_release_distance_m_);
+            }
+
+            if (traverse_sign * signed_dist <=
+                traverse_sign * target_signed + backoff_pos_tol(active_terrain_type_)) {
+                bool should_enter_cooldown = false;
+                if (active_feature_.feature_id >= 0) {
+                    if (active_terrain_type_ == TerrainType::FLY_SLOPE && enable_fly_slope_cooldown_) {
+                        should_enter_cooldown = isFlySlopeInCooldown(active_feature_.feature_id, now_tp, nullptr);
+                    } else if (active_terrain_type_ != TerrainType::FLY_SLOPE &&
+                               enable_stair_cooldown_) {
+                        should_enter_cooldown = isStairInCooldown(active_feature_.feature_id, now_tp, nullptr);
+                    }
+                }
+
+                if (should_enter_cooldown) {
+                    cooldown_stair_id_ = active_feature_.feature_id;
+                    cooldown_replan_pending_ = true;
+                    transitionFsmState(StairFsmState::COOLDOWN_BLOCKED,
+                                       "backoff done -> cooldown blocked");
+                    decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
+                } else if (active_attempt_count_ < std::max(1, retry_max(active_terrain_type_))) {
+                    transitionFsmState(StairFsmState::PRE_ALIGN, "backoff done -> retry");
+                    decision = nav_core::TerrainControlDecision::REQUEST_REPLAN; // 触发重规划以刷新实际距离
+                } else {
+                    if (recovery_on_max(active_terrain_type_)) {
+                        decision = nav_core::TerrainControlDecision::REQUEST_RECOVERY;
+                    } else {
+                        decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
+                    }
+                    transitionFsmState(StairFsmState::NORMAL, "max retry reached");
+                    active_terrain_type_ = TerrainType::NONE;
+                }
+                break;
             }
 
             const Eigen::Vector2d backoff_dir = -traverse_sign * n;
@@ -1802,6 +1841,17 @@ void StairController::triggerStairModePulse(uint8_t mode) {
         return;
     }
 
+    if (isTerrainFeatureTriggered(active_terrain_type_, active_feature_.feature_id)) {
+        stair_mode_pulse_sent_in_commit_ = true;
+        RCLCPP_WARN(node_->get_logger(),
+                    "suppress duplicate stair_mode rising edge: type=%s id=%d mode=%u",
+                    terrainTypeName(active_terrain_type_),
+                    active_feature_.feature_id,
+                    static_cast<unsigned>(mode));
+        return;
+    }
+
+    markTerrainFeatureTriggered(active_terrain_type_, active_feature_.feature_id);
     stair_mode_pulse_sent_in_commit_ = true;
     stair_mode_pulse_active_ = true;
     stair_mode_pulse_mode_ = mode;
@@ -1843,6 +1893,26 @@ std::string StairController::terrainFeatureKey(TerrainType terrain_type, int fea
         return {};
     }
     return std::to_string(static_cast<int>(terrain_type)) + ":" + std::to_string(feature_id);
+}
+
+bool StairController::isTerrainFeatureTriggered(
+    TerrainType terrain_type, int feature_id) const {
+    const auto key = terrainFeatureKey(terrain_type, feature_id);
+    return !key.empty() &&
+           triggered_terrain_features_.find(key) != triggered_terrain_features_.end();
+}
+
+void StairController::markTerrainFeatureTriggered(TerrainType terrain_type, int feature_id) {
+    const auto key = terrainFeatureKey(terrain_type, feature_id);
+    if (!key.empty()) {
+        triggered_terrain_features_.insert(key);
+    }
+}
+
+bool StairController::unlockTerrainFeatureTrigger(
+    TerrainType terrain_type, int feature_id) {
+    const auto key = terrainFeatureKey(terrain_type, feature_id);
+    return !key.empty() && triggered_terrain_features_.erase(key) > 0;
 }
 
 bool StairController::isTerrainFeatureConsumed(TerrainType terrain_type, int feature_id) const {
@@ -1896,6 +1966,8 @@ void StairController::publishFsmDebug(const std::chrono::steady_clock::time_poin
         << ",active_terrain=" << terrainTypeName(active_terrain_type_)
         << ",active_feature_id=" << active_feature_.feature_id
         << ",attempt=" << active_attempt_count_
+        << ",trigger_latched="
+        << (isTerrainFeatureTriggered(active_terrain_type_, active_feature_.feature_id) ? 1 : 0)
         << ",cooldown_feature_id=" << cooldown_stair_id_
         << ",cooldown_active=" << (cooling ? 1 : 0)
         << ",cooldown_remain_sec=" << remain_sec;

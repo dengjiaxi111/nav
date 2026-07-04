@@ -243,7 +243,7 @@ static ocp_nlp_dims* wheelleg_nmpc_acados_create_setup_dimensions(wheelleg_nmpc_
     nsbx[0] = 0;
     ns[0] = NS0;
     
-    nbxe[0] = 7;
+    nbxe[0] = 9;
     
     ny[0] = NY0;
     nh[0] = NH0;
@@ -431,7 +431,9 @@ void wheelleg_nmpc_acados_create_set_default_parameters(wheelleg_nmpc_solver_cap
     p[20] = 50;
     p[21] = 0.6;
     p[22] = 0.6;
-    p[23] = 5;
+    p[23] = 1;
+    p[24] = 1;
+    p[25] = 5;
 
     for (int i = 0; i <= N; i++) {
         wheelleg_nmpc_acados_update_params(capsule, i, p, NP);
@@ -589,6 +591,8 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     idxbx0[4] = 4;
     idxbx0[5] = 5;
     idxbx0[6] = 6;
+    idxbx0[7] = 7;
+    idxbx0[8] = 8;
 
     double* lubx0 = calloc(2*NBX0, sizeof(double));
     double* lbx0 = lubx0;
@@ -601,7 +605,7 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     free(idxbx0);
     free(lubx0);
     // idxbxe_0
-    int* idxbxe_0 = malloc(7 * sizeof(int));
+    int* idxbxe_0 = malloc(9 * sizeof(int));
     idxbxe_0[0] = 0;
     idxbxe_0[1] = 1;
     idxbxe_0[2] = 2;
@@ -609,6 +613,8 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     idxbxe_0[4] = 4;
     idxbxe_0[5] = 5;
     idxbxe_0[6] = 6;
+    idxbxe_0[7] = 7;
+    idxbxe_0[8] = 8;
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "idxbxe", idxbxe_0);
     free(idxbxe_0);
 
@@ -656,8 +662,8 @@ void wheelleg_nmpc_acados_setup_nlp_in(wheelleg_nmpc_solver_capsule* capsule, co
     int* idxbx = malloc(NBX * sizeof(int));
     idxbx[0] = 3;
     idxbx[1] = 4;
-    idxbx[2] = 5;
-    idxbx[3] = 6;
+    idxbx[2] = 7;
+    idxbx[3] = 8;
     double* lubx = calloc(2*NBX, sizeof(double));
     double* lbx = lubx;
     double* ubx = lubx + NBX;
@@ -1023,7 +1029,7 @@ int wheelleg_nmpc_acados_update_params(wheelleg_nmpc_solver_capsule* capsule, in
 {
     int solver_status = 0;
 
-    int casadi_np = 24;
+    int casadi_np = 26;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);

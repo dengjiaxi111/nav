@@ -16,19 +16,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(Eigen3 REQUIRED)
-
-set(PCL_INCLUDE_DIR /usr/include/pcl-1.12)
-if(NOT EXISTS ${PCL_INCLUDE_DIR})
-  message(FATAL_ERROR "Expected PCL include directory not found: ${PCL_INCLUDE_DIR}")
-endif()
-
-set(PCL_LINK_LIBS
-  pcl_common
-  pcl_filters
-  pcl_features
-  pcl_search
-  pcl_kdtree
-)
+find_package(PCL REQUIRED COMPONENTS common filters features search kdtree)
 
 add_executable(pointcloud_segmentation_node
   src/pointcloud_segmentation_node.cpp
@@ -41,11 +29,11 @@ ament_target_dependencies(pointcloud_segmentation_node
   tf2_ros
 )
 target_link_libraries(pointcloud_segmentation_node
-  ${PCL_LINK_LIBS}
+  ${PCL_LIBRARIES}
 )
 target_include_directories(pointcloud_segmentation_node
   SYSTEM PRIVATE
-    ${PCL_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIRS}
 )
 
@@ -61,11 +49,11 @@ ament_target_dependencies(local_obstacle_grid_node
   tf2_ros
 )
 target_link_libraries(local_obstacle_grid_node
-  ${PCL_LINK_LIBS}
+  ${PCL_LIBRARIES}
 )
 target_include_directories(local_obstacle_grid_node
   SYSTEM PRIVATE
-    ${PCL_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIRS}
 )
 

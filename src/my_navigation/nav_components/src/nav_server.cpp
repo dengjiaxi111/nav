@@ -724,6 +724,9 @@ private:
         // 直接设置目标并开始导航（无需 Action Client）
         goal_ = *msg;
         goal_.header.frame_id = map_frame_;
+        if (terrain_controller_) {
+            terrain_controller_->onNavigationTaskStarted();
+        }
         stopRobot();
         controller_.reset();
         recovery_mgr_.reset();
@@ -1067,6 +1070,9 @@ private:
         goal_handle_ = goal_handle;
         resetTerrainTemporaryGoalState();
         goal_ = goal_handle->get_goal()->goal_pose;
+        if (terrain_controller_) {
+            terrain_controller_->onNavigationTaskStarted();
+        }
         stopRobot();
         controller_.reset();
         recovery_mgr_.reset();

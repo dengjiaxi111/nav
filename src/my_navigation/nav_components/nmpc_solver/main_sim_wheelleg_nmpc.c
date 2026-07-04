@@ -70,6 +70,8 @@ int main()
     x_current[4] = 0.0;
     x_current[5] = 0.0;
     x_current[6] = 0.0;
+    x_current[7] = 0.0;
+    x_current[8] = 0.0;
 
   
     x_current[0] = 0;
@@ -79,6 +81,8 @@ int main()
     x_current[4] = 0;
     x_current[5] = 0;
     x_current[6] = 0;
+    x_current[7] = 0;
+    x_current[8] = 0;
     
   
 
@@ -112,7 +116,9 @@ int main()
     p[20] = 50;
     p[21] = 0.6;
     p[22] = 0.6;
-    p[23] = 5;
+    p[23] = 1;
+    p[24] = 1;
+    p[25] = 5;
 
     wheelleg_nmpc_acados_sim_update_params(capsule, p, NP);
   

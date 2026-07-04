@@ -24,7 +24,7 @@ nav_server:
     controller_progress_threshold: 0.2  # 控制器有效进展距离阈值(m)，移动超过该距离才刷新进展时间
     
     # 周期性路径检查 (动态障碍物应对，默认启用)
-    path_check_period: 0.25 # 路径检查周期(秒) - 降低以快速响应动态障碍物
+    path_check_period: 0.1 # 路径检查周期(秒) - 降低以快速响应动态障碍物
     path_lateral_tolerance: 1.25  # 横向偏离路径容忍度(米)，超过则重规划
     # 说明: 系统每隔 path_check_period 秒检查机器人到路径的最短距离
     # 如果横向偏离超过 path_lateral_tolerance，会停止并重新规划
@@ -82,7 +82,7 @@ nav_server:
       oneway_gray_max: 190
 
       # 飞坡层（低侧线/高侧线）
-      enable_fly_slope_layer: true
+      enable_fly_slope_layer: false
       fly_slope_mask_yaml: "/home/nuc/navigation2026/map/stair_test.yaml"  # 默认可与台阶mask共图，不同像素段区分
       fly_slope_clear_perp_dist_m: 0.45
       fly_slope_clear_perp_high_dist_m: 0.45
@@ -110,7 +110,7 @@ nav_server:
       enable_fly_slope_mode_detection: true
 
     # [候选检测窗口] 何时识别“即将上台阶”
-      stair_mode_trigger_distance_m: 1.75
+      stair_mode_trigger_distance_m: 2.00
       stair_mode_lookahead_dist_m: 2.0
       stair_mode_sample_step_m: 0.05
       stair_mode_entry_heading_error_max_rad: 1.0  # 进入预对准/提交前航向阈值(|path_heading - yaw|)
@@ -124,9 +124,9 @@ nav_server:
       stair_mode_omega_slew_rate_rad_s2: 50.0  # stair_mode=1 时角速度斜坡限幅 (rad/s^2)
 
       # [状态转移阈值] PRE_ALIGN -> COMMIT / COMMIT -> VERIFY / VERIFY 超时
-      stair_contact_distance_m: 0.90              # 接触判定阈值(米)
+      stair_contact_distance_m: 1.60              # 接触判定阈值(米)
       stair_commit_success_dist_m: 0.10          # 越过台阶中心线后的成功法向距离阈值(米)
-      stair_level2_commit_success_dist_m: 0.50   # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
+      stair_level2_commit_success_dist_m: 0.50  # 二级台阶：越过台阶中心线后的成功法向距离阈值(米)
       stair_verify_timeout_sec: 2.0              # VERIFY_SUCCESS 超时(秒)
 
       # [失败判据] A + B(弧长进展超时)
@@ -137,30 +137,30 @@ nav_server:
       stair_level2_leg_ready_threshold_m: 0.15   # 二级台阶抬腿到位阈值
       fly_slope_leg_ready_threshold_m: 0.16      # 飞坡抬腿到位阈值
       stair_fail_a_precontact_miss_cycles: 3     # 兼容旧参数，当前判据A已改为腿长超时
-      stair_progress_timeout_sec: 1.2            # COMMIT_ASCENT 进展超时(秒)
+      stair_progress_timeout_sec: 2.5            # COMMIT_ASCENT 进展超时(秒)
       stair_progress_min_arc_m: 0.20             # 进展判据B所需最小弧长增量(米)
 
       # [提交段控制] COMMIT_ASCENT
       enable_stair_fixed_velocity_strategy: true
       stair_raise_leg_distance_m: 1.0           # COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=1 抬腿
       stair_fixed_velocity_trigger_distance_m: 1.0 # COMMIT_ASCENT阶段内，距台阶小于此值时真正生效设定的慢速
-      stair_fixed_linear_vel: 1.4          # COMMIT_ASCENT阶段内的固定线速度(m/s)，需要配合上方 trigger_distance_m 适当调大以保证平滑过渡
-      stair_level2_raise_leg_distance_m: 0.45   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3/4 抬腿
-      stair_level2_fixed_velocity_trigger_distance_m: 0.30 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
-      stair_level2_fixed_linear_vel: 1.45        # 二级台阶：固定速度线速度(m/s)
+      stair_fixed_linear_vel: 1.1          # COMMIT_ASCENT阶段内的固定线速度(m/s)，需要配合上方 trigger_distance_m 适当调大以保证平滑过渡
+      stair_level2_raise_leg_distance_m: 0.65   # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时下发 stair_mode=3/4 抬腿
+      stair_level2_fixed_velocity_trigger_distance_m: 0.60 # 二级台阶：COMMIT_ASCENT阶段内，距台阶小于此值时启用固定速度
+      stair_level2_fixed_linear_vel: 0.5        # 二级台阶：固定速度线速度(m/s)
       stair_fixed_heading_kp: 5.0           # 固定速度航向控制增益，增大更紧贴台阶边沿，但过大会导致震荡
       stair_fixed_max_angular_vel: 100.0
       stair_fixed_heading_deadband: 0.05    # 固定速度航向死区(rad)，小于此值不进行航向调整，防止过近时的过度修正和震荡
 
       # [失败退让与重试] FAIL_RETRY_BACKOFF
-      stair_backoff_distance_m: 1.8           # 失败后沿法向退让距离(米)
+      stair_backoff_distance_m: 2.5           # 失败后沿法向退让距离(米)
       stair_backoff_tangent_search_half_width_m: 0.30  # 中垂线局部搜索半宽(米)
       stair_backoff_linear_vel: 1.0             # 退让线速度(米/秒)
       stair_backoff_heading_kp: 2.0              # 退让航向控制增益
       stair_backoff_max_angular_vel: 3.5         # 退让角速度上限(rad/s)
       stair_backoff_pos_tolerance_m: 0.08        # 退让完成判定容差(米)
       backoff_release_distance_m: 0.35           # 退让初段先沿远离地形方向释放接触的距离(米)，完成后再按航向误差退让
-      backoff_release_linear_vel: 0.45           # 释放接触阶段线速度绝对值；会按车头/车尾方向自动选择前进或倒车
+      backoff_release_linear_vel: 1.5           # 释放接触阶段线速度绝对值；会按车头/车尾方向自动选择前进或倒车
       backoff_release_max_angular_vel: 3.5        # 释放接触阶段角速度上限，避免贴住台阶时大角速度原地拧车
       backoff_release_heading_kp: 0.8            # 释放接触阶段航向弱修正增益
       backoff_total_timeout_sec: 8.0             # FAIL_RETRY_BACKOFF 总超时，超时请求 recovery
@@ -317,9 +317,9 @@ nav_server:
       astar_anchor_tangent_shift_max_m: 0.30 # 最大偏移：单个命中点沿切向允许累计偏移的上限(米)
       astar_anchor_tangent_improve_min_m: 0.005  # 最小改善量：新位置ESDF需至少提升该值才接受本次偏移
       # 推荐：按弧长定义窗口，并区分上/下台阶
-      stair_align_up_pre_dist_m: 1.40
-      stair_align_up_post_dist_m: 0.8
-      stair_align_down_pre_dist_m: 0.8
+      stair_align_up_pre_dist_m: 1.90
+      stair_align_up_post_dist_m: 0.5
+      stair_align_down_pre_dist_m: 0.15
       stair_align_down_post_dist_m: 0.01
     
     # NMPC 控制器
@@ -328,7 +328,7 @@ nav_server:
       # 下方 Q/R/ESDF/contouring 参数已接入运行时注入，修改 YAML 可直接生效
       # === 运动约束 ===
       max_linear_vel: 2.0        # 最大线速度 (m/s) 
-      max_state_linear_vel: 2.4  # NMPC真实速度状态上限，允许底盘短时超调
+      max_state_linear_vel: 2.9  # NMPC真实速度状态上限，允许底盘短时超调
       min_state_linear_vel: -0.3 # NMPC真实速度状态下限，允许轮速小幅负向抖动
       max_angular_vel: 10.0      # 最大角速度 (rad/s)
       max_linear_accel: 6.0      # 最大线加速度 (m/s²)
@@ -348,13 +348,13 @@ nav_server:
       #   故推荐 horizon_length = desired_velocity * T_horizon_solver (= 2.0 * 1.5 = 3.0m)
       # 速度一致性补丁（代码中已实施）：desired_v = min(desired_v, step_dist/dt)，
       #   确保速度参考不超过位置间距隐含的速度上限，消除代价函数内耗
-      horizon_length: 2.55     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
-      desired_velocity: 2.0      # 期望巡航速度 (m/s)
+      horizon_length: 3.00     # 直道参考弧长 (米)，= desired_velocity * T_horizon_solver
+      desired_velocity: 2.00      # 期望巡航速度 (m/s)
       speed_profile:
         enable: true
         v_cruise: 2.0              # 解耦后的巡航参考速度 (m/s)
         v_min: 0.30                # 非终点工况最低参考速度 (m/s)
-        max_lateral_accel: 2.5   # 横向加速度上限，用于曲率限速 (m/s^2)
+        max_lateral_accel: 1.5   # 横向加速度上限，用于曲率限速 (m/s^2)
         kappa_epsilon: 0.08        # 曲率分母下限，防止小曲率时限速发散 (1/m)
         curvature_window_m: 1.5   # 曲率统计窗口长度 (m)
 
@@ -384,7 +384,7 @@ nav_server:
         kp: 3.0                  # 原地对准角速度比例系数
         min_angular_vel: 0.25    # 原地对准最小角速度(rad/s)
         max_angular_vel: 3.5     # 原地对准最大角速度(rad/s)
-      odom_feedback_alpha: 0.2   # 速度反馈融合系数: 0=纯模型预测, 1=纯实测速度；二阶模型测试先从0.2起步
+      odom_feedback_alpha: 0.8   # 速度反馈融合系数: 0=纯模型预测, 1=纯实测速度；二阶模型测试先从0.2起步
       velocity_feedback_source: "chassis_odom" # chassis_odom=使用 /ChassisOdom.speed_x/speed_w, 其他值=回退 last_state
       chassis_velocity_topic: "/ChassisOdom"
       chassis_velocity_timeout_sec: 0.15
@@ -392,29 +392,29 @@ nav_server:
       publish_speed_observation: true  # 发布 /nmpc/speed_observation 观测流
       chassis_odom_topic: "/Odometry" # legacy 调试通道，nav_msgs/msg/Odometry，不参与新速度反馈
       # 二阶滞后参数：tau控制响应快慢，zeta控制过冲/回摆
-      vel_lag_tau: 0.60 #0.25           # 线速度二阶滞后时间常数(s)
-      omega_lag_tau: 0.10        # 角速度二阶滞后时间常数(s)
-      vel_lag_zeta: 1.0          # 线速度阻尼比：先用1.0，模型偏稳后再按0.9/0.8/0.7试
+      vel_lag_tau: 0.48 #0.25           # 线速度二阶滞后时间常数(s)
+      omega_lag_tau: 0.09        # 角速度二阶滞后时间常数(s)
+      vel_lag_zeta: 0.9          # 线速度阻尼比：先用1.0，模型偏稳后再按0.9/0.8/0.7试
       omega_lag_zeta: 1.0        # 角速度阻尼比：先用1.0，模型偏稳后再小步降低
 
       # === 代价权重（运行时生效） ===
-      Q_position: 5.0           # 位置(x,y)跟踪权重
+      Q_position: 3.0           # 位置(x,y)跟踪权重
       Q_orientation: 8.0         # 航向角(theta)跟踪权重
-      Q_velocity: 1.75           # 线速度跟踪权重
-      Q_omega: 1.75             # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
+      Q_velocity: 0.1           # 线速度跟踪权重
+      Q_omega: 0.1             # 角速度跟踪权重（原硬编码 5.0，现为可调参数）
       R_linear: 0.01             # 线加速度平滑权重
       R_angular: 0.01            # 角加速度平滑权重
-      contouring_weight: 7.0   # 路径横向偏离(contouring)权重
+      contouring_weight: 25.0   # 路径横向偏离(contouring)权重
 
 
       # === ESDF/轮廓代价（运行时生效） ===
-      esdf_weight: 100.0         # ESDF 违反代价权重
-      esdf_safe_dist: 0.8        # ESDF 安全距离阈值(m)
+      esdf_weight: 70.0         # ESDF 违反代价权重
+      esdf_safe_dist: 0.5        # ESDF 安全距离阈值(m)
 
       # === 权重缩放/ESDF开关（运行时生效） ===
       terminal_multiplier: 2.0   # 终端代价
       enable_esdf_cost: true      # 启用 ESDF 障碍物代价
-      near_weight_multiplier: 20.0  # 近端权重倍增，强化近距离避障
+      near_weight_multiplier: 3.0  # 近端权重倍增，强化近距离避障
       
       # === 可视化选项 ===
       publish_predicted_path: true   # 发布 NMPC 预测轨迹 (/nmpc/predicted_path)

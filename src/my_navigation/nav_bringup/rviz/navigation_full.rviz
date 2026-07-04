@@ -30,7 +30,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: NDT Map Cloud
+    SyncSource: ""
 Visualization Manager:
   Class: ""
   Displays:
@@ -496,25 +496,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 70.92276763916016
+      Distance: 29.67632293701172
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -2.389392852783203
-        Y: 3.9830377101898193
-        Z: -13.360867500305176
+        X: 0.5560837984085083
+        Y: -1.0226013660430908
+        Z: -14.716161727905273
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5397963523864746
+      Pitch: 1.544796347618103
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 0.008569602854549885
+      Yaw: 1.5385711193084717
     Saved: ~
 Window Geometry:
   Displays:

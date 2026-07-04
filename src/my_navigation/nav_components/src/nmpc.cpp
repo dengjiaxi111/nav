@@ -1442,10 +1442,28 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     
     // 查找最近点并剪枝:只保留从最近点到终点的路径
     nearest_idx_ = findNearestPathPoint(current_pose);
-    
-    // 提前终止: 如果最近点已经接近路径末尾，保留一个小回看窗口，
-    // 防止最近点偶发前跳导致“剩余距离骤减->参考速度骤降”。
-    size_t pruned_start_idx = (nearest_idx_ > 8) ? (nearest_idx_ - 8) : 0;
+
+    // 当离散最近点已经落到终点时，从机器人在最后一段上的投影位置开始采样。
+    // 这样既保留最后一段的进场方向，也不会把倒数第二点作为后方参考。
+    int reference_start_idx = nearest_idx_;
+    double reference_start_ratio = 0.0;
+    double reference_start_seg_dist = 0.0;
+    if (global_path_.poses.size() >= 2 &&
+        nearest_idx_ >= static_cast<int>(global_path_.poses.size()) - 1) {
+        reference_start_idx = static_cast<int>(global_path_.poses.size()) - 2;
+        const auto& p1 = global_path_.poses[reference_start_idx].pose.position;
+        const auto& p2 = global_path_.poses[reference_start_idx + 1].pose.position;
+        const double seg_x = p2.x - p1.x;
+        const double seg_y = p2.y - p1.y;
+        const double seg_len_sq = seg_x * seg_x + seg_y * seg_y;
+        reference_start_seg_dist = std::sqrt(seg_len_sq);
+        if (seg_len_sq > 1e-8) {
+            reference_start_ratio = std::clamp(
+                ((current_pose.position.x - p1.x) * seg_x +
+                 (current_pose.position.y - p1.y) * seg_y) / seg_len_sq,
+                0.0, 1.0);
+        }
+    }
     
     // 沿路径前向采样 N+1 个点 (在 odom 坐标系下)
     double dt = T_horizon_ / N_horizon_;
@@ -1457,14 +1475,14 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
         const auto& p2 = global_path_.poses[k + 1].pose.position;
         suffix_dist[k] = suffix_dist[k + 1] + std::hypot(p2.x - p1.x, p2.y - p1.y);
     }
-    path_remaining_dist_ = suffix_dist[std::clamp(
-        nearest_idx_, 0, static_cast<int>(global_path_.poses.size()) - 1)];
-    const auto& goal_pos = global_path_.poses.back().pose.position;
-    const double dist_to_goal_now = std::hypot(
-        goal_pos.x - current_pose.position.x,
-        goal_pos.y - current_pose.position.y);
-    const double terminal_ref_v =
-        (dist_to_goal_now > xy_tolerance_) ? params_.goal_crawl_speed : 0.0;
+    path_remaining_dist_ = std::max(
+        0.0,
+        suffix_dist[std::clamp(
+            reference_start_idx, 0, static_cast<int>(global_path_.poses.size()) - 1)] -
+        reference_start_ratio * reference_start_seg_dist);
+    // 超出路径末端的预测节点必须保持零速，避免参考速度在末端出现
+    // “减速到 0 -> 重复终点又恢复爬行速度”的不连续。
+    const double terminal_ref_v = 0.0;
 
     const double base_cruise_v = params_.speed_profile_enable
         ? params_.speed_profile_v_cruise
@@ -1491,9 +1509,10 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
     //   - desired_velocity 只影响每个节点的速度参考值
     const double step_dist = effective_horizon / N_horizon_;
 
-    // 记住上一个找到的索引，确保参考轨迹单调递增
-    int last_found_idx = static_cast<int>(pruned_start_idx);
-    double accumulated_dist = 0.0;  // 从 nearest_idx_ 开始的累积距离
+    int last_found_idx = reference_start_idx;
+    // 负偏移使 forward_dist=0 对应最后一段上的投影位置。
+    double accumulated_dist =
+        -reference_start_ratio * reference_start_seg_dist;
     
     const double robot_theta_now = tf2::getYaw(current_pose.orientation);
 
@@ -1508,6 +1527,12 @@ std::vector<std::vector<double>> NMPC::extractLocalReference(
             auto& p1 = global_path_.poses[idx].pose.position;
             auto& p2 = global_path_.poses[idx + 1].pose.position;
             double seg_dist = std::hypot(p2.x - p1.x, p2.y - p1.y);
+
+            // 路径中可能存在重复点，跳过零长度段以避免插值除零。
+            if (seg_dist <= 1e-8) {
+                idx++;
+                continue;
+            }
             
             if (dist + seg_dist >= forward_dist) {
                 // 插值 (在 odom 坐标系下)

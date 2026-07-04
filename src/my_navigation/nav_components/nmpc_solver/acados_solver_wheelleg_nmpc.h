@@ -36,13 +36,13 @@
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define WHEELLEG_NMPC_NX     7
+#define WHEELLEG_NMPC_NX     9
 #define WHEELLEG_NMPC_NZ     0
 #define WHEELLEG_NMPC_NU     2
-#define WHEELLEG_NMPC_NP     24
+#define WHEELLEG_NMPC_NP     26
 #define WHEELLEG_NMPC_NP_GLOBAL     0
 #define WHEELLEG_NMPC_NBX    4
-#define WHEELLEG_NMPC_NBX0   7
+#define WHEELLEG_NMPC_NBX0   9
 #define WHEELLEG_NMPC_NBU    2
 #define WHEELLEG_NMPC_NSBX   0
 #define WHEELLEG_NMPC_NSBU   0
