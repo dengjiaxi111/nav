@@ -4,8 +4,7 @@
 #   launch/yaml -> integration_component(读取 projector.*) -> Map2DProjector(去前缀后读取)
 #
 # 重要说明（根据当前源码核对）：
-# 1) 推荐使用 `projector.base_to_ground_default`。
-# 2) 为兼容旧配置，代码仍支持 `projector.base_to_ground`（但建议后续迁移）。
+#   base_link 到地面的默认距离使用 `projector.base_to_ground_default`。
 
 /**:
   ros__parameters:
@@ -13,7 +12,6 @@
     projector.robot_height: 0.65           # [m] 机器人本体高度（用于可通过高度判断）
     projector.robot_width: 0.4            # [m] 机器人宽度（用于邻域/可通行性分析）
     projector.base_to_ground_default: 0.28 # [m] base_link 到地面的默认距离（推荐键名）
-    projector.base_to_ground: 0.28         # [m] 兼容旧键名（仍可用，建议迁移到 base_to_ground_default）
     projector.ground_tolerance: 0.08     # [m] 地面高度容差，降低以识别更低矮的异常
 
     # === 动态腿长相关 ===
@@ -74,8 +72,7 @@
     projector.frame_id: "odom"              # 输出 OccupancyGrid 坐标系
     projector.topic_name: "/rog_map/map_2d" # 输出 2D 地图话题名
 
-    # === 兼容/调试项 ===
-    projector.input_cloud_topic: "/rog_map/inf_occ"   # 历史topic模式参数（当前直连 ROG-Map，预留兼容）
+    # === 调试项 ===
     projector.enable_debug_log: false                  # 详细日志开关
     projector.enable_step_debug_viz: false             # 台阶调试可视化开关
     projector.step_debug_topic: "rog_map/step_debug"  # 台阶调试可视化话题

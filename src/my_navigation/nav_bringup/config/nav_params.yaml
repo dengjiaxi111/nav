@@ -316,19 +316,11 @@ nav_server:
       astar_anchor_tangent_shift_step_m: 0.05 # 单步偏移：每次沿选中切向移动的步长(米)
       astar_anchor_tangent_shift_max_m: 0.30 # 最大偏移：单个命中点沿切向允许累计偏移的上限(米)
       astar_anchor_tangent_improve_min_m: 0.005  # 最小改善量：新位置ESDF需至少提升该值才接受本次偏移
-      stair_align_expand_points: 5  # 兼容旧参数：仅当下方4个弧长窗口都<=0时才回退使用
       # 推荐：按弧长定义窗口，并区分上/下台阶
       stair_align_up_pre_dist_m: 1.40
       stair_align_up_post_dist_m: 0.8
       stair_align_down_pre_dist_m: 0.8
       stair_align_down_post_dist_m: 0.01
-    
-    
-    # 控制器(Pure Pursuit)
-    controller:
-      lookahead_dist: 0.5
-      max_linear_vel: 0.5
-      max_angular_vel: 1.0
     
     # NMPC 控制器
     nmpc:
@@ -458,7 +450,6 @@ nav_server:
       # 弧线后退恢复：在直退和旋转都失败后执行，适合从墙角/局部卡滞中斜向退开
       arc_backup_dist: 0.35         # 弧线后退目标位移(m)，达到该位移后认为动作完成
       arc_backup_vel: -1.5         # 弧线后退线速度(m/s)，应为负值
-      arc_backup_angular_vel: 0.4   # 兼容保留参数；未配置左右角速度时作为默认角速度幅值
       arc_backup_left_angular_vel: 2.0  # 左弧线后退角速度(rad/s)
       arc_backup_right_angular_vel: -2.0 # 右弧线后退角速度(rad/s)
       arc_backup_timeout: 2.0       # 弧线后退最大执行时间(s)，超时则该恢复动作失败

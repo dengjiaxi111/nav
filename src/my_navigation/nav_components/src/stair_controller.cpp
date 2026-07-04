@@ -424,14 +424,15 @@ void StairController::onNavStateChanged(nav_core::NavState state) {
         stair_mode_release_counter_ = 0;
         fsm_state_ = StairFsmState::NORMAL;
         fsm_state_enter_time_ = std::chrono::steady_clock::time_point{};
-    active_feature_ = TerrainCandidateInfo{};
-    active_terrain_type_ = TerrainType::NONE;
+        active_feature_ = TerrainCandidateInfo{};
+        active_terrain_type_ = TerrainType::NONE;
         precontact_miss_counter_ = 0;
         commit_arc_start_m_ = 0.0;
         commit_progress_start_time_ = std::chrono::steady_clock::time_point{};
         resetLegRaiseMonitor();
         cooldown_stair_id_ = -1;
         cooldown_replan_pending_ = false;
+        has_pending_backoff_temp_goal_ = false;
         if (state == nav_core::NavState::IDLE ||
             state == nav_core::NavState::SUCCEEDED ||
             state == nav_core::NavState::FAILED ||
@@ -450,6 +451,16 @@ double StairController::controlProgressTimeoutSec() const {
     return backoff_nav_progress_timeout_sec_;
 }
 
+bool StairController::consumeTemporaryGoal(geometry_msgs::msg::PoseStamped& goal) {
+    if (!has_pending_backoff_temp_goal_) {
+        return false;
+    }
+
+    goal = pending_backoff_temp_goal_;
+    has_pending_backoff_temp_goal_ = false;
+    return true;
+}
+
 nav_core::TerrainControlDecision StairController::update(
     const nav_core::TerrainControlContext& context,
     const geometry_msgs::msg::Twist& base_cmd,
@@ -460,6 +471,12 @@ nav_core::TerrainControlDecision StairController::update(
     if ((!enable_stair_mode_detection_ && !enable_fly_slope_mode_detection_) ||
         !enable_stair_fsm_) {
         transitionFsmState(StairFsmState::NORMAL, "fsm disabled");
+        resetStairModePulse(true);
+        return nav_core::TerrainControlDecision::PASS_THROUGH;
+    }
+
+    if (context.temporary_terrain_goal_active) {
+        transitionFsmState(StairFsmState::NORMAL, "temporary terrain goal active");
         resetStairModePulse(true);
         return nav_core::TerrainControlDecision::PASS_THROUGH;
     }
@@ -541,26 +558,6 @@ nav_core::TerrainControlDecision StairController::update(
         return is_fly(tt) ? fly_slope_backoff_tangent_search_half_width_m_
                           : stair_backoff_tangent_search_half_width_m_;
     };
-    auto backoff_pos_tol = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_backoff_pos_tolerance_m_ : stair_backoff_pos_tolerance_m_;
-    };
-    auto backoff_heading_kp = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_backoff_heading_kp_ : stair_backoff_heading_kp_;
-    };
-    auto backoff_wz_max = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_backoff_max_angular_vel_ : stair_backoff_max_angular_vel_;
-    };
-    auto backoff_linear_vel = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_backoff_linear_vel_ : stair_backoff_linear_vel_;
-    };
-    auto retry_max = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_retry_max_attempts_ : stair_retry_max_attempts_;
-    };
-    auto recovery_on_max = [&](TerrainType tt) {
-        return is_fly(tt) ? fly_slope_request_recovery_on_max_attempts_
-                          : stair_request_recovery_on_max_attempts_;
-    };
-
     bool candidate_in_cooldown = false;
     double candidate_cooldown_remain_sec = 0.0;
     const bool candidate_consumed = has_candidate &&
@@ -915,39 +912,6 @@ nav_core::TerrainControlDecision StairController::update(
                             backoff_release_distance_m_);
             }
 
-            if (traverse_sign * signed_dist <=
-                traverse_sign * target_signed + backoff_pos_tol(active_terrain_type_)) {
-                bool should_enter_cooldown = false;
-                if (active_feature_.feature_id >= 0) {
-                    if (active_terrain_type_ == TerrainType::FLY_SLOPE && enable_fly_slope_cooldown_) {
-                        should_enter_cooldown = isFlySlopeInCooldown(active_feature_.feature_id, now_tp, nullptr);
-                    } else if (active_terrain_type_ != TerrainType::FLY_SLOPE &&
-                               enable_stair_cooldown_) {
-                        should_enter_cooldown = isStairInCooldown(active_feature_.feature_id, now_tp, nullptr);
-                    }
-                }
-
-                if (should_enter_cooldown) {
-                    cooldown_stair_id_ = active_feature_.feature_id;
-                    cooldown_replan_pending_ = true;
-                    transitionFsmState(StairFsmState::COOLDOWN_BLOCKED,
-                                       "backoff done -> cooldown blocked");
-                    decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
-                } else if (active_attempt_count_ < std::max(1, retry_max(active_terrain_type_))) {
-                    transitionFsmState(StairFsmState::PRE_ALIGN, "backoff done -> retry");
-                    decision = nav_core::TerrainControlDecision::REQUEST_REPLAN; // 触发重规划以刷新实际距离
-                } else {
-                    if (recovery_on_max(active_terrain_type_)) {
-                        decision = nav_core::TerrainControlDecision::REQUEST_RECOVERY;
-                    } else {
-                        decision = nav_core::TerrainControlDecision::REQUEST_REPLAN;
-                    }
-                    transitionFsmState(StairFsmState::NORMAL, "max retry reached");
-                    active_terrain_type_ = TerrainType::NONE;
-                }
-                break;
-            }
-
             const Eigen::Vector2d backoff_dir = -traverse_sign * n;
             const double heading_ref = std::atan2(backoff_dir.y(), backoff_dir.x());
             const double heading_err_backoff = normalizeAngle(heading_ref - yaw);
@@ -981,14 +945,39 @@ nav_core::TerrainControlDecision StairController::update(
                     out_cmd.angular.z,
                     directional_heading_err);
             } else {
-                out_cmd.angular.z = std::clamp(
-                    backoff_heading_kp(active_terrain_type_) * heading_err_backoff,
-                    -backoff_wz_max(active_terrain_type_),
-                    backoff_wz_max(active_terrain_type_));
-                out_cmd.linear.x = backoff_linear_vel(active_terrain_type_) *
-                    std::max(0.0, std::cos(heading_err_backoff));
+                const double target_dist = std::max(0.0, backoff_distance(active_terrain_type_));
+                const Eigen::Vector2d target_pos = centerline_point - traverse_sign * target_dist * n;
+
+                has_pending_backoff_temp_goal_ = true;
+                pending_backoff_temp_goal_ = geometry_msgs::msg::PoseStamped();
+                pending_backoff_temp_goal_.header = context.current_pose.header;
+                if (pending_backoff_temp_goal_.header.frame_id.empty()) {
+                    pending_backoff_temp_goal_.header.frame_id = context.goal_pose.header.frame_id;
+                }
+                pending_backoff_temp_goal_.header.stamp = node_->now();
+                pending_backoff_temp_goal_.pose.position.x = target_pos.x();
+                pending_backoff_temp_goal_.pose.position.y = target_pos.y();
+                pending_backoff_temp_goal_.pose.position.z = 0.0;
+                pending_backoff_temp_goal_.pose.orientation = context.current_pose.pose.orientation;
+
+                RCLCPP_INFO(node_->get_logger(),
+                            "backoff temporary goal: type=%s id=%d target=(%.2f, %.2f), dist=%.2fm, s=%.2f",
+                            terrainTypeName(active_terrain_type_),
+                            active_feature_.feature_id,
+                            target_pos.x(),
+                            target_pos.y(),
+                            target_dist,
+                            s_clamped);
+
+                transitionFsmState(StairFsmState::NORMAL,
+                                   "backoff release done -> temporary goal");
+                active_terrain_type_ = TerrainType::NONE;
+                active_feature_ = TerrainCandidateInfo{};
+                decision = nav_core::TerrainControlDecision::REQUEST_TEMP_GOAL;
             }
-            decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+            if (decision != nav_core::TerrainControlDecision::REQUEST_TEMP_GOAL) {
+                decision = nav_core::TerrainControlDecision::OVERRIDE_CMD;
+            }
             break;
         }
 

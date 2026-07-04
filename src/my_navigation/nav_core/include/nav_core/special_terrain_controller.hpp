@@ -17,7 +17,8 @@ enum class TerrainControlDecision {
     PASS_THROUGH = 0,
     OVERRIDE_CMD,
     REQUEST_REPLAN,
-    REQUEST_RECOVERY
+    REQUEST_RECOVERY,
+    REQUEST_TEMP_GOAL
 };
 
 struct TerrainControlContext {
@@ -26,6 +27,7 @@ struct TerrainControlContext {
     nav_msgs::msg::Path current_path;
     double control_rate_hz{20.0};
     double goal_tolerance{0.1};
+    bool temporary_terrain_goal_active{false};
 };
 
 class SpecialTerrainController {
@@ -39,6 +41,11 @@ public:
         const TerrainControlContext& context,
         const geometry_msgs::msg::Twist& base_cmd,
         geometry_msgs::msg::Twist& out_cmd) = 0;
+
+    virtual bool consumeTemporaryGoal(geometry_msgs::msg::PoseStamped& goal) {
+        (void)goal;
+        return false;
+    }
 
     virtual void onNavStateChanged(NavState state) = 0;
     virtual bool controlProgressTimeoutOverrideActive() const { return false; }

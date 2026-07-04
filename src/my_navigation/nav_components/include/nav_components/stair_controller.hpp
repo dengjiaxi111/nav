@@ -31,6 +31,7 @@ public:
     void onNavStateChanged(nav_core::NavState state) override;
     bool controlProgressTimeoutOverrideActive() const override;
     double controlProgressTimeoutSec() const override;
+    bool consumeTemporaryGoal(geometry_msgs::msg::PoseStamped& goal) override;
 
 private:
     enum class TerrainType : uint8_t {
@@ -268,6 +269,8 @@ private:
     bool cooldown_replan_pending_{false};
     bool backoff_initialized_{false};
     double backoff_entry_signed_dist_{0.0};
+    bool has_pending_backoff_temp_goal_{false};
+    geometry_msgs::msg::PoseStamped pending_backoff_temp_goal_;
     std::string last_transition_reason_{"init"};
     std::unordered_map<int, int> stair_fail_count_by_id_;
     std::unordered_map<int, std::chrono::steady_clock::time_point> stair_cooldown_until_by_id_;

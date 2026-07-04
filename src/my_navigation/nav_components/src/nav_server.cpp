@@ -719,6 +719,8 @@ private:
             goal_handle_ = nullptr;
         }
         
+        resetTerrainTemporaryGoalState();
+
         // 直接设置目标并开始导航（无需 Action Client）
         goal_ = *msg;
         goal_.header.frame_id = map_frame_;
@@ -772,6 +774,59 @@ private:
         const double dx = a.pose.position.x - b.pose.position.x;
         const double dy = a.pose.position.y - b.pose.position.y;
         return std::hypot(dx, dy) <= std::max(0.0, tolerance_m);
+    }
+
+    void resetTerrainTemporaryGoalState() {
+        terrain_temporary_goal_active_ = false;
+        terrain_saved_goal_ = geometry_msgs::msg::PoseStamped();
+    }
+
+    void startTerrainTemporaryGoal(geometry_msgs::msg::PoseStamped temp_goal) {
+        if (!terrain_temporary_goal_active_) {
+            terrain_saved_goal_ = goal_;
+        }
+
+        if (temp_goal.header.frame_id.empty()) {
+            temp_goal.header.frame_id = !goal_.header.frame_id.empty() ? goal_.header.frame_id : map_frame_;
+        }
+        temp_goal.header.stamp = now();
+
+        terrain_temporary_goal_active_ = true;
+        goal_ = temp_goal;
+
+        RCLCPP_WARN(get_logger(),
+                    "特殊地形临时退让目标: (%.2f, %.2f)，保存原目标(%.2f, %.2f)",
+                    goal_.pose.position.x,
+                    goal_.pose.position.y,
+                    terrain_saved_goal_.pose.position.x,
+                    terrain_saved_goal_.pose.position.y);
+
+        stopRobot();
+        controller_.reset();
+        planner_.clearCache();
+        fsm_.transitionTo(nav_core::NavState::PLANNING);
+    }
+
+    void completeTerrainTemporaryGoal() {
+        if (!terrain_temporary_goal_active_) {
+            return;
+        }
+
+        const auto reached_goal = goal_;
+        goal_ = terrain_saved_goal_;
+        resetTerrainTemporaryGoalState();
+
+        RCLCPP_WARN(get_logger(),
+                    "特殊地形临时退让完成: reached=(%.2f, %.2f)，恢复原目标(%.2f, %.2f)并重规划",
+                    reached_goal.pose.position.x,
+                    reached_goal.pose.position.y,
+                    goal_.pose.position.x,
+                    goal_.pose.position.y);
+
+        stopRobot();
+        controller_.reset();
+        planner_.clearCache();
+        fsm_.transitionTo(nav_core::NavState::PLANNING);
     }
     
     void initComponents() {
@@ -1010,6 +1065,7 @@ private:
         }
         
         goal_handle_ = goal_handle;
+        resetTerrainTemporaryGoalState();
         goal_ = goal_handle->get_goal()->goal_pose;
         stopRobot();
         controller_.reset();
@@ -1023,6 +1079,7 @@ private:
     void controlLoop() {
         // 支持 Action 和 RViz 两种目标来源
         if (!goal_handle_ && !rviz_goal_active_) {
+            resetTerrainTemporaryGoalState();
             if (terrain_controller_) {
                 terrain_controller_->onNavStateChanged(nav_core::NavState::IDLE);
             }
@@ -1047,6 +1104,7 @@ private:
             result->message = "已取消";
             goal_handle_->canceled(result);
             goal_handle_ = nullptr;
+            resetTerrainTemporaryGoalState();
             fsm_.transitionTo(nav_core::NavState::IDLE);
             if (terrain_controller_) {
                 terrain_controller_->onNavStateChanged(nav_core::NavState::IDLE);
@@ -1905,7 +1963,7 @@ private:
         }
 
         // 可选：直接加载先验路径并交给控制器
-        if (use_prior_path_) {
+        if (use_prior_path_ && !terrain_temporary_goal_active_) {
             nav_msgs::msg::Path prior_path;
             bool loaded = !prior_path_file_.empty() && loadPathFromYaml(prior_path_file_, prior_path);
             if (loaded) {
@@ -2423,6 +2481,7 @@ private:
                     terrain_ctx.current_path = current_path_;
                     terrain_ctx.control_rate_hz = control_rate_;
                     terrain_ctx.goal_tolerance = goal_tolerance_;
+                    terrain_ctx.temporary_terrain_goal_active = terrain_temporary_goal_active_;
 
                     geometry_msgs::msg::Twist terrain_cmd = cmd;
                     const auto decision = terrain_controller_->update(
@@ -2441,12 +2500,28 @@ private:
                             stopRobot();
                             fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
                             break;
+                        case nav_core::TerrainControlDecision::REQUEST_TEMP_GOAL: {
+                            geometry_msgs::msg::PoseStamped temp_goal;
+                            if (terrain_controller_->consumeTemporaryGoal(temp_goal)) {
+                                startTerrainTemporaryGoal(temp_goal);
+                            } else {
+                                RCLCPP_WARN(get_logger(),
+                                            "特殊地形请求临时目标，但未提供目标点，进入恢复");
+                                stopRobot();
+                                fsm_.triggerRecovery(nav_core::RecoveryTrigger::CONTROL_FAILED);
+                            }
+                            break;
+                        }
                     }
                 } else {
                     cmd_vel_pub_->publish(cmd);
                 }
                 break;
             case nav_core::ControlResult::SUCCEEDED:
+                if (terrain_temporary_goal_active_) {
+                    completeTerrainTemporaryGoal();
+                    break;
+                }
                 stopRobot();
                 RCLCPP_INFO(get_logger(), "Controller: SUCCEEDED!");
                 fsm_.transitionTo(nav_core::NavState::SUCCEEDED);
@@ -2521,6 +2596,7 @@ private:
             goal_handle_ = nullptr;
         }
         
+        resetTerrainTemporaryGoalState();
         rviz_goal_active_ = false;
         fsm_.transitionTo(nav_core::NavState::IDLE);
         RCLCPP_INFO(get_logger(), "导航成功 (%.2fs)", elapsed);
@@ -2537,6 +2613,7 @@ private:
             goal_handle_ = nullptr;
         }
         
+        resetTerrainTemporaryGoalState();
         rviz_goal_active_ = false;
         fsm_.transitionTo(nav_core::NavState::IDLE);
         RCLCPP_ERROR(get_logger(), "导航失败");
@@ -2551,9 +2628,11 @@ private:
         fb->current_pose = current_pose_;
         fb->state = static_cast<uint8_t>(fsm_.state());
         fb->recovery_count = fsm_.recoveryCount();
+        const auto& feedback_goal =
+            terrain_temporary_goal_active_ ? terrain_saved_goal_ : goal_;
         fb->distance_remaining = std::hypot(
-            goal_.pose.position.x - current_pose_.pose.position.x,
-            goal_.pose.position.y - current_pose_.pose.position.y);
+            feedback_goal.pose.position.x - current_pose_.pose.position.x,
+            feedback_goal.pose.position.y - current_pose_.pose.position.y);
         goal_handle_->publish_feedback(fb);
     }
     
@@ -2595,6 +2674,7 @@ private:
     
     geometry_msgs::msg::PoseStamped current_pose_;
     geometry_msgs::msg::PoseStamped goal_;
+    geometry_msgs::msg::PoseStamped terrain_saved_goal_;
     nav_msgs::msg::Path current_path_;
     
     std::string map_file_, map_frame_, base_frame_, odom_frame_;
@@ -2633,6 +2713,7 @@ private:
     bool stair_mode_omega_limiter_initialized_{false};
     double last_stair_mode_limited_omega_{0.0};
     bool rviz_goal_active_ = false;  // RViz 目标激活标志
+    bool terrain_temporary_goal_active_{false};
     nav_components::InflationParams inflation_params_;  // 膨胀参数缓存
 
     // 路径持久化/复用
