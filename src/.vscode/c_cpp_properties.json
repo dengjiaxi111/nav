@@ -1,0 +1,32 @@
+{
+    "configurations": [
+        {
+            "browse": {
+                "databaseFilename": "${default}",
+                "limitSymbolsToIncludedHeaders": false
+            },
+            "includePath": [
+                "/home/lehan/navigationros2/ros2-humble/install/robots_msgs/include/**",
+                "/home/lehan/navigationros2/ros2-humble/install/livox_ros_driver2/include/**",
+                "/home/lehan/navigationros2/ros2-humble/install/fast_gicp/include/**",
+                "/home/lehan/navigationros2/ros2-humble/install/fake_vel_transform/include/**",
+                "/opt/ros/humble/include/**",
+                "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/Point-LIO_cxr/include/**",
+                "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/fake_vel_transform/include/**",
+                "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/fast_gicp/include/**",
+                "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/lio_3se/include/**",
+                "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/localization/include/**",
+                "/usr/include/**",
+                "${workspaceFolder}/mapping_and_location/localization/include",
+                "${workspaceFolder}/tools/mymonitor/include",
+                "${workspaceFolder}/mytree/include"
+            ],
+            "name": "ROS",
+            "intelliSenseMode": "gcc-x64",
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu11",
+            "cppStandard": "c++14"
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,67 @@
+# ========== 红方点坐标（单位：cm） ==========
+red_patrol_A_x: 1060.0
+red_patrol_A_y: 1260.0
+red_patrol_B_x: 932.0
+red_patrol_B_y: 325.0
+red_patrol_C_x: 1060.0
+red_patrol_C_y: 1260.0
+red_protect_hero_x: 454.0
+red_protect_hero_y: 1262.0
+red_supply_x: 179.0
+red_supply_y: 235.0
+red_initial_outpost_x: 1060.0
+red_initial_outpost_y: 1260.0
+
+# 红方英雄部署区（多边形顶点，cm）
+red_hero_deploy_zone:
+  - [350.0, 1000.0]
+  - [792.0, 972.0]
+  - [762.0, 1320.0]
+  - [354.0, 1318.0]
+
+# ========== 蓝方点坐标 ==========
+blue_patrol_A_x: 1670.0
+blue_patrol_A_y: 255.0
+blue_patrol_B_x: 1830.0
+blue_patrol_B_y: 1230.0
+blue_patrol_C_x: 1670.0
+blue_patrol_C_y: 255.0
+blue_protect_hero_x: 2376.0
+blue_protect_hero_y: 250.0
+blue_supply_x: 2620.0
+blue_supply_y: 1260.0
+blue_initial_outpost_x: 1670.0
+blue_initial_outpost_y: 255.0
+
+# 蓝方英雄部署区
+blue_hero_deploy_zone:
+  - [2012.0, 518.0]
+  - [2478.0, 518.0]
+  - [2472.0, 174.0]
+  - [2018.0, 202.0]
+
+# ========== 行为参数 ==========
+arrival_wait_time: 1.0
+deviation_threshold: 50.0
+patrol_A_stay_duration: 10.0
+patrol_B_stay_duration: 10.0
+patrol_C_stay_duration: 10.0
+attack_duration: 8.0
+defend_duration: 10.0
+# 开局前哨任务在 stage_remaining_time 大于该值时运行；
+# 小于等于该值后退出，云台切回对敌模式并进入原巡逻逻辑。
+initial_outpost_end_remaining_time: 390.0
+
+# ========== 补给阈值（血量/弹药比例） ==========
+supply_threshold: 0.3
+
+# ========== 机器人自身属性 ==========
+max_hp: 400.0
+max_ammo: 300.0
+
+# ========== 发布周期 ==========
+publish_interval_ms: 100
+# 目标点变化立即发布；未到达同目标点时按该间隔保活。
+target_publish_interval_ms: 2000
+# 已到达当前行为目标后，继续按该间隔保活发布当前目标点。
+target_arrived_publish_interval_ms: 5000

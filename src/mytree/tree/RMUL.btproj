@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" project_name="RMUL">
+    <include path="maintree.xml"/>
+    <!-- Description of Node Models (used by Groot) -->
+    <TreeNodesModel>
+        <Action ID="AttackDPoint" editable="true">
+            <input_port name="robotstatus" default="{robotstatus}"/>
+            <input_port name="gamestatus" default="{gamestatus}"/>
+            <input_port name="currentpos" default="{currentpos}"/>
+            <inout_port name="modecmd" default="{modecmd}"/>
+        </Action>
+        <Action ID="ChaseEnemy" editable="true">
+            <input_port name="robotstatus" default="{robotstatus}"/>
+            <input_port name="gamestatus" default="{gamestatus}"/>
+            <input_port name="currentpos" default="{currentpos}"/>
+            <inout_port name="modecmd" default="{modecmd}"/>
+        </Action>
+        <Action ID="GoSupply" editable="true">
+            <input_port name="gamestatus" default="{gamestatus}"/>
+            <input_port name="robotstatus" default="{robotstatus}"/>
+            <inout_port name="modecmd" default="{modecmd}"/>
+        </Action>
+        <Action ID="Patrol" editable="true">
+            <input_port name="robotstatus" default="{robotstatus}"/>
+            <input_port name="gamestatus" default="{gamestatus}"/>
+            <input_port name="currentpos" default="{currentpos}"/>
+            <inout_port name="modecmd" default="{modecmd}"/>
+        </Action>
+        <Action ID="UpdateInfo" editable="true">
+            <inout_port name="modecmd" default="{modecmd}"/>
+            <output_port name="gamestatus" default="{gamestatus}"/>
+            <output_port name="robotstatus" default="{robotstatus}"/>
+            <output_port name="currentpos" default="{currentpos}"/>
+        </Action>
+        <Action ID="WaitingForStart" editable="true">
+            <inout_port name="modecmd" default="{modecmd}"/>
+            <input_port name="gamestatus" default="{gamestatus}"/>
+            <input_port name="robotstatus" default="{robotstatus}"/>
+        </Action>
+    </TreeNodesModel>
+</root>

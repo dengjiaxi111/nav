@@ -1,0 +1,342 @@
+// NMPC controller - 基于 acados 的非线性模型预测控制器
+// 作为 ControllerBase 插件集成到导航框架
+
+#pragma once
+#include <nav_core/controller_base.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <robots_msgs/msg/chassis_odom.hpp>
+#include <memory>
+#include <vector>
+#include <mutex>
+#include <array>
+#include <limits>
+#include <string>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
+
+// 前向声明 acados solver (使用正确的类型名称)
+extern "C" {
+    struct wheelleg_nmpc_solver_capsule;
+}
+
+// 前向声明地图接口
+namespace nav_components {
+    class LayeredMapManager;
+}
+
+namespace nav_components {
+
+/**
+ * @brief NMPC 路径跟踪控制器
+ * 
+ * 特性:
+ * - 差速轮腿机器人非线性动力学模型
+ * - 实时优化求解 (50Hz+)
+ * - 运行时参数可调 (通过 YAML 配置)
+ * - ESDF 障碍物代价 (通过 acados 运行时参数 p 注入)
+ */
+class NMPC : public nav_core::ControllerBase {
+public:
+    NMPC();
+    ~NMPC() override;
+    
+    // ========== ControllerBase 接口实现 ==========
+    void initialize(rclcpp::Node* node) override;
+    void setMap(nav_core::MapInterface::Ptr map) override;
+    void setPath(const nav_msgs::msg::Path& path) override;
+    nav_core::ControlResult computeVelocity(
+        const geometry_msgs::msg::PoseStamped& current_pose,
+        geometry_msgs::msg::Twist& cmd_vel) override;
+    void setTolerance(double xy_tol, double yaw_tol) override;
+    void reset() override;
+
+private:
+    enum class CapacitorLimitLevel {
+        NORMAL,
+        PROTECT,
+        LOW,
+    };
+
+    // ========== 核心算法 ==========
+    /**
+     * @brief 求解 NMPC 优化问题
+      * @param x0 当前状态 [x, y, theta, v, omega, a_v, alpha_w, v_cmd, omega_cmd]
+     * @param yref 参考轨迹序列 (N+1个点)
+      * @param u_opt 输出最优控制 [a_cmd, alpha_cmd]
+     * @return 求解状态 (0=成功)
+     */
+    int solveNMPC(const std::vector<double>& x0,
+                  const std::vector<std::vector<double>>& yref,
+                  std::vector<double>& u_opt);
+    
+    /**
+     * @brief 从全局路径提取局部参考轨迹
+     * @param current_pose 当前位姿
+     * @param horizon_length 提取长度 (米)
+     * @return 参考轨迹序列 [[x,y,theta,v,omega], ...]
+     */
+    std::vector<std::vector<double>> extractLocalReference(
+        const geometry_msgs::msg::Pose& current_pose,
+        double horizon_length);
+    
+    /**
+     * @brief 查找路径上距离当前位置最近的点
+     */
+    int findNearestPathPoint(const geometry_msgs::msg::Pose& pose);
+    
+    /**
+     * @brief 更新 NMPC 运行时参数 (从 YAML 热重载)
+     */
+    void updateNMPCParameters();
+    
+    /**
+     * @brief 发布预测轨迹到 RViz
+     * @param header 消息头
+     * @param x0 当前状态
+     */
+    void publishPredictedPath(const std_msgs::msg::Header& header, 
+                             const std::vector<double>& x0);
+
+    /**
+     * @brief 新路径/重规划起步阶段硬对准门控。
+     *
+     * 激活时跳过 NMPC 求解，只发布原地旋转速度；航向误差收敛后退出，
+     * 后续控制周期恢复正常 NMPC 跟踪。
+     * @return true 表示本周期已由门控接管 cmd_vel
+     */
+    bool applyStartupAlignmentGate(
+        const geometry_msgs::msg::PoseStamped& current_pose,
+        geometry_msgs::msg::Twist& cmd_vel,
+        const std::vector<double>& x0);
+
+    double applyCapacitorOutputLimit(
+        double dt,
+        geometry_msgs::msg::Twist& cmd_vel);
+    double getCapacitorLimitScale(double filtered_voltage);
+
+    /**
+     * @brief 基于路径几何切线计算起步对准目标航向。
+     */
+    bool computeStartupAlignmentTargetYaw(
+        const geometry_msgs::msg::Pose& current_pose,
+        double& target_yaw);
+
+    /**
+     * @brief 为每个 shooting node 查询 ESDF 并注入到 acados 参数 p
+     * 参数格式 p = [xref(7), d_esdf, x_lin, y_lin, grad_x, grad_y, weight_scale,
+     *               q_pos, q_theta, q_vel, r_lin, r_ang,
+     *               esdf_weight, esdf_safe_dist, contouring_weight,
+     *               vel_lag_tau, omega_lag_tau, vel_lag_zeta, omega_lag_zeta, q_omega]
+     * @param yref 参考轨迹（用于查询位置）
+     */
+    void injectEsdfParameters(const std::vector<std::vector<double>>& yref,
+                              const std::vector<double>& theta_adjusted);
+
+    /**
+     * @brief 计算路径指定段的最大曲率
+     * @param start_idx 起始路径点索引
+     * @param num_points 向前检查的路径点数量
+     * @return 最大曲率 (1/m)
+     */
+    double computeLocalMaxCurvature(int start_idx, int num_points) const;
+    double computeLocalMaxCurvatureByDistance(int start_idx, double window_dist_m) const;
+    double computeGoalApproachSpeedLimit(double path_remaining_dist) const;
+    bool getMeasuredVelocity(double& v, double& w);
+    void updateLastStateFromCommand(
+        const std::vector<double>& base_state,
+        double v_cmd,
+        double omega_cmd,
+        double dt);
+    
+    // ========== 状态变量 ==========
+    rclcpp::Node* node_;
+    nav_msgs::msg::Path global_path_;        // 全局路径
+    nav_msgs::msg::Path predicted_path_;     // NMPC 预测轨迹
+    
+    double xy_tolerance_ = 0.1;
+    double yaw_tolerance_ = 0.1;
+    int nearest_idx_ = 0;  // 最近路径点索引
+    double path_remaining_dist_ = std::numeric_limits<double>::infinity();
+    
+    // NMPC 状态
+    std::vector<double> last_state_;   // 上一次状态 [x,y,theta,v,omega,a_v,alpha_w,v_cmd,omega_cmd]
+    std::vector<double> last_control_; // 上一次控制 [a_cmd,alpha_cmd]
+    bool initialized_ = false;
+    
+    // 地图接口（ESDF 查询）
+    std::shared_ptr<LayeredMapManager> map_manager_;
+    
+    // 里程计反馈（来自 small_point_lio）
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    nav_msgs::msg::Odometry latest_odom_;
+    bool odom_received_ = false;
+
+    // 旧底盘速度观测调试通道（nav_msgs/Odometry，不参与控制）
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr chassis_odom_sub_;
+    nav_msgs::msg::Odometry latest_chassis_odom_;
+    bool chassis_odom_received_ = false;
+
+    // 底盘实车反馈（来自嵌入式回传 /ChassisOdom，作为 NMPC 速度反馈源）
+    rclcpp::Subscription<robots_msgs::msg::ChassisOdom>::SharedPtr chassis_feedback_sub_;
+    robots_msgs::msg::ChassisOdom latest_chassis_feedback_;
+    rclcpp::Time latest_chassis_feedback_stamp_;
+    bool chassis_feedback_received_ = false;
+    bool chassis_velocity_valid_ = false;
+    double filtered_chassis_v_ = 0.0;
+    double filtered_chassis_w_ = 0.0;
+    bool chassis_filter_initialized_ = false;
+
+    mutable std::mutex odom_mutex_;
+    
+    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void chassisOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void chassisFeedbackCallback(const robots_msgs::msg::ChassisOdom::SharedPtr msg);
+
+    rcl_interfaces::msg::SetParametersResult onParametersChanged(
+        const std::vector<rclcpp::Parameter>& parameters);
+    
+    // ========== acados Solver ==========
+    wheelleg_nmpc_solver_capsule* acados_ocp_capsule_ = nullptr;
+    int N_horizon_ = 50;
+    double T_horizon_ = 1.5;
+    
+    static constexpr int NX_STATE = 9;
+    // 参数总数必须与 model.py 中 self.params 的维度一致
+    static constexpr int NP_PARAM = 26;
+    
+    // ========== 参数配置 ==========
+    struct NMPCParams {
+        // 运动约束
+        double max_linear_vel = 2.0;
+        double max_state_linear_vel = 2.4;
+        double min_state_linear_vel = -0.3;
+        double max_angular_vel = 2.0;
+        double max_linear_accel = 2.0;
+        double max_linear_decel = 2.0;
+        double max_angular_accel = 3.0;
+        bool allow_reverse = false;
+
+        // 代价权重（运行时参数注入）
+        double Q_position = 10.0;
+        double Q_orientation = 5.0;
+        double Q_velocity = 1.0;
+        double Q_omega = 5.0;      // 角速度跟踪权重（独立于 Q_velocity）
+        double R_linear = 0.1;
+        double R_angular = 0.1;
+
+        // ESDF 与轮廓代价权重（运行时参数注入）
+        double esdf_weight = 20.0;
+        double esdf_safe_dist = 0.5;
+        double contouring_weight = 50.0;
+
+        // ESDF 代价开关
+        bool enable_esdf_cost = true;      // 启用 ESDF 代价
+
+        // 局部参考轨迹提取
+        // horizon_length: 参考轨迹覆盖的实际路径弧长 (米)，与 desired_velocity 解耦
+        // desired_velocity: 参考速度基准值，与位置间距无关
+        double horizon_length = 2.0;       // 参考覆盖弧长 (米)
+        double desired_velocity = 1.0;     // 期望巡航速度 (m/s)
+        bool use_omega_ref_from_path = false;
+
+        // 曲率自适应 horizon：弯道时自动缩短覆盖弧长，减少前视距离
+        bool enable_curvature_horizon_adapt = true;
+        double horizon_kappa_scale = 0.5;  // 曲率对 horizon 的压缩系数
+        double horizon_min_length = 0.4;   // horizon 最小值 (米)
+
+    // 终点减速与起步对齐（参考轨迹整形）
+        double goal_crawl_speed = 0.15;          // 终点前爬行速度下限 (m/s)
+        bool enable_goal_speed_limit = true;     // 是否启用沿路径剩余距离的终点限速
+        double goal_slowdown_dist = 0.6;         // 沿路径剩余距离小于该值时启用终点限速
+        double goal_min_moving_speed = 0.12;     // 终点减速区内最小可动速度
+        double goal_max_slow_speed = 0.5;        // 刚进入终点减速区时的速度上限
+        double pivot_turn_heading_thresh = 0.785; // 航向误差大于该阈值时原地转向 (rad)
+        bool pivot_turn_startup_only = true;      // true=仅起步阶段原地转向, false=控制全程生效
+
+        // 新路径/重规划起步硬对准：在 NMPC 求解前强制 linear.x=0
+        bool startup_align_enable = true;
+        double startup_align_enter_thresh = 0.45;     // 进入硬对准阈值(rad)
+        double startup_align_exit_thresh = 0.15;      // 退出硬对准阈值(rad)
+        double startup_align_lookahead = 0.40;        // 用于计算路径切线的前视距离(m)
+        double startup_align_kp = 2.0;                // 原地转向比例系数
+        double startup_align_min_angular_vel = 0.25;  // 克服底盘死区的最小角速度(rad/s)
+        double startup_align_max_angular_vel = 2.5;   // 起步对准最大角速度(rad/s)
+
+    // 速度规划（第一批参数）
+    bool speed_profile_enable = true;
+    double speed_profile_v_cruise = 1.0;          // 巡航参考速度 (m/s)
+    double speed_profile_v_min = 0.05;            // 非终点最低参考速度 (m/s)
+    double speed_profile_max_lateral_accel = 1.5; // 横向加速度上限 (m/s^2)
+    double speed_profile_kappa_epsilon = 0.05;    // 曲率下限，防止分母过小 (1/m)
+    double speed_profile_curvature_window_m = 1.5; // 曲率统计窗口长度 (m)
+
+        // 速度反馈融合（用于缓解物理里程计对指令的拖拽）
+        // x0_vel = alpha * measured_vel + (1-alpha) * last_state_vel
+        // alpha=1.0 为纯实测速度闭环；alpha=0.0 为纯模型预测/前馈
+        double odom_feedback_alpha = 0.0;
+        std::string velocity_feedback_source = "chassis_odom";
+        double chassis_velocity_timeout_sec = 0.15;
+        double chassis_velocity_filter_alpha = 1.0;
+
+        // 近端权重递增
+        double near_weight_multiplier = 2.0;  // 前 1/4 时域权重倍数
+
+        // 终端权重缩放
+        double terminal_multiplier = 2.0;
+
+        // 底层闭环速度二阶滞后模型参数
+        double vel_lag_tau = 0.6;
+        double omega_lag_tau = 0.6;
+        double vel_lag_zeta = 1.0;
+        double omega_lag_zeta = 1.0;
+
+        // 电容电压保护：固定倍率 + 低通 + 滞回，现场主要只调这两个阈值
+        double capacitor_v_safe = 20.0;
+        double capacitor_v_low = 16.0;
+        double capacitor_protect_scale = 0.6;
+        double capacitor_low_scale = 0.3;
+        double capacitor_filter_alpha = 0.3;
+    } params_;
+    
+    // ========== ROS 接口 ==========
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr predicted_path_pub_;
+    // 速度观测调试话题（线速度辨识专用）
+    // linear.x = cmd_vel.v, linear.y = /ChassisOdom.v, linear.z = v_pred_1step
+    // angular.x = a_cmd, angular.y = tau_v, angular.z = v_cmd_state_pred_1step
+    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr speed_observation_pub_;
+
+    // 最近一次求解得到的 stage-1 预测状态 x1 = [x, y, theta, v, omega, a_v, alpha_w, v_cmd, omega_cmd]
+    std::array<double, NX_STATE> predicted_stage1_state_{};
+    bool predicted_stage1_valid_ = false;
+
+    // 运行时参数热更新句柄
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
+        on_set_params_handle_;
+    
+    // 性能统计
+    struct {
+        double avg_solve_time_ms = 0.0;
+        double max_solve_time_ms = 0.0;
+        int solve_count = 0;
+        int consecutive_failures = 0;
+    } stats_;
+
+    bool pivot_turn_active_ = false;
+    double pivot_turn_heading_error_ = 0.0;
+    bool startup_pivot_phase_active_ = false;
+    bool startup_align_active_ = false;
+    bool startup_align_engaged_ = false;
+    double startup_align_heading_error_ = 0.0;
+
+    // 电容输出限幅内部状态
+    static constexpr double kCapacitorHysteresisVoltage = 0.5;
+
+    bool capacitor_voltage_received_ = false;
+    double capacitor_voltage_raw_ = 0.0;
+    double capacitor_voltage_filtered_ = 0.0;
+    CapacitorLimitLevel capacitor_limit_level_ = CapacitorLimitLevel::NORMAL;
+    double capacitor_limit_scale_ = 1.0;
+};
+
+}  // namespace nav_components

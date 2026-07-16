@@ -1,0 +1,47 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/lehan/pb2025_sentry_nav-main/install/terrain_analysis/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/small_gicp_relocalization/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/sensor_scan_generation/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_cam/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_util/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_projectile_motion/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_gz_cam/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_gz_bridge/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_gz_base/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_base/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/rmoss_interfaces/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/pb_teleop_twist_joy/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/pb_omni_pid_pursuit_controller/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/loam_interface/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/livox_ros_driver2/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/ign_sim_pointcloud_tool/include/**",
+        "/home/lehan/pb2025_sentry_nav-main/install/fake_vel_transform/include/**",
+        "/opt/ros/humble/include/**",
+        "/home/lehan/navigationros2/ros2/src/Point-LIO_cxr/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/fake_vel_transform/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/fast_gicp/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/lio_3se/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/localization/include/**",
+        "/home/lehan/navigationros2/ros2/src/mynav2/costmap_converter/include/**",
+        "/home/lehan/navigationros2/ros2/src/mynav2/teb_local_planner/include/**",
+        "/home/lehan/navigationros2/ros2/src/myserial/include/**",
+        "/home/lehan/navigationros2/ros2/src/waypoint_navigation/include/**",
+        "include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

@@ -1,0 +1,25 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/lehan/lio_3se_ros2/install/lio_3se/include/**",
+        "/home/lehan/lio_3se_ros2/install/livox_ros_driver2/include/**",
+        "/opt/ros/foxy/include/**",
+        "/home/lehan/lio_3se_ros2/src/lio_3se/include/**",
+        "/home/lehan/lio_3se_ros2/src/pointcloud_segmentation/include/**",
+        "/home/lehan/lio_3se_ros2/src/pointcloud_to_laserscan/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

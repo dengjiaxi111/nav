@@ -1,0 +1,62 @@
+pointcloud_segmentation:
+  ros__parameters:
+    # 输入点云话题，来自 small_point_lio 发布的配准点云。
+    input_cloud_topic: "/cloud_registered"
+    # 输出过滤后的障碍点云话题，供 local_obstacle_grid 节点继续投影成 2D 动态层。
+    output_cloud_topic: "/cloud_filtered"
+    # 输出点云所在坐标系；保持为 odom，便于后续生成 odom 坐标系下的局部 OccupancyGrid。
+    target_frame: "odom"
+    # 点云分割时使用的车体坐标系；高度裁剪 z_min_base/z_max_base 都是相对该坐标系。
+    base_frame: "base_link"
+    # 合并多少帧点云后做一次分割；越大点云更密但延迟更高，2 基本对齐 navigationros2 原实现。
+    merge_frame_count: 3
+
+    # base_frame 下保留点云的最低高度 [m]；过低通常是地面以下噪声。
+    z_min_base: -0.8
+    # base_frame 下保留点云的最高高度 [m]；超过机器人通行相关高度的点不参与局部障碍。
+    z_max_base: 2.0
+    # 法线估计搜索半径 [m]；越大越平滑但更慢，越小越敏感但更容易受噪声影响。
+    normal_radius: 0.3
+    # 法线估计线程数；一般 2 足够，过大可能和其他实时节点抢 CPU。
+    normal_threads: 2
+    # 障碍点法线阈值：保留 |normal_z| 小于该值的点，过滤接近水平面的地面/坡面点。
+    normal_z_abs_max: 0.8
+
+    # 统计离群点滤波的邻居数；越大滤波更稳但会抹掉小障碍细节。
+    sor_mean_k: 2
+    # 统计离群点滤波标准差倍数；越小滤波越激进，越大保留点越多。
+    sor_stddev: 2.0
+
+local_obstacle_grid:
+  ros__parameters:
+    # 输入障碍点云话题，来自上面的 pointcloud_segmentation 节点。
+    input_cloud_topic: "/cloud_filtered"
+    # 输出 2D 动态障碍层话题；暂用旧 ROG-Map 话题，避免改 nav_server 的 dynamic_layer_topic。
+    output_map_topic: "/rog_map/map_2d"
+    # 输出 OccupancyGrid 的坐标系；必须与 LayeredMapManager 期望的动态层 odom 坐标一致。
+    target_frame: "odom"
+    # 查询机器人当前位置使用的车体坐标系；rolling window 以该 frame 在 odom 下的位置为中心。
+    base_frame: "base_link"
+
+    # 动态层地图分辨率 [m/cell]；应与静态地图/导航 costmap 常用分辨率一致。
+    resolution: 0.05
+    # 局部动态层 X 方向窗口大小 [m]；当前为 3m，对齐 navigationros2 的 local_costmap 宽度。
+    range_x: 12.0
+    # 局部动态层 Y 方向窗口大小 [m]；当前为 3m，对齐 navigationros2 的 local_costmap 高度。
+    range_y: 12.0
+    # OccupancyGrid 发布频率 [Hz]；腿车控制频率较高，保持 50Hz 以快速刷新动态层。
+    publish_rate: 50.0
+
+    # 相对 base_frame 的最低障碍高度 [m]；低于该高度的点不会写入 2D 动态层。
+    min_obstacle_height: -1.0
+    # 相对 base_frame 的最高障碍高度 [m]；高于该高度的点认为不影响车体通行。
+    max_obstacle_height: 2.0
+    # 障碍点最大作用距离 [m]；超过机器人该半径的点不会进入局部动态层。
+    obstacle_range: 5.0
+    # 障碍残留衰减时间 [s]；某栅格超过该时间没有新点命中就清除，等价替代 STVL 的 voxel_decay。
+    voxel_decay: 0.4
+
+    # OccupancyGrid 中障碍栅格值；nav_server 默认按接近 100 的值作为障碍。
+    occupied_value: 100
+    # OccupancyGrid 中空闲栅格值；未命中的局部窗口默认发布为空闲。
+    free_value: 0

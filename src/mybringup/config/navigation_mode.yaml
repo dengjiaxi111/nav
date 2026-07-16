@@ -1,0 +1,14 @@
+navigation_mode:
+  # true:
+  #   Do not start the localization initializer / relocalization flow.
+  #   Use RViz2 "2D Pose Estimate" (/initialpose) to compute and publish
+  #   a static map->odom transform.
+  # false:
+  #   Start the normal localization initializer and use the NDT/GICP
+  #   relocalization flow.
+  use_initialpose_as_static_tf: false
+
+  map_frame: map
+  odom_frame: odom
+  base_frame: base_link
+  initialpose_topic: /initialpose

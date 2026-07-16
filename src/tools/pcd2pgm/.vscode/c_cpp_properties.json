@@ -1,0 +1,32 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/lehan/navigationros2/ros2/install/robots_msgs/include/**",
+        "/home/lehan/navigationros2/ros2/install/pointcloud_to_laserscan/include/**",
+        "/home/lehan/navigationros2/ros2/install/lio_3se/include/**",
+        "/home/lehan/navigationros2/ros2/install/livox_ros_driver2/include/**",
+        "/opt/ros/foxy/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/lio_3se/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/mytf/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/pcd2pgm/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/pointcloud_segmentation/include/**",
+        "/home/lehan/navigationros2/ros2/src/mapping_and_location/pointcloud_to_laserscan/include/**",
+        "/home/lehan/navigationros2/ros2/src/mybringup/include/**",
+        "/home/lehan/navigationros2/ros2/src/myserial/include/**",
+        "include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

@@ -1,0 +1,17 @@
+# Exact versions to avoid conflicts
+# Python 3.12 需要更新的 wheel 版本；旧版本保留给 <=3.11
+numpy==1.24.3; python_version < "3.12"
+numpy==1.26.4; python_version >= "3.12"
+
+scipy==1.10.1; python_version < "3.12"
+scipy==1.11.4; python_version >= "3.12"
+
+casadi==3.6.5; python_version < "3.12"
+casadi==3.6.7; python_version >= "3.12"
+
+matplotlib==3.7.1; python_version < "3.12"
+matplotlib==3.8.4; python_version >= "3.12"
+pyyaml>=6.0  # 用于运行时配置加载
+
+# Note: acados_template must be installed manually:
+# pip install -e ~/dependency/acados/interfaces/acados_template

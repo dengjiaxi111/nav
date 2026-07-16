@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""
+完整导航系统启动文件
+启动组件:
+  1. small_point_lio - LiDAR-惯性SLAM定位
+  2. localization_initializer - NDT 三阶段重定位 (map → odom TF)
+  3. pointcloud_obstacle_layer - 点云局部障碍层
+  4. nav_server - 导航服务器 (规划器 + NMPC控制器)
+  5. RViz2 - 可视化 (含 2D Pose Estimate 支持)
+"""
+
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import PythonExpression
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
+from launch.conditions import IfCondition, UnlessCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.substitutions import FindPackageShare
+from ament_index_python.packages import get_package_share_directory
+import os
+import yaml
+
+
+def generate_launch_description():
+    # ==================== 包路径 ====================
+    nav_bringup_dir = get_package_share_directory('nav_bringup')
+    pointcloud_obstacle_dir = get_package_share_directory('pointcloud_obstacle_layer')
+    loc_init_dir = get_package_share_directory('localization_initializer')
+    acados_lib_dir = '/home/nuc/dependency/acados/lib'
+    existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+    ld_library_path = (
+        acados_lib_dir if os.path.isdir(acados_lib_dir) and not existing_ld_library_path
+        else f"{acados_lib_dir}:{existing_ld_library_path}" if os.path.isdir(acados_lib_dir)
+        else existing_ld_library_path
+    )
+    
+    # ==================== 配置文件 ====================
+    nav_params_file = os.path.join(nav_bringup_dir, 'config', 'nav_params.yaml')
+    loc_init_config = os.path.join(loc_init_dir, 'config', 'initializer_params.yaml')
+    
+    # === 解析 YAML 获取默认的 use_static_map_odom / debug_odom_reset 状态 ===
+    default_use_static_map_odom = 'false'
+    default_debug_reset_odom_to_base = 'false'
+    try:
+        with open(nav_params_file, 'r') as f:
+            params_dict = yaml.safe_load(f)
+            if params_dict and 'nav_server' in params_dict:
+                ros_params = params_dict['nav_server'].get('ros__parameters', {})
+                # 获取 YAML 中的 bool 值并转化为 launch parser 接受的 'true' 或 'false'
+                if ros_params.get('use_static_map_odom', False):
+                    default_use_static_map_odom = 'true'
+                if ros_params.get('debug_reset_odom_to_base_link', False):
+                    default_debug_reset_odom_to_base = 'true'
+    except Exception as e:
+        print(f"[Warning] Failed to parse nav_params.yaml for static/debug toggles: {e}")
+
+    # === 解析 initialize_params.yaml 获取点云地图路径 ===
+    default_pcd_map_file = ''
+    try:
+        with open(loc_init_config, 'r') as f:
+            loc_dict = yaml.safe_load(f)
+            if loc_dict and '/**' in loc_dict:
+                ros_params = loc_dict['/**'].get('ros__parameters', {})
+                default_pcd_map_file = ros_params.get('map_file', '')
+    except Exception as e:
+        print(f"[Warning] Failed to parse initializer_params.yaml for pcd map_file: {e}")
+
+    local_obstacle_params = os.path.join(
+        pointcloud_obstacle_dir, 'config', 'legged_local_obstacle.yaml')
+    
+    # RViz 配置 - 使用导航专用配置
+    rviz_config_file = os.path.join(nav_bringup_dir, 'rviz', 'navigation_full.rviz')
+    
+    # ==================== Launch 参数 ====================
+    declare_nav_params = DeclareLaunchArgument(
+        'nav_params_file',
+        default_value=nav_params_file,
+        description='导航参数文件路径'
+    )
+    
+    declare_local_obstacle_params = DeclareLaunchArgument(
+        'local_obstacle_params_file',
+        default_value=local_obstacle_params,
+        description='腿车点云局部障碍层参数文件路径'
+    )
+    
+    declare_rviz_config = DeclareLaunchArgument(
+        'rviz_config',
+        default_value=rviz_config_file,
+        description='RViz2 配置文件路径'
+    )
+    
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='使用仿真时间'
+    )
+
+    declare_lidar_mount_mode = DeclareLaunchArgument(
+        'lidar_mount_mode',
+        default_value='fixed',
+        description='fixed: 原底盘固定雷达TF; gimbal_yaw: 云台yaw雷达TF链'
+    )
+
+    declare_enable_lio = DeclareLaunchArgument(
+        'enable_lio',
+        default_value='true',
+        description='true: 启动 small_point_lio; false: 用 bag 中已有的 /cloud_registered、/Odometry 和 odom->base_link'
+    )
+
+    declare_use_static_map_odom = DeclareLaunchArgument(
+        'use_static_map_odom',
+        default_value=default_use_static_map_odom,
+        description='true: 发布静态 map->odom(0,0,0); false: 使用 localization_initializer 发布 map->odom'
+    )
+
+    declare_debug_reset_odom_to_base = DeclareLaunchArgument(
+        'debug_reset_odom_to_base_link',
+        default_value=default_debug_reset_odom_to_base,
+        description='true: 调试模式，重定位或设初值后强制 odom==base_link（仅用于规划调试）'
+    )
+    
+    # ==================== 1. small_point_lio (SLAM定位) ====================
+    small_point_lio_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('small_point_lio'),
+                'launch',
+                'small_point_lio.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'lidar_mount_mode': LaunchConfiguration('lidar_mount_mode'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('enable_lio'))
+    )
+
+    gimbal_yaw_tf_node = Node(
+        package='nav_bringup',
+        executable='gimbal_yaw_tf_publisher.py',
+        name='gimbal_yaw_tf_publisher',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('lidar_mount_mode'), "' == 'gimbal_yaw'"
+        ])),
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'gimbal_angle_topic': '/ChassisOdom',
+            'parent_frame': 'base_link',
+            'child_frame': 'gimbal_yaw_link',
+            # 实车若云台旋转轴不在 base_link 原点，直接改这里的三维偏移。
+            'gimbal_axis_x': 0.0,
+            'gimbal_axis_y': 0.0,
+            'gimbal_axis_z': 0.0,
+            'yaw_unit': 'deg',
+            'yaw_sign': 1.0,
+            'yaw_offset_rad': 0.0,
+            'publish_rate_hz': 100.0,
+            'publish_before_first_msg': True,
+        }],
+        output='screen'
+    )
+
+    # ==================== 2. NDT 重定位 (map → odom TF) ====================
+    # 启动后请在 RViz 中使用 '2D Pose Estimate' 工具给出初始位姿
+    # 配准完成后会发布 map → odom 的静态 TF，替代原来 navigation.launch.py 中的临时 TF
+    localization_init_node = Node(
+        package='localization_initializer',
+        executable='localization_initializer_node',
+        name='localization_initializer',
+        condition=UnlessCondition(LaunchConfiguration('use_static_map_odom')),
+        output='screen',
+        parameters=[
+            loc_init_config,
+            {'auto_initialize': 'false'},
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+        ],
+        remappings=[
+            ('/cloud_registered', '/cloud_registered'),
+            ('/initialpose', '/initialpose'),
+            ('/localization/aligned_scan', '/localization/aligned_scan'),
+            ('/localization/map_cloud', '/localization/map_cloud'),
+            ('/localization/status', '/localization/status'),
+            ('/localization/fitness_marker', '/localization/fitness_marker'),
+        ]
+    )
+
+    # 使用自定义的静态重定位脚本，接收 RViz 的 /initialpose 并转换为 map->odom static TF
+    static_tf_map_odom = Node(
+        package='nav_bringup',
+        executable='static_relocator.py',
+        name='static_relocator',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('use_static_map_odom'), "' == 'true' and '",
+            LaunchConfiguration('debug_reset_odom_to_base_link'), "' != 'true'"
+        ])),
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+        output='screen'
+    )
+
+    odom_base_debug_rebaser = Node(
+        package='nav_bringup',
+        executable='odom_base_debug_rebaser.py',
+        name='odom_base_debug_rebaser',
+        condition=IfCondition(LaunchConfiguration('debug_reset_odom_to_base_link')),
+        parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'map_frame': 'map',
+            'odom_frame': 'odom',
+            'base_frame': 'base_link',
+            'odom_topic': '/Odometry',
+            'initialpose_topic': '/initialpose',
+            'localization_status_topic': '/localization/status',
+            'tf_rate_hz': 50.0,
+        }],
+        output='screen'
+    )
+
+    # 静态重定位模式下，依然需要发布点云地图以便在 RViz 中查看
+    pcd_map_publisher_node = Node(
+        package='pcl_ros',
+        executable='pcd_to_pointcloud',
+        name='pcd_publisher',
+        condition=IfCondition(LaunchConfiguration('use_static_map_odom')),
+        parameters=[{
+            'file_name': default_pcd_map_file,
+            'tf_frame': 'map',
+            'use_sim_time': LaunchConfiguration('use_sim_time')
+        }],
+        remappings=[
+            ('cloud_pcd', '/localization/map_cloud')
+        ],
+        output='screen'
+    )
+
+    
+    # ==================== 3. 点云局部障碍层 ====================
+    # 输出仍使用 /rog_map/map_2d，保持 nav_server 的 dynamic_layer_topic 不变。
+    local_obstacle_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('pointcloud_obstacle_layer'),
+                'launch',
+                'local_obstacle_layer.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'params_file': LaunchConfiguration('local_obstacle_params_file'),
+            'use_sim_time': LaunchConfiguration('use_sim_time')
+        }.items()
+    )
+
+    
+    # ==================== 4. 导航服务器 (规划 + NMPC控制) ====================
+    navigation_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('nav_bringup'),
+                'launch',
+                'navigation.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'params_file': LaunchConfiguration('nav_params_file'),
+            'use_sim_time': LaunchConfiguration('use_sim_time')
+        }.items()
+    )
+    
+    # ==================== 5. RViz2 ====================
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', LaunchConfiguration('rviz_config')],
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+        output='screen'
+    )
+    
+    # ==================== Launch Description ====================
+    return LaunchDescription([
+        # 增加栈空间到 16MB，避免大点云处理时栈溢出
+        SetEnvironmentVariable('ROS_STACK_SIZE', '16777216'),
+        SetEnvironmentVariable('LD_LIBRARY_PATH', ld_library_path),
+
+        # 声明参数
+        declare_nav_params,
+        declare_local_obstacle_params,
+        declare_rviz_config,
+        declare_use_sim_time,
+        declare_lidar_mount_mode,
+        declare_enable_lio,
+        declare_use_static_map_odom,
+        declare_debug_reset_odom_to_base,
+        
+        # 启动节点 (按依赖顺序)
+        gimbal_yaw_tf_node,       # 0. 云台 yaw TF (gimbal_yaw 模式)
+        small_point_lio_launch,    # 1. LIO 里程计 (odom → base_link)
+        localization_init_node,    # 2a. NDT 重定位 (map → odom)
+        static_tf_map_odom,        # 2b. 静态 TF 模式 (map → odom = 0,0,0 等待 RViz)
+        odom_base_debug_rebaser,   # 2c. 调试模式: 强制 odom==base_link
+        pcd_map_publisher_node,    # 2b. 静态 TF 模式下发布地图点云
+        local_obstacle_launch,     # 3. 点云局部障碍层 (/cloud_registered -> /rog_map/map_2d)
+        navigation_launch,         # 4. 导航服务器 (规划 + NMPC)
+        rviz_node,                 # 5. RViz (含 2D Pose Estimate)
+    ])

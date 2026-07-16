@@ -1,0 +1,60 @@
+<robot name="my_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+    
+    <xacro:arg name="controller_yaml_path" default="/home/lehan/lio_3se_ros2/src/sim_3se/config/sentry_control.yaml" />
+    
+    <gazebo>
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <parameters>/home/lehan/lio_3se_ros2/src/sim_3se/config/sentry_control.yaml</parameters>
+    </plugin>
+  </gazebo>
+    
+    <xacro:macro name="add_motor">
+
+        <ros2_control name="GazeboSystem" type="system">
+            <hardware>
+                <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+            </hardware>
+            <!-- steer -->
+            <joint name="FL_Steer2base_link">
+                <command_interface name="position"/>
+                <state_interface name="position"/>
+            </joint>
+            <joint name="FR_Steer2base_link">
+                <command_interface name="position"/>
+                <state_interface name="position"/>
+            </joint>
+            <joint name="BL_Steer2base_link">
+                <command_interface name="position"/>
+                <state_interface name="position"/>
+            </joint>
+            <joint name="BR_Steer2base_link">
+                <command_interface name="position"/>
+                <state_interface name="position"/>
+            </joint>
+
+            <!-- wheel -->
+            <joint name="FL_wheel2FL_Susp">
+                <command_interface name="velocity"/>
+                <state_interface name="velocity"/>
+                <state_interface name="position"/>
+            </joint>
+            <joint name="FR_wheel2FR_Susp">
+                <command_interface name="velocity"/>
+                <state_interface name="velocity"/>
+                <state_interface name="position"/>
+            </joint>
+            <joint name="BL_wheel2BL_Susp">
+                <command_interface name="velocity"/>
+                <state_interface name="velocity"/>
+                <state_interface name="position"/>
+            </joint>
+            <joint name="BR_wheel2BR_Susp">
+                <command_interface name="velocity"/>
+                <state_interface name="velocity"/>
+                <state_interface name="position"/>
+            </joint>
+        </ros2_control>
+
+
+    </xacro:macro>
+</robot>

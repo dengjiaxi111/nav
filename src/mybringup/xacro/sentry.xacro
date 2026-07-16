@@ -1,0 +1,269 @@
+<robot name="sentry" xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:include filename="my_head.xacro" />
+    <xacro:include filename="sentry_move.xacro" />
+    <xacro:property name="PI" value="3.1415926535897932384626433" />
+
+    <material name="black">
+        <color rgba="0.0 0.0 0.0 1.0" />
+    </material>
+    <xacro:property name="base_footprint_a" value="0.48" />
+    <xacro:property name="base_footprint_b" value="0.48" />
+    <xacro:property name="base_footprint_h" value="0.2" />
+    
+    <xacro:macro name="add_steer_wheel" params="name FB LR" >
+        <link name="${name}_Steer">
+            <visual>
+                <geometry>
+                    <cylinder radius="0.035" length="0.01" />
+                </geometry>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <material name="blue">
+                    <color rgba="0.0 0.0 0.8 1.0" />
+                </material>
+            </visual>
+            <collision>
+                <geometry>
+                    <cylinder radius="0.035" length="0.01" />
+                </geometry>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+            </collision>
+            <xacro:cylinder_inertial_matrix m="0.5" r="0.035" h="0.01" />
+        </link>
+
+        <joint name="${name}_Steer2base_link" type="continuous">
+            <parent link="base_link" />
+            <child link="${name}_Steer" />
+            <origin xyz="${0.2*FB} ${0.15*LR} -0.055"/>
+            <axis xyz="0 0 1" />
+            <limit velocity="20" effort="5"/>
+        </joint>
+
+        <gazebo reference="${name}_Steer">
+            <material>Gazebo/Red</material>
+        </gazebo>
+
+        <link name="${name}_Susp">
+            <visual>
+                <geometry>
+                    <cylinder radius="0.035" length="0.01" />
+                </geometry>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <material name="blue">
+                    <color rgba="0.0 0.0 0.8 1.0" />
+                </material>
+            </visual>
+            <collision>
+                <geometry>
+                    <cylinder radius="0.035" length="0.01" />
+                </geometry>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+            </collision>
+            <xacro:cylinder_inertial_matrix m="0.5" r="0.035" h="0.01" />
+        </link>
+
+        <joint name="${name}_Susp2${name}_Steer" type="prismatic">
+            <parent link="${name}_Steer" />
+            <child link="${name}_Susp" />
+            <limit lower="-0.02" upper="0.02" effort="100" velocity="100"/>
+            <origin xyz="0 0 -0.04"/>
+            <axis xyz="0 0 1" />
+            <dynamics damping="80.0" friction="0.5"/>
+        </joint>
+        <gazebo reference="${name}_Susp2${name}_Steer">
+            <implicitSpringDamper>true</implicitSpringDamper>
+            <springStiffness>4000</springStiffness>
+            <springReference>0</springReference>
+        </gazebo>
+	
+        <gazebo reference="${name}_Susp">
+            <material>Gazebo/Red</material>
+        </gazebo>
+
+        <link name="${name}_wheel">
+            <visual>
+                <geometry>
+                    <cylinder radius="0.05" length="0.03" />
+                </geometry>
+                <origin xyz="0 0 0" rpy="1.5705 0 0" />
+                <material name="black">
+                    <color rgba="0.0 0.0 0.0 1.0" />
+                </material>
+            </visual>
+            <collision>
+                <geometry>
+                    <cylinder radius="0.05" length="0.03" />
+                </geometry>
+                <origin xyz="0 0 0" rpy="1.5705 0 0" />
+            </collision>
+            <xacro:cylinder_inertial_matrix m="1.5" r="0.05" h="0.02" />
+        </link>
+
+        <joint name="${name}_wheel2${name}_Susp" type="continuous">
+            <parent link="${name}_Susp" />
+            <child link="${name}_wheel" />
+            <origin xyz="0 0 -0.06" />
+            <axis xyz="0 1 0" />
+            <limit velocity="100" effort="10"/>
+        </joint>
+        <gazebo reference="${name}_wheel">
+            <material>Gazebo/Black</material>
+            <mu1>0.7</mu1>
+            <mu2>0.7</mu2>
+        </gazebo>
+    </xacro:macro>
+
+    <!--base_footprint -->
+    <link name="base_footprint">
+        <visual>
+            <geometry>
+                <sphere radius="0.001" />
+            </geometry>
+        </visual>
+    </link>
+
+    <!--chassis -->
+    <link name="base_link">
+        <visual>
+            <geometry>
+                <box size="0.60 0.45 0.1"/>
+            </geometry>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <material name="yellow">
+                <color rgba="0.8 0.3 0.1 0.5" />
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <box size="0.40 0.40 0.2"/>
+            </geometry>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+        </collision>
+        <xacro:Box_inertial_matrix m="13" l="0.40" w="0.40" h="0.1" />
+    </link>
+
+    <joint name="base_link2base_footprint" type="fixed">
+    <parent link="base_footprint" />
+    <child link="base_link" />
+    <origin xyz="0 0 0" />
+    </joint>
+
+    <link name="gimbal_link">
+        <visual>
+            <geometry>
+                <box size="0.1 0.1 0.1"/>
+            </geometry>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <material name="red">
+                <color rgba="1 0 0 0.5" />
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <box size="0.1 0.1 0.1"/>
+            </geometry>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+        </collision>
+        <xacro:Box_inertial_matrix m="1" l="0.1" w="0.1" h="0.1" />
+    </link>
+    <joint name="gimbal_link2base_link" type="fixed">
+        <parent link="base_link" />
+        <child link="gimbal_link" />
+        <origin xyz="0 0 0.1" />
+    </joint>
+
+
+
+    <gazebo reference="base_link">
+        <material>Gazebo/Yellow</material>
+    </gazebo>
+    <!-- WHEELS -->
+    <!-- FL -->
+    <xacro:add_steer_wheel name="FL" FB="1" LR="1" />
+    <!-- FR -->
+    <xacro:add_steer_wheel name="FR" FB="1" LR="-1" />
+    <!-- BL -->
+    <xacro:add_steer_wheel name="BL" FB="-1" LR="1" />
+    <!-- BR -->
+    <xacro:add_steer_wheel name="BR" FB="-1" LR="-1" />
+
+    <!--GAZEBO WITH ROS2 CONTROL-->
+    <xacro:add_motor/>
+
+    <!--Lidar-->
+    <link name="livox_right">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="0.05 0.05 0.05" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="0.05 0.05 0.05" />
+            </geometry>
+        </collision>
+        <inertial>
+            <mass value="0.001"/>
+            <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+        </inertial>
+    </link>
+    <link name="livox_left">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="0.05 0.05 0.05" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="0.05 0.05 0.05" />
+            </geometry>
+        </collision>
+        <inertial>
+            <mass value="0.001"/>
+            <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+        </inertial>
+    </link>
+
+    <joint name="livox_right2gimbal_link" type="fixed">
+        <parent link="gimbal_link"/>
+        <child link="livox_right"/>
+        <origin xyz="0.015 -0.17 0" rpy="-0.785 0 3.1415926" />
+        <axis xyz="0 0 0" />
+    </joint>
+    <joint name="livox_left2gimbal_link" type="fixed">
+        <parent link="gimbal_link"/>
+        <child link="livox_left"/>
+        <origin xyz="0.045 0.123 0" rpy="-0.785 0 0" />
+        <axis xyz="0 0 0" />
+    </joint>
+    <!--imu -->
+    <!-- 这是livox驱动中imu数据的帧头名-->
+    <link name="livox_frame">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="0.03 0.03 0.03" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="0.03 0.03 0.03" />
+            </geometry>
+        </collision>
+        <inertial>
+            <mass value="0.001"/>
+            <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+        </inertial>
+    </link>
+
+    <joint name="livox_frame2livox_right" type="fixed">
+        <parent link="livox_right"/>
+        <child link="livox_frame"/>
+        <origin xyz="0.0 0 0" rpy="0 0 0" />
+        <axis xyz="0 0 0" />
+    </joint>
+</robot> 

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4"
+      main_tree_to_execute="main">
+  <BehaviorTree ID="main">
+    <ReactiveFallback>
+      <UpdateInfo gamestatus="{gamestatus}"
+                  robotstatus="{robotstatus}"
+                  currentpos="{currentpos}"
+                  _description="Update all info&#10;should always return fail&#10;"/>
+      <ModeControl in_buff_mode="{in_buff_mode}"
+                  in_relocalization_mode = "{in_relocalization_mode}"
+                  modecmd="{modecmd}"
+                  gamestatus="{gamestatus}"
+                  robotstatus="{robotstatus}"
+                  currentpos="{currentpos}"
+                  _description="Check and update all modes&#10;"/>
+      <UpdateEnemy gamestatus="{gamestatus}"
+                  robotstatus="{robotstatus}"
+                  enemypose="{enemypose}"/>
+      <WaitingForStart modecmd="{modecmd}"
+                       gamestatus="{gamestatus}"
+                       robotstatus="{robotstatus}"
+                       debugmode="false"
+                       _description="If the game has not started yet, do Nothing&#10;return failure when game starts.&#10;"/>
+      <!-- <TriggerRelocalization 
+                      gamestatus="{gamestatus}"
+                      robotstatus="{robotstatus}"
+                      in_relocalization_mode = "{in_relocalization_mode}"
+                      _description="check and trigger relocalization"/>                  -->
+
+      <ReactiveFallback>
+        <GoSupply gamestatus="{gamestatus}"
+                  robotstatus="{robotstatus}"
+                  modecmd="{modecmd}"
+                  currentpos="{currentpos}"
+                  _description="Check if we need supply.&#10;If so, locks in running state and set a goal to supply zone until we recover. "/>
+        <!-- <GetBuff  robotstatus="{robotstatus}"
+                  gamestatus="{gamestatus}"
+                  currentpos="{currentpos}"
+                  modecmd="{modecmd}"
+                  _description="get small buff"/>       -->
+        <ChaseEnemy gamestatus="{gamestatus}"
+                    robotstatus="{robotstatus}"
+                    modecmd="{modecmd}"
+                    currentpos="{currentpos}"
+                    enemypose="{enemypose}"/>    
+        <AttackDPoint robotstatus="{robotstatus}"
+                      gamestatus="{gamestatus}"
+                      currentpos="{currentpos}"
+                      modecmd="{modecmd}"
+                      _description="default status&#10;just rush the D point"/>
+        <Defensive robotstatus="{robotstatus}"
+                   gamestatus="{gamestatus}"
+                   currentpos="{currentpos}"
+                   modecmd="{modecmd}"/>
+        <Patrol robotstatus="{robotstatus}"
+                gamestatus="{gamestatus}"
+                currentpos="{currentpos}"
+                modecmd="{modecmd}"
+                enemypose="{enemypose}"
+                _description="patrol around the point&#10;"/>
+      </ReactiveFallback>
+    </ReactiveFallback>
+  </BehaviorTree>
+
+  <!-- Description of Node Models (used by Groot) -->
+  <TreeNodesModel>
+  
+    <Action ID="TriggerRelocalization" editable="true">
+        <input_port name="gamestatus" default="{gamestatus}"/>
+        <input_port name="robotstatus" default="{robotstatus}"/>
+        <output_port name="relocalization_mode" default="false"/>
+    </Action>
+    <Action ID="AttackDPoint"
+            editable="true">
+      <input_port name="robotstatus"
+                  default="{robotstatus}"/>
+      <input_port name="gamestatus"
+                  default="{gamestatus}"/>
+      <input_port name="currentpos"
+                  default="{currentpos}"/>
+      <inout_port name="modecmd"
+                  default="{modecmd}"/>
+    </Action>
+    <Action ID="ChaseEnemy"
+            editable="true">
+      <input_port name="gamestatus"/>
+      <input_port name="robotstatus"/>
+      <inout_port name="modecmd"/>
+      <input_port name="currentpos"/>
+    </Action>
+    <Action ID="Defensive"
+            editable="true">
+      <input_port name="robotstatus"/>
+      <input_port name="gamestatus"/>
+      <input_port name="currentpos"/>
+      <inout_port name="modecmd"/>
+    </Action>
+    <Action ID="GoSupply"
+            editable="true">
+      <input_port name="gamestatus"
+                  default="{gamestatus}"/>
+      <input_port name="robotstatus"
+                  default="{robotstatus}"/>
+      <inout_port name="modecmd"
+                  default="{modecmd}"/>
+      <input_port name="currentpos"
+                  default="{currentpos}"/>
+    </Action>
+    <Action ID="Patrol"
+            editable="true">
+      <input_port name="robotstatus"
+                  default="{robotstatus}"/>
+      <input_port name="gamestatus"
+                  default="{gamestatus}"/>
+      <input_port name="currentpos"
+                  default="{currentpos}"/>
+      <inout_port name="modecmd"
+                  default="{modecmd}"/>
+    </Action>
+    <Action ID="UpdateInfo"
+            editable="true">
+      <input_port name="in_buff_mode" 
+                  default="false"/>
+      <inout_port name="modecmd"
+                  default="{modecmd}"/>
+      <output_port name="gamestatus"
+                   default="{gamestatus}"/>
+      <output_port name="robotstatus"
+                   default="{robotstatus}"/>
+      <output_port name="currentpos"
+                   default="{currentpos}"/>
+    </Action>
+    <Action ID="WaitingForStart"
+            editable="true">
+      <inout_port name="modecmd"
+                  default="{modecmd}"/>
+      <input_port name="gamestatus"
+                  default="{gamestatus}"/>
+      <input_port name="robotstatus"
+                  default="{robotstatus}"/>
+    </Action>
+  </TreeNodesModel>
+
+</root>

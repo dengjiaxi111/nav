@@ -1,0 +1,20 @@
+nuc@nuc-NUC15CRKU7:~/navigation2026$ ros2 topic echo /Odometry --field pose.pose.position --once
+x: 2.3200461864471436
+y: -1.5717028379440308
+z: -0.2257317751646042
+---
+nuc@nuc-NUC15CRKU7:~/navigation2026$ ros2 topic echo /Odometry --field pose.pose.position --once
+x: 2.176657199859619
+y: 0.5597319602966309
+z: -0.23816414177417755
+---
+nuc@nuc-NUC15CRKU7:~/navigation2026$ ros2 topic echo /Odometry --field pose.pose.position --once
+x: 0.8341053128242493
+y: 2.9417245388031006
+z: -0.019497906789183617
+---
+nuc@nuc-NUC15CRKU7:~/navigation2026$ ros2 topic echo /Odometry --field pose.pose.position --once
+x: -1.0046429634094238
+y: 0.35609257221221924
+z: 0.14460110664367676
+---

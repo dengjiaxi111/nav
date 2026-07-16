@@ -1,0 +1,20 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/lehan/navigationros2/ros2-humble/install/teb_msgs/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/robots_msgs/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/lio_3se/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/livox_ros_driver2/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/costmap_converter_msgs/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/lehan/navigationros2/ros2-humble/install/teb_msgs/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/robots_msgs/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/lio_3se/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/livox_ros_driver2/local/lib/python3.10/dist-packages",
+        "/home/lehan/navigationros2/ros2-humble/install/costmap_converter_msgs/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}

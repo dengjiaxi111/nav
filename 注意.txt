@@ -1,0 +1,7 @@
+启动前记得确认
+pcd_save
+use_sim_time设置
+绝对路径等等
+tf树设置
+
+

@@ -1,0 +1,147 @@
+# ========== 坐标点（单位：cm） ==========
+# 红方攻击前哨站目标点
+red_attack_x: 1300.0
+red_attack_y: 1110.0
+# 蓝方攻击前哨站目标点
+blue_attack_x: 1410.0
+blue_attack_y: 393.0
+
+# 初始化前置点：决策模式0下，开局先到这里，再发送前哨站目标点
+init_pre_attack_x: 1980.0
+init_pre_attack_y: 1440.0
+
+red_supply_x: 179.0
+red_supply_y: 235.0
+blue_supply_x: 2580.0
+blue_supply_y: 1260.0
+
+# 基地防御点（红方为(408,808)，蓝方为(2398,688)）
+red_base_gain_x: 408.0
+red_base_gain_y: 808.0
+blue_base_gain_x: 2398.0
+blue_base_gain_y: 688.0
+
+red_fortress_occupy_x: 2118.0
+red_fortress_occupy_y: 744.0
+blue_fortress_occupy_x: 2118.0
+blue_fortress_occupy_y: 744.0
+
+red_fortress_gain_x: 690.0
+red_fortress_gain_y: 746.0
+blue_fortress_gain_x: 690.0
+blue_fortress_gain_y: 746.0
+
+trapezoid_highland_gain_x: 430.0
+trapezoid_highland_gain_y: 1108.0
+
+# 敌方堡垒占领点坐标（红方：敌方蓝方堡垒，蓝方：敌方红方堡垒）
+red_enemy_fortress_x: 2112.0
+red_enemy_fortress_y: 754.0
+blue_enemy_fortress_x: 694.0
+blue_enemy_fortress_y: 756.0
+
+# 主决策驻守点：打完前哨站、补给/复活回来后都去这里
+red_main_decision_x: 2210.0
+red_main_decision_y: 928.0
+blue_main_decision_x: 809.0
+blue_main_decision_y: 524.0
+
+# 决策模式：0 使用当前完整决策；1 使用简单固定点决策
+decision_mode: 0
+
+# 简单固定点决策目标：开局/补给或复活后移动到这里，到达后进攻姿态打人并开启小陀螺
+red_simple_decision_x: 1060.0
+red_simple_decision_y: 1260.0
+blue_simple_decision_x: 1670.0
+blue_simple_decision_y: 255.0
+
+# 敌方前哨站坐标（用于 target_yaw_deg 计算，后续标定）
+red_enemy_outpost_x: 0.0
+red_enemy_outpost_y: 0.0
+blue_enemy_outpost_x: 0.0
+blue_enemy_outpost_y: 0.0
+
+# ========== 行为参数 ==========
+arrival_wait_time: 1.0
+deviation_threshold: 50.0              # 到点/偏移修正阈值，单位 cm
+enemy_chase_repath_threshold: 100.0    # 攻击追敌时，目标点偏离超过该值后重新规划，单位 cm
+init_attack_duration: 60.0          # 保留作为后备超时
+attack_duration: 8.0
+defend_duration: 10.0
+
+# ========== Z值计算权重 ==========
+hp_weight: 0.3
+ammo_weight: 0.3
+base_weight: 0.4
+
+# ========== 补给阈值（血量/弹药比例，低于此值触发补给） ==========
+supply_threshold: 0.3
+
+# ========== 机器人自身属性 ==========
+max_hp: 400.0
+max_ammo: 300.0
+
+# ========== 决策阈值 ==========
+hero_attack_z_threshold: 0.4
+hero_attack_h_threshold: 0.5
+hero_high_priority_z_threshold: 0.3
+
+target_selection_z_high: 0.6
+target_selection_z_mid: 0.4
+target_selection_threshold_high: 0.6
+target_selection_threshold_mid: 0.5
+target_selection_threshold_low: 0.7
+
+gain_point_z_high: 0.6
+gain_point_z_mid: 0.4
+gain_point_threshold_high: 0.5
+gain_point_threshold_mid: 0.4
+gain_point_threshold_low: 0.6
+
+fortress_occupy_z_threshold: 0.6
+fortress_occupy_f_threshold: 0.7
+fortress_occupy_hp_ratio: 0.7
+
+# ========== 敌方堡垒占领条件 ==========
+enemy_fortress_occupy_time: 180.0      # 比赛开始后多久允许占领（秒）
+enemy_fortress_hp_threshold: 0.7       # 自身血量比例要求
+enemy_fortress_ammo_threshold: 0.7     # 自身弹药比例要求
+
+# ========== 发布周期 ==========
+publish_interval_ms: 100               # 控制指令周期
+target_publish_interval_ms: 5000       # 目标点发布周期
+
+# ========== 巡逻点（单位：cm）==========
+red_patrol_x: 1958.0
+red_patrol_y: 1304.0
+blue_patrol_x: 846.0
+blue_patrol_y: 200.0
+patrol_stay_duration: 10.0
+
+# ========== 攻击优先级目标列表（从上到下依次判断） ==========
+priority_targets:
+  - type: "infantry"           # 步兵
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "sentry"             # 哨兵
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "hero_deploy"        # 部署模式英雄
+    weight_hp: 0.5
+    weight_distance: 0.35
+    weight_ammo: 0.15
+    threshold: 0.5
+  - type: "hero"               # 普通英雄
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5
+  - type: "engineer"           # 工程；处于取矿屏蔽区时仍不打
+    weight_hp: 0.4
+    weight_distance: 0.4
+    weight_ammo: 0.2
+    threshold: 0.5

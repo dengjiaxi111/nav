@@ -1,0 +1,17 @@
+# 导航Action - 极简设计
+
+# === Goal ===
+geometry_msgs/PoseStamped goal_pose
+
+---
+# === Result ===
+bool success
+string message
+float32 total_time
+
+---
+# === Feedback ===
+geometry_msgs/PoseStamped current_pose
+float32 distance_remaining
+uint8 state          # 0=IDLE,1=PLANNING,2=CONTROLLING,3=RECOVERY
+uint8 recovery_count

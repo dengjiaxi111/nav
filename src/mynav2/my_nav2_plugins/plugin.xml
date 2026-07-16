@@ -1,0 +1,5 @@
+<library path="lib/libmy_nav2_bt">
+  <class name="my_nav2_bt::BackToFreeSpace" type="my_nav2_bt::BackToFreeSpace" base_class_type="nav2_behavior_tree::BtActionNode<nav2_msgs::action::Wait>">
+    <description>Behavior Tree Node for moving the robot back to a free space</description>
+  </class>
+</library>

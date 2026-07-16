@@ -1,0 +1,475 @@
+<?xml version="1.0" ?>
+
+<robot name="sentry" >
+  <material name="black">
+    <color rgba="0.0 0.0 0.0 1.0"/>
+  </material>
+
+  <link name="base_footprint">
+    <visual>
+      <geometry>
+        <sphere radius="0.001"/>
+      </geometry>
+    </visual>
+  </link>
+ 
+  <!--chassis -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.48 0.48 0.1"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="yellow">
+        <color rgba="0.8 0.3 0.1 0.5"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.48 0.48 0.2"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="13"/>
+      <inertia ixx="0.26043333333333335" ixy="0" ixz="0" iyy="0.49920000000000003" iyz="0" izz="0.26043333333333335"/>
+    </inertial>
+  </link>
+  <joint name="base_link2base_footprint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.1"/>
+  </joint>
+  <gazebo reference="base_link">
+    <material>Gazebo/Yellow</material>
+  </gazebo>
+  <!-- WHEELS -->
+  <link name="FL_Steer">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="FL_Steer2base_link" type="continuous">
+    <parent link="base_link"/>
+    <child link="FL_Steer"/>
+    <origin xyz="0.2 0.2 -0.055"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="FL_Steer">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="FL_Susp">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="FL_Susp2FL_Steer" type="prismatic">
+    <parent link="FL_Steer"/>
+    <child link="FL_Susp"/>
+    <limit effort="1000" lower="-0.02" upper="0.02" velocity="1000"/>
+    <origin xyz="0 0 -0.05"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="FL_Susp2FL_Steer">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>4000</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="FL_Susp">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="FL_wheel">
+    <visual>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="0.00032500000000000004" ixy="0" ixz="0" iyy="0.00032500000000000004" iyz="0" izz="0.0006125000000000001"/>
+    </inertial>
+  </link>
+  <joint name="FL_wheel2FL_Susp" type="continuous">
+    <parent link="FL_Susp"/>
+    <child link="FL_wheel"/>
+    <origin xyz="0 0 -0.045"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <gazebo reference="FL_wheel">
+    <material>Gazebo/Black</material>
+    <mu1>0.7</mu1>
+    <mu2>0.7</mu2>
+  </gazebo>
+
+  <link name="FR_Steer">    
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="FR_Steer2base_link" type="continuous">
+    <parent link="base_link"/>
+    <child link="FR_Steer"/>
+    <origin xyz="0.2 -0.2 -0.055"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="FR_Steer">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="FR_Susp">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="FR_Susp2FR_Steer" type="prismatic">
+    <parent link="FR_Steer"/>
+    <child link="FR_Susp"/>
+    <limit effort="1000" lower="-0.02" upper="0.02" velocity="1000"/>
+    <origin xyz="0 0 -0.05"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="FR_Susp2FR_Steer">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>4000</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="FR_Susp">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="FR_wheel">
+    <visual>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="0.00032500000000000004" ixy="0" ixz="0" iyy="0.00032500000000000004" iyz="0" izz="0.0006125000000000001"/>
+    </inertial>
+  </link>
+  <joint name="FR_wheel2FR_Susp" type="continuous">
+    <parent link="FR_Susp"/>
+    <child link="FR_wheel"/>
+    <origin xyz="0 0 -0.045"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <gazebo reference="FR_wheel">
+    <material>Gazebo/Black</material>
+    <mu1>0.7</mu1>
+    <mu2>0.7</mu2>
+  </gazebo>
+
+  <link name="BL_Steer">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="BL_Steer2base_link" type="continuous">
+    <parent link="base_link"/>
+    <child link="BL_Steer"/>
+    <origin xyz="-0.2 0.2 -0.055"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="BL_Steer">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="BL_Susp">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="BL_Susp2BL_Steer" type="prismatic">
+    <parent link="BL_Steer"/>
+    <child link="BL_Susp"/>
+    <limit effort="1000" lower="-0.02" upper="0.02" velocity="1000"/>
+    <origin xyz="0 0 -0.05"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="BL_Susp2BL_Steer">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>4000</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="BL_Susp">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="BL_wheel">
+    <visual>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="0.00032500000000000004" ixy="0" ixz="0" iyy="0.00032500000000000004" iyz="0" izz="0.0006125000000000001"/>
+    </inertial>
+  </link>
+  <joint name="BL_wheel2BL_Susp" type="continuous">
+    <parent link="BL_Susp"/>
+    <child link="BL_wheel"/>
+    <origin xyz="0 0 -0.045"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <gazebo reference="BL_wheel">
+    <material>Gazebo/Black</material>
+    <mu1>0.7</mu1>
+    <mu2>0.7</mu2>
+  </gazebo>
+
+  <link name="BR_Steer">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="BR_Steer2base_link" type="continuous">
+    <parent link="base_link"/>
+    <child link="BR_Steer"/>
+    <origin xyz="-0.2 -0.2 -0.055"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="BR_Steer">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="BR_Susp">
+    <visual>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.02" radius="0.035"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0001697916666666667" ixy="0" ixz="0" iyy="0.0001697916666666667" iyz="0" izz="0.00030625000000000004"/>
+    </inertial>
+  </link>
+  <joint name="BR_Susp2BR_Steer" type="prismatic">
+    <parent link="BR_Steer"/>
+    <child link="BR_Susp"/>
+    <limit effort="1000" lower="-0.02" upper="0.02" velocity="1000"/>
+    <origin xyz="0 0 -0.05"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <gazebo reference="BR_Susp2BR_Steer">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>4000</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="BR_Susp">
+    <material>Gazebo/Red</material>
+  </gazebo>
+  <link name="BR_wheel">
+    <visual>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.015" radius="0.035"/>
+      </geometry>
+      <origin rpy="1.5705 0 0" xyz="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="0.00032500000000000004" ixy="0" ixz="0" iyy="0.00032500000000000004" iyz="0" izz="0.0006125000000000001"/>
+    </inertial>
+  </link>
+  <joint name="BR_wheel2BR_Susp" type="continuous">
+    <parent link="BR_Susp"/>
+    <child link="BR_wheel"/>
+    <origin xyz="0 0 -0.045"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <gazebo reference="BR_wheel">
+    <material>Gazebo/Black</material>
+    <mu1>0.7</mu1>
+    <mu2>0.7</mu2>
+  </gazebo>
+
+
+  <ros2_control name="GazeboSystem" type="system">
+    <hardware>
+      <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+    </hardware>
+
+    <joint name="FL_Steer2base_link">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="FR_Steer2base_link">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="BL_Steer2base_link">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+    </joint>
+    <joint name="BR_Steer2base_link">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+    </joint>
+
+    
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <parameters>/home/lehan/lio_3se_ros2/src/sim_3se/config/sentry_control.yaml</parameters>
+    </plugin>
+  </gazebo>
+
+</robot>

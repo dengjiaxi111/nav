@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>localization_initializer</name>
+  <version>1.0.0</version>
+  <description>
+    全局定位初始化节点 - 使用 NDT+GICP 三阶段配准实现机器人在已知地图中的初始定位
+  </description>
+  
+  <maintainer email="your_email@example.com">navigation2026 team</maintainer>
+  <license>Apache-2.0</license>
+  
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  
+  <!-- ROS2 核心 -->
+  <depend>rclcpp</depend>
+  
+  <!-- ROS2 消息 -->
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+  
+  <!-- TF2 -->
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_eigen</depend>
+  
+  <!-- PCL -->
+  <depend>pcl_conversions</depend>
+  
+  <!-- 自建包 -->
+  <depend>pclomp</depend>
+  
+  <!-- 系统依赖 -->
+  <build_depend>eigen</build_depend>
+  
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

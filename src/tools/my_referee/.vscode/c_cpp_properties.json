@@ -1,0 +1,45 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/lehan/navigationros2/ros2-humble/install/teb_local_planner/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/teb_msgs/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/fake_vel_transform/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/robots_msgs/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/play_music/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/pb_omni_pid_pursuit_controller/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/lio_3se/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/livox_ros_driver2/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/costmap_converter/include/**",
+        "/home/lehan/navigationros2/ros2-humble/install/costmap_converter_msgs/include/**",
+        "/opt/ros/humble/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/Point-LIO_SCAU/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/fake_vel_transform/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/lio_3se/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/localization/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mapping_and_location/mytf/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mynav2/costmap_converter/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mynav2/mpc_controller/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mynav2/my_nav2_plugins/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mynav2/pb_omni_pid_pursuit_controller/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mynav2/teb_local_planner-humble-devel/teb_local_planner/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/myserial/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/mytree/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/tools/calibration/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/tools/fake_referee_old/include/**",
+        "/home/lehan/navigationros2/ros2-humble/src/tools/play_music/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

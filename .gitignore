@@ -1,0 +1,13 @@
+# ROS2 build outputs
+build/
+install/
+log/
+
+# Nested workspace
+tuishao_ws/build/
+tuishao_ws/install/
+tuishao_ws/log/
+
+# Python
+__pycache__/
+*.pyc

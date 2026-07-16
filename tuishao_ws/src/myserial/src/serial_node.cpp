@@ -1,0 +1,723 @@
+#include<iostream>
+#include<sstream>
+#include<iomanip>
+#include<algorithm>
+#include<cmath>
+#include "myserial/serial_node.hpp"
+
+namespace rm
+{
+namespace
+{
+// 裁判系统机器人 ID -> 决策层阵营 ID（0:红方, 1:蓝方）
+uint8_t to_decision_team_id(uint8_t referee_robot_id)
+{
+    if (referee_robot_id >= 1 && referee_robot_id <= 11) {
+        return 0;
+    }
+    if (referee_robot_id >= 101 && referee_robot_id <= 111) {
+        return 1;
+    }
+    // 异常/未定义值兜底：按蓝方编号规则（>=100）判断，其余默认为红方
+    return (referee_robot_id >= 100) ? 1 : 0;
+}
+
+uint32_t set_sentry_cmd_bits(uint32_t sentry_cmd, uint8_t offset, uint8_t width, uint32_t value)
+{
+    const uint32_t mask = ((1u << width) - 1u) << offset;
+    return (sentry_cmd & ~mask) | ((value << offset) & mask);
+}
+
+uint8_t get_event_bits(uint32_t event_data, uint8_t offset, uint8_t width)
+{
+    return static_cast<uint8_t>((event_data >> offset) & ((1u << width) - 1u));
+}
+}  // namespace
+
+// 初始化logger
+void SerialNode::logger_init()
+{   
+    // 获取当前时间作为文件名
+    auto t = std::time(nullptr);
+    std::tm tm;
+    localtime_r(&t, &tm); 
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
+
+    spdlog::init_thread_pool(8192, 1);
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path_ +"/serial_log_" + oss.str() + ".txt");
+
+    // 创建异步日志记录器
+    my_logger_ = std::make_shared<spdlog::async_logger>(
+        "seirial_logger", file_sink, spdlog::thread_pool(),spdlog::async_overflow_policy::block);
+    
+    // 设置全局的 logger
+    spdlog::set_default_logger(my_logger_);
+    my_logger_->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
+    spdlog::flush_on(spdlog::level::info);  // 设置日志刷新条件（每次INFO级别及以上的日志都
+}
+
+
+// 注册一个事件监听器，监听串口的数据到来事件；一旦触发，就执行绑定的回调，同时继续监听下一次数据。
+void SerialNode::read_loop()
+{
+    if (enable_batch_read_) {
+        // 批量读取模式：一次读取多个字节
+        port_.async_read_some(asio::buffer(read_buffer_.data(), batch_read_size_),
+            asio::bind_executor(strand_,
+                bind(&SerialNode::read_batch_callback, this,
+                     placeholders::_1, placeholders::_2)));
+    } else {
+        // 原始单字节读取模式
+        asio::async_read(port_, asio::buffer(&read_byte_, 1),
+            asio::bind_executor(strand_,
+                bind(&SerialNode::read_callback, this,
+                     placeholders::_1, placeholders::_2)));
+    }
+}
+
+// 读取字节的回调
+void SerialNode::read_callback(const boost::system::error_code& ec, size_t)
+{
+    if (!ec && running_) {
+        buffer_.push_back(read_byte_);
+        parse_buffer();
+        read_loop();
+    }
+}
+
+// 批量读取的回调
+void SerialNode::read_batch_callback(const boost::system::error_code& ec, size_t bytes_read)
+{
+    if (!ec && running_) {
+        // 将读取到的所有字节推入缓冲区
+        for (size_t i = 0; i < bytes_read; ++i) {
+            buffer_.push_back(read_buffer_[i]);
+        }
+        parse_buffer();
+        read_loop();
+    }
+}
+
+// 拼帧
+void SerialNode::parse_buffer()
+{
+    if(buffer_.size() > MAX_BUFFER_SIZE){
+        buffer_.clear();
+        RCLCPP_WARN(this->get_logger(),"缓冲区溢出.......清空数据");
+    }
+
+    while (buffer_.size() >= WHOLE_GET_LEN) 
+    {
+        if (debug_flag_ && !buffer_.empty()) {
+            static auto last_buffer_log_time = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_buffer_log_time >= std::chrono::milliseconds(500)) {
+                std::ostringstream oss;
+                oss << "Buffer[" << buffer_.size() << "]:";
+                for (size_t i = 0; i < buffer_.size(); ++i) {
+                    oss << ' '
+                        << std::uppercase << std::hex
+                        << std::setw(2) << std::setfill('0')
+                        << static_cast<int>(buffer_[i]);
+                }
+                RCLCPP_INFO(this->get_logger(), "%s", oss.str().c_str());
+                last_buffer_log_time = now;
+            }
+        }
+        while(!buffer_.empty() && buffer_[0] != HEADER){
+            if(debug_flag_) RCLCPP_WARN(this->get_logger(), "Discarding non-header: 0x%02X", buffer_[0]);
+            buffer_.pop_front();
+        }
+
+        if (buffer_.size() < WHOLE_GET_LEN) return;
+
+        if (buffer_[WHOLE_GET_LEN - 1] != TAIL) {
+            // if(debug_flag_) RCLCPP_WARN(this->get_logger(), "Invalid Tail: 0x%02X at index %d", buffer_[WHOLE_GET_LEN-1], WHOLE_GET_LEN-1);
+            if (enable_improved_framing_) {
+                // 改进的帧解析：只删除当前错误的帧头，继续搜索下一个帧头
+                buffer_.pop_front();
+            } else {
+                // 原始逻辑：删除整个 WHOLE_GET_LEN 长度（可能破坏后续数据）
+                buffer_.erase(buffer_.begin(), buffer_.begin() + WHOLE_GET_LEN);
+            }
+            continue;
+        }
+
+        
+        copy(buffer_.begin(), buffer_.begin() + WHOLE_GET_LEN, reinterpret_cast<uint8_t*>(&_get_frame_));
+
+        buffer_.erase(buffer_.begin(), buffer_.begin()+WHOLE_GET_LEN);
+
+        if(debug_flag_) {
+            RCLCPP_INFO(this->get_logger(), "Successfully parsed a frame! Header=0x%02X, Tail=0x%02X", HEADER, TAIL);
+        }
+
+        if (callback_) {
+            if (debug_flag_) {
+                my_logger_->info("[RX] {}", _get_frame_.to_string());
+            }
+            // if(debug_flag_){
+            //     _get_frame_.print();
+            //     RCLCPP_INFO(this->get_logger(), "成功接收一帧数据");
+            //     RCLCPP_INFO(this->get_logger(), "当前时间：%.6f 秒", this->now().seconds());
+            // }
+            callback_(_get_frame_);
+        }
+    }
+}
+
+// 在ROS中发布收到的消息
+void SerialNode::msg_callback(const WholeGetFrame& msg)
+{
+    //std::cout<< "Received a frame in msg_callback!" << std::endl;
+    // RTT 测量：检查是否收到回传的时间戳
+    if (enable_rtt_measure_) {
+        // STM32 应该将收到的 _buff_yaw_diff_angle 值转为 float 放到 _target_position_x 回传
+        float received_timestamp = msg._target_position_x;
+        
+        // 合理性检查：时间戳应该在 0~10000 范围内
+        if (received_timestamp >= 0.0f && received_timestamp < 10000.0f) {
+            // 获取当前时间
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            double now_ms = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / 1000.0;
+            double now_mod = fmod(now_ms, 10000.0);
+            
+            // 计算 RTT（处理跨越 10 秒边界的情况）
+            double rtt_ms = now_mod - received_timestamp;
+            if (rtt_ms < 0) {
+                rtt_ms += 10000.0;  // 跨越边界，加上循环周期
+            }
+            
+            // 合理性检查：RTT 应该在 0.1ms 到 1000ms 之间
+            if (rtt_ms > 0.1 && rtt_ms < 1000.0) {
+                rtt_sum_ += rtt_ms;
+                rtt_count_++;
+                
+                if (rtt_ms < rtt_min_) rtt_min_ = rtt_ms;
+                if (rtt_ms > rtt_max_) rtt_max_ = rtt_ms;
+                
+                if (debug_flag_) {
+                    RCLCPP_INFO(this->get_logger(), 
+                        "[RTT] Timestamp=%.3f, Now=%.3f, RTT=%.3f ms", 
+                        received_timestamp, now_mod, rtt_ms);
+                }
+            } else if (debug_flag_) {
+                RCLCPP_WARN(this->get_logger(), 
+                    "[RTT] Abnormal RTT=%.3f ms (timestamp=%.3f, now=%.3f)", 
+                    rtt_ms, received_timestamp, now_mod);
+            }
+        }
+        
+        // 每 5 秒报告一次统计信息
+        auto report_duration = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - last_rtt_report_time_);
+        
+        if (report_duration.count() >= 5 && rtt_count_ > 0) {
+            double avg_rtt = rtt_sum_ / rtt_count_;
+            double packet_loss = 100.0 * (1.0 - static_cast<double>(rtt_count_) / rtt_send_count_);
+            
+            RCLCPP_INFO(this->get_logger(), 
+                "========== RTT Statistics (last 5s) ==========");
+            RCLCPP_INFO(this->get_logger(), 
+                "  Sent: %u, Received: %u, Loss: %.2f%%", 
+                rtt_send_count_, rtt_count_, packet_loss);
+            RCLCPP_INFO(this->get_logger(), 
+                "  RTT - Avg: %.3f ms, Min: %.3f ms, Max: %.3f ms", 
+                avg_rtt, rtt_min_, rtt_max_);
+            RCLCPP_INFO(this->get_logger(), 
+                "=============================================");
+            
+            my_logger_->info("[RTT_STATS] Sent={}, Recv={}, Loss={:.2f}%, Avg={:.3f}ms, Min={:.3f}ms, Max={:.3f}ms",
+                rtt_send_count_, rtt_count_, packet_loss, avg_rtt, rtt_min_, rtt_max_);
+            
+            // 重置统计
+            rtt_sum_ = 0.0;
+            rtt_min_ = 999999.0;
+            rtt_max_ = 0.0;
+            rtt_count_ = 0;
+            rtt_send_count_ = 0;
+            last_rtt_report_time_ = std::chrono::steady_clock::now();
+        }
+    }
+
+    // ------------------ GameStatus ------------------
+    game_status_.game_type = msg._game_type;
+    game_status_.game_progress = msg._game_process;
+    game_status_.stage_remain_time = msg._stage_remain_time;
+
+    game_status_.my_hp = msg._my_HP;
+    game_status_.my_outpost_hp = msg._my_outpost_HP;
+    game_status_.my_base_hp = msg._my_base_HP;
+
+    game_status_.our_hero_x = msg.our_hero_x;
+    game_status_.our_hero_y = msg.our_hero_y;
+    game_status_.enemy_1_robot_hp = msg.enemy_robot[0].hp;
+    game_status_.enemy_2_robot_hp = msg.enemy_robot[1].hp;
+    game_status_.enemy_3_robot_hp = msg.enemy_robot[2].hp;
+    game_status_.enemy_4_robot_hp = msg.enemy_robot[3].hp;
+    game_status_.enemy_7_robot_hp = msg.enemy_robot[4].hp;
+    game_status_.enemy_outpost_hp = msg._enemy_outpost_HP;
+    game_status_.enemy_base_hp = msg._enemy_base_HP;
+
+    game_status_.remaining_gold_coin = msg._remaining_gold_coin;
+
+    // 事件数据解析
+    game_status_.external_supply_area_occupied = (msg._event_data) & 0x01;
+    game_status_.inner_supply_area_occupied = 0;
+    game_status_.supply_area_occupied = (msg._event_data >> 2) & 0x01;
+    game_status_.our_small_buff_activated = get_event_bits(msg._event_data, 3, 2);
+    game_status_.our_big_buff_activated = get_event_bits(msg._event_data, 5, 2);
+    game_status_.our_fortress_status = get_event_bits(msg._event_data, 25, 2);
+    if(info_pub_){
+        game_pub_->publish(game_status_);
+    }
+
+    // ------------------ RobotStatus ------------------
+    robot_status_.robot_id = msg._robot_id;
+    // RCLCPP_INFO_THROTTLE(
+    //     this->get_logger(),
+    //     *this->get_clock(),
+    //     1000,
+    //     "myprotocol.hpp:233:17 _robot_id=%u",
+    //     static_cast<unsigned>(msg._robot_id));
+    robot_status_.x = msg._x;
+    robot_status_.y = msg._y;
+    robot_status_.angle = msg._angle;
+
+    robot_status_.recovery_buff = msg._recovery_buff;
+    robot_status_.defence_buff = msg._defence_buff;
+    robot_status_.vulnerability_buff = msg._vulnerability_buff;
+    robot_status_.attack_buff = msg._attack_buff;
+
+    robot_status_.remaining_energy = msg._remaining_energy;
+    robot_status_.projectile_allowance_17mm = msg._projectile_allowance_17mm;
+
+    // RFID 相关状态
+    robot_status_.fort_area = (msg._rfid_status >> 17) & 0x01;
+    robot_status_.supply_blood_area = (msg._rfid_status >> 19) & 0x01;
+
+    // 哨兵兑换信息
+    robot_status_.local_exchange_projectile_allowance_17mm = msg._sentry_info & 0x07FF;
+    robot_status_.remote_exchange_projectile_times = (msg._sentry_info >> 11) & 0x0F;
+    robot_status_.remote_exchange_health_times = (msg._sentry_info >> 15) & 0x0F;
+    robot_status_.can_free_rebirth = (msg._sentry_info >> 19) & 0x01;
+    robot_status_.can_instant_rebirth = (msg._sentry_info >> 20) & 0x01;
+    robot_status_.rebirth_need_coin = (msg._sentry_info >> 21) & 0x03FF;
+
+
+    robot_status_.ttk_status = msg._sentry_info_2 & 0x01;
+    robot_status_.projectile_allowance_17mm_remain = (msg._sentry_info_2 >> 1) & 0x07FF;
+
+    robot_status_.target_position_x = msg._target_position_x;
+    robot_status_.target_position_y = msg._target_position_y;
+
+    if(info_pub_){
+        robot_pub_->publish(robot_status_);
+    }
+
+    // ------------------ ChassisOdom ------------------
+    chassis_odom_speed_.speed_x = static_cast<float>(msg._speed_x);
+    chassis_odom_speed_.speed_y = static_cast<float>(msg._speed_y);
+    chassis_odom_speed_.speed_w = static_cast<float>(msg._speed_w);
+    chassis_odom_speed_.gimbal_angle = msg._base_yaw;
+    chassis_odom_speed_.capacitor_voltage = msg._capacitor_voltage;
+
+    chassis_odom_pub_->publish(chassis_odom_speed_);
+
+    // ------------------ LegLength --------------------
+    leg_length_msg_.leg_length = msg.leg_length;
+    leg_length_pub_->publish(leg_length_msg_);
+
+    // ----------------- 自瞄发送的敌人位置信息 -----------------
+    enemypose_.enemy_num    = msg._enemy_id;
+
+    // _enemy_x/_enemy_y 已经是 base_link 下的相对位置，直接用于发布和 RViz 显示。
+    enemypose_.enemy_x = msg._enemy_x;
+    enemypose_.enemy_y = msg._enemy_y;
+    if(info_pub_){
+        enemypose_pub_->publish(enemypose_);
+    }
+    publish_locked_enemy_marker(msg._enemy_id, enemypose_.enemy_x, enemypose_.enemy_y);
+
+    // ============================================================
+    // 决策系统消息：直接从串口帧聚合，发布到 /decision_messages/*
+    // ============================================================
+
+    // ---------- OurRobotState ----------
+    // 按 decision_messages/msg/OurRobotState.msg 填充
+    our_state_.robot_id   = to_decision_team_id(msg._robot_id);
+    our_state_.current_hp = msg._my_HP;
+    our_state_.max_hp     = 400;
+    our_state_.hero_hp    = msg.our_hp_1;
+    our_state_.engineer_hp = msg.our_hp_2;
+    our_state_.infantry3_hp = msg.our_hp_3;
+    our_state_.infantry4_hp = msg.our_hp_4;
+    our_state_.sentry_hp  = msg.our_hp_7;
+    our_state_.outpost_hp = msg._my_outpost_HP;
+    our_state_.base_hp    = msg._my_base_HP;
+    our_state_.x          = msg._x;
+    our_state_.y          = msg._y;
+    our_state_.yaw        = msg._angle;
+    our_state_.hp_recovery_buff = static_cast<float>(msg._recovery_buff);
+    our_state_.defense_buff = static_cast<float>(msg._defence_buff);
+    our_state_.negative_defense_buff = static_cast<float>(msg._vulnerability_buff);
+    our_state_.attack_buff = static_cast<float>(msg._attack_buff);
+    our_state_.allowance_17mm = msg._projectile_allowance_17mm;
+    our_state_.remaining_gold_coins = msg._remaining_gold_coin;
+    our_state_.reserve_allowance_17mm = (msg._sentry_info_2 >> 1) & 0x07FF;
+    our_state_.rfid_status = msg._rfid_status;
+    our_state_.hero_x = msg.our_hero_x;
+    our_state_.hero_y = msg.our_hero_y;
+    our_state_.engineer_x = msg.our_engineer_x;
+    our_state_.engineer_y = msg.our_engineer_y;
+    our_state_.infantry3_x = msg.our_standard3_x;
+    our_state_.infantry3_y = msg.our_standard3_y;
+    our_state_.infantry4_x = msg.our_standard4_x;
+    our_state_.infantry4_y = msg.our_standard4_y;
+
+    our_state_pub_->publish(our_state_);
+
+    // ---------- EnemyRobotState ----------
+    enemy_state_.enemy_hero_x = static_cast<float>(msg.enemy_robot[0].position_x);
+    enemy_state_.enemy_hero_y = static_cast<float>(msg.enemy_robot[0].position_y);
+    enemy_state_.enemy_engineer_x = static_cast<float>(msg.enemy_robot[1].position_x);
+    enemy_state_.enemy_engineer_y = static_cast<float>(msg.enemy_robot[1].position_y);
+    enemy_state_.enemy_infantry3_x = static_cast<float>(msg.enemy_robot[2].position_x);
+    enemy_state_.enemy_infantry3_y = static_cast<float>(msg.enemy_robot[2].position_y);
+    enemy_state_.enemy_infantry4_x = static_cast<float>(msg.enemy_robot[3].position_x);
+    enemy_state_.enemy_infantry4_y = static_cast<float>(msg.enemy_robot[3].position_y);
+    enemy_state_.enemy_sentry_x = static_cast<float>(msg.enemy_robot[4].position_x);
+    enemy_state_.enemy_sentry_y = static_cast<float>(msg.enemy_robot[4].position_y);
+
+    enemy_state_.enemy_hero_hp = msg.enemy_robot[0].hp;
+    enemy_state_.enemy_engineer_hp = msg.enemy_robot[1].hp;
+    enemy_state_.enemy_infantry3_hp = msg.enemy_robot[2].hp;
+    enemy_state_.enemy_infantry4_hp = msg.enemy_robot[3].hp;
+    enemy_state_.enemy_sentry_hp = msg.enemy_robot[4].hp;
+
+    enemy_state_.enemy_hero_allowance = msg.enemy_robot[0].remaining_bullets;
+    enemy_state_.enemy_infantry3_allowance = msg.enemy_robot[2].remaining_bullets;
+    enemy_state_.enemy_infantry4_allowance = msg.enemy_robot[3].remaining_bullets;
+    enemy_state_.enemy_sentry_allowance = msg.enemy_robot[4].remaining_bullets;
+
+    enemy_state_.base_yaw = static_cast<float>(msg._base_yaw / 180.0 * M_PI);
+    enemy_state_.enemy_id = msg._enemy_id;
+    enemy_state_.enemy_x = msg._enemy_x;
+    enemy_state_.enemy_y = msg._enemy_y;
+
+    // radar_event_data reports enemy-side field events from radar 0x0301-0x02A0.
+    enemy_state_.enemy_supply_zone_occupation = get_event_bits(msg.radar_event_data, 0, 1);
+    enemy_state_.enemy_central_highland_occupation = get_event_bits(msg.radar_event_data, 1, 2);
+    enemy_state_.enemy_trapezoid_highland_occupation = get_event_bits(msg.radar_event_data, 3, 1);
+    enemy_state_.enemy_fortress_gain_point_occupation = get_event_bits(msg.radar_event_data, 4, 2);
+    enemy_state_.enemy_outpost_gain_point_occupation = get_event_bits(msg.radar_event_data, 6, 2);
+    enemy_state_.enemy_base_gain_point_occupation = get_event_bits(msg.radar_event_data, 8, 1);
+    enemy_state_.enemy_near_tunnel_before_ramp_card = get_event_bits(msg.radar_event_data, 9, 1);
+    enemy_state_.enemy_near_tunnel_after_ramp_card = get_event_bits(msg.radar_event_data, 10, 1);
+    enemy_state_.own_near_tunnel_before_ramp_card = get_event_bits(msg.radar_event_data, 11, 1);
+    enemy_state_.own_near_tunnel_after_ramp_card = get_event_bits(msg.radar_event_data, 12, 1);
+    enemy_state_.enemy_highland_upper_card = get_event_bits(msg.radar_event_data, 13, 1);
+    enemy_state_.enemy_ramp_upper_card = get_event_bits(msg.radar_event_data, 14, 1);
+    enemy_state_.enemy_road_upper_card = get_event_bits(msg.radar_event_data, 15, 1);
+
+    enemy_state_pub_->publish(enemy_state_);
+
+    // ---------- GameState ----------
+    {
+        auto gs = decision_messages::msg::GameState{};
+        gs.competition_type     = msg._game_type;
+        gs.stage                = msg._game_process;
+        gs.stage_remaining_time = static_cast<double>(msg._stage_remain_time);
+        gs.supply_zone_no_overlap = msg._event_data & 0x01;
+        gs.supply_zone_overlap = 0;
+        gs.supply_zone_occupation = (msg._event_data >> 2) & 0x01;
+        gs.energy_mechanism_status = get_event_bits(msg._event_data, 3, 4);
+        gs.small_energy_mechanism_activation = get_event_bits(msg._event_data, 3, 2);
+        gs.large_energy_mechanism_activation = get_event_bits(msg._event_data, 5, 2);
+        gs.central_highland_occupation = get_event_bits(msg._event_data, 7, 2);
+        gs.trapezoid_highland_occupation = get_event_bits(msg._event_data, 9, 2);
+        gs.dart_hit_time = get_event_bits(msg._event_data, 11, 9);
+        gs.dart_hit_target = get_event_bits(msg._event_data, 20, 3);
+        gs.center_gain_point_occupation = get_event_bits(msg._event_data, 23, 2);
+        gs.fortress_gain_point_occupation = get_event_bits(msg._event_data, 25, 2);
+        gs.outpost_gain_point_occupation = get_event_bits(msg._event_data, 27, 2);
+        gs.base_gain_point_occupation = get_event_bits(msg._event_data, 29, 1);
+        gs.exchanged_allowance = msg._sentry_info & 0x07FF;
+        gs.free_resurrection_available = (msg._sentry_info >> 19) & 0x01;
+        // Lower-board field is radar outpost alive: 1=alive, 0=destroyed.
+        // Decision GameState keeps destroyed semantics: 0=not destroyed, 1=destroyed.
+        gs.outpoststate = msg._enemy_outpost_alive ? 0 : 1;
+        game_state_pub_->publish(gs);
+    }
+    // ============================================================
+
+    last_game_process_ = msg._game_process;
+    last_game_type_ = msg._game_type;
+
+}
+
+// 开启发送定时
+void SerialNode::start_write_timer()
+{
+    timer_.expires_after(chrono::milliseconds(20));
+    timer_.async_wait(asio::bind_executor(strand_,
+        bind(&SerialNode::write_timer_callback, this, placeholders::_1)));
+}
+
+void SerialNode::publish_locked_enemy_marker(uint8_t enemy_id, float enemy_x_base, float enemy_y_base)
+{
+    visualization_msgs::msg::Marker marker;
+    marker.header.stamp = this->get_clock()->now();
+    marker.header.frame_id = "map";
+    marker.ns = "autoaim_locked_enemy";
+    marker.id = 0;
+
+    if (enemy_x_base == 0.0f && enemy_y_base == 0.0f) {
+        marker.action = visualization_msgs::msg::Marker::DELETE;
+        locked_enemy_marker_pub_->publish(marker);
+
+        marker.id = 1;
+        locked_enemy_marker_pub_->publish(marker);
+        return;
+    }
+
+    geometry_msgs::msg::PointStamped enemy_base;
+    enemy_base.header.stamp = rclcpp::Time(0);
+    enemy_base.header.frame_id = "base_link";
+    enemy_base.point.x = enemy_x_base;
+    enemy_base.point.y = enemy_y_base;
+    enemy_base.point.z = 0.25;
+
+    geometry_msgs::msg::PointStamped enemy_map;
+    try {
+        const auto map_to_base = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+        tf2::doTransform(enemy_base, enemy_map, map_to_base);
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Failed to transform autoaim locked enemy to map: %s",
+            ex.what());
+        return;
+    }
+
+    marker.header.stamp = enemy_map.header.stamp;
+    marker.type = visualization_msgs::msg::Marker::SPHERE;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.position = enemy_map.point;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = 0.45;
+    marker.scale.y = 0.45;
+    marker.scale.z = 0.45;
+    marker.color.r = 1.0;
+    marker.color.g = 0.1;
+    marker.color.b = 0.1;
+    marker.color.a = 0.9;
+    locked_enemy_marker_pub_->publish(marker);
+
+    visualization_msgs::msg::Marker text_marker = marker;
+    text_marker.id = 1;
+    text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    text_marker.pose.position.z += 0.55;
+    text_marker.scale.x = 0.0;
+    text_marker.scale.y = 0.0;
+    text_marker.scale.z = 0.35;
+    text_marker.color.r = 1.0;
+    text_marker.color.g = 1.0;
+    text_marker.color.b = 1.0;
+    text_marker.color.a = 1.0;
+    text_marker.text = "autoaim lock id=" + std::to_string(static_cast<int>(enemy_id));
+    locked_enemy_marker_pub_->publish(text_marker);
+}
+
+void SerialNode::write_timer_callback(const boost::system::error_code& ec)
+{   
+    start_write_timer();
+    if (!ec && running_) {
+        
+        send_msg();
+    }
+}
+
+void SerialNode::send_msg()
+{
+        vector<uint8_t> packet(WHOLE_SEND_LEN);
+        // 默认见谁打谁
+        _send_frame_._priority = this->enemy_priority_;
+        auto cmd_vel_time_diff = this->get_clock()->now() - last_cmd_vel_time_;  // 修复时间差计算
+        if(cmd_vel_time_diff.seconds() >= 0.2){
+            // 认为已超时
+            _send_frame_._speed_x = 0;
+            _send_frame_._speed_y = 0;
+            _send_frame_._speed_w = 0;
+        }
+        
+        // RTT 测量：在发送帧中嵌入当前时间戳
+        if (enable_rtt_measure_) {
+            // 获取当前时间（steady_clock 单调递增，不受系统时间调整影响）
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            double timestamp_ms = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / 1000.0;
+            
+            // 只保留最后 4 位数字的毫秒部分（0~9999.999ms，约10秒循环）
+            // 使用 fmod 取模，确保值在 0~10000 范围内
+            double timestamp_mod = fmod(timestamp_ms, 10000.0);
+            
+            // 直接存储到 float 字段（测试时角速度不用）
+            _send_frame_._speed_w = static_cast<float>(timestamp_mod);
+            rtt_send_count_++;
+        }
+
+        _send_frame_._sentry_cmd |= 0x01;
+        memcpy(packet.data(), &_send_frame_, WHOLE_SEND_LEN);
+
+        if (debug_flag_) {
+            my_logger_->info("[TX] {}", _send_frame_.to_string());
+        }
+        // if(debug_flag_){
+        //     _send_frame_.print();
+        // }
+        asio::async_write(port_, asio::buffer(packet),
+            asio::bind_executor(strand_,
+                [this](const boost::system::error_code& ec, size_t) {
+                    if (ec) {
+                        // TODO: 添加错误处理日志
+                        snd_failed_cnt_++;
+                    }
+                }));
+        send_frame_cnt_++;
+}
+
+void SerialNode::chas_cmd_callback(const geometry_msgs::msg::Twist::SharedPtr msg)
+{
+    _send_frame_.setAutoDriveMode(true);
+    chas_cmd_cbk_cnt_++;
+    last_cmd_vel_time_ = this->get_clock()->now();
+
+    if (on_court_){
+        if (_get_frame_._game_process == 4){
+            _send_frame_._speed_x = msg->linear.x;
+            _send_frame_._speed_y = msg->linear.y;
+            _send_frame_._speed_w = msg->angular.z;
+        }
+        else{
+            _send_frame_._speed_x = 0;
+            _send_frame_._speed_y = 0;
+            _send_frame_._speed_w = 0;
+        }
+    }
+    else{
+        _send_frame_._speed_x = msg->linear.x;
+        _send_frame_._speed_y = msg->linear.y;
+        _send_frame_._speed_w = msg->angular.z;
+    }
+
+}
+
+void SerialNode::path_callback(const nav_msgs::msg::Path::SharedPtr msg)
+{
+    // TODO 订阅全局路径并转换为通讯帧中的形式
+    path_cbk_cnt_++;
+
+}
+
+void SerialNode::modecmd_callback(const robots_msgs::msg::ModeCmd::SharedPtr msg)
+{
+    mode_cbk_cnt_++;
+    _send_frame_.setAutoDriveMode(true);
+    _send_frame_.setChassisMode(msg->should_chassis_spin);
+    _send_frame_.setGimbalMode(msg->should_gimbal_patrol);
+    _send_frame_.setBuyBullet(msg->buy_bullet);
+    _send_frame_.setRebirth(msg->rebirth);
+    _send_frame_.setHiPower(msg->use_capacity);
+}
+
+void SerialNode::sentry_control_callback(const sentry_decision::msg::SentryControl::SharedPtr msg)
+{
+    _send_frame_.setAutoDriveMode(true);
+    _send_frame_.setGimbalMode(msg->gimbal_mode);
+    // spin_mode 直接映射到底盘模式（0~3），超范围值进行截断
+    const uint8_t spin_mode = (msg->spin_mode > 3) ? 3 : msg->spin_mode;
+    _send_frame_.setChassisMode(spin_mode);
+    const uint8_t posture = (msg->posture > 3) ? 3 : msg->posture;
+    _send_frame_._sentry_cmd = set_sentry_cmd_bits(_send_frame_._sentry_cmd, 21, 2, posture);
+    const uint8_t avoidengineer_flag = msg->avoidengineer_flag ? 1 : 0;
+    _send_frame_._sentry_cmd = set_sentry_cmd_bits(_send_frame_._sentry_cmd, 24, 1, avoidengineer_flag);
+    if (msg->target_yaw_valid && msg->gimbal_mode == 2 && msg->spin_mode == 0) {
+        const double yaw_deg = std::clamp(msg->target_yaw_deg, -180.0, 180.0);
+        _send_frame_._buff_yaw_diff_angle = static_cast<int16_t>(std::lround(yaw_deg * 100.0));
+    } else {
+        _send_frame_._buff_yaw_diff_angle = 0;
+    }
+
+    if (debug_flag_) {
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            500,
+            "[SENTRY_CTRL_RX] spin_mode=%u -> chassis_mode=%u, gimbal_mode=%u, posture=%u, avoidengineer=%u, yaw_valid=%u, yaw_x100=%d, sentry_cmd=0x%08X, auto_drive=%u",
+            static_cast<unsigned>(msg->spin_mode),
+            static_cast<unsigned>(_send_frame_.getChassisMode()),
+            static_cast<unsigned>(_send_frame_.getGimbalMode()),
+            static_cast<unsigned>(posture),
+            static_cast<unsigned>(avoidengineer_flag),
+            static_cast<unsigned>(msg->target_yaw_valid),
+            static_cast<int>(_send_frame_._buff_yaw_diff_angle),
+            static_cast<unsigned>(_send_frame_._sentry_cmd),
+            static_cast<unsigned>(_send_frame_.getAutoDriveMode()));
+    }
+}
+
+void SerialNode::monitor(){
+    while (running_) {
+        if (snd_failed_cnt_ >= 50) {
+            RCLCPP_WARN(this->get_logger(), "串口发送失败次数超过阈值(%d次)，检查串口连接！", snd_failed_cnt_);
+            
+            // 播放警告音
+            AsyncAudioPlayer player(music_package_path_ + "/music/Windows_shutdown.wav");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            snd_failed_cnt_ = 0; 
+
+            // 尝试重启串口
+            try {
+                // 停止 IO，关闭串口
+                io_.post([this]() {
+                    boost::system::error_code ec;
+                    port_.cancel(ec);
+                    port_.close(ec);
+                });
+                buffer_.clear();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+                // 重新打开串口
+                io_.post([this]() {
+                    try {
+                        port_.open("/dev/mystm32");
+                        port_.set_option(serial_port::baud_rate(460800));
+                        port_.set_option(serial_port::character_size(8));
+                        port_.set_option(serial_port::parity(serial_port::parity::none));
+                        port_.set_option(serial_port::stop_bits(serial_port::stop_bits::one));
+                        port_.set_option(serial_port::flow_control(serial_port::flow_control::none));
+                        RCLCPP_INFO(this->get_logger(), "串口重启成功！");
+                        snd_failed_cnt_ = 0;
+                        player_ = std::make_shared<AsyncAudioPlayer>(music_package_path_ + "/music/Windows_logon.wav");
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        read_loop();  // 重新启动异步接收
+                    } catch (const boost::system::system_error &e) {
+                        RCLCPP_ERROR(this->get_logger(), "串口重启失败: %s", e.what());
+                    }
+                });
+
+            } catch (const std::exception &e) {
+                RCLCPP_ERROR(this->get_logger(), "monitor 中串口重启异常: %s", e.what());
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2)); 
+    }
+}
+
+}
