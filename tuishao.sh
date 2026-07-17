@@ -6,10 +6,21 @@ TUISHAO_WS="${ROOT_DIR}/tuishao_ws"
 BAG_DIR="${ROOT_DIR}/bags_tuishao"
 LIDAR_TOPIC="/livox/lidar_192_168_1_199"
 IMU_TOPIC="/livox/imu_192_168_1_199"
+DEFAULT_ACADOS_SOURCE_DIR="/home/dengjiaxi/dependency/acados"
 
 SERIAL_PID=""
 NAV_PID=""
 BAG_PID=""
+
+export ACADOS_SOURCE_DIR="${ACADOS_SOURCE_DIR:-${DEFAULT_ACADOS_SOURCE_DIR}}"
+if [[ -d "${ACADOS_SOURCE_DIR}/lib" ]]; then
+  export LD_LIBRARY_PATH="${ACADOS_SOURCE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+fi
+
+build_tuishao_ws() {
+  colcon build --symlink-install \
+    --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release
+}
 
 cleanup() {
   local exit_code=$?
@@ -42,6 +53,8 @@ usage() {
 Usage:
   ./tuishao.sh           Run the legged-robot workspace.
   ./tuishao.sh --build   Build tuishao_ws first, then run it.
+  ./tuishao.sh --build-only
+                         Build tuishao_ws and exit.
 
 This script does not use or modify start.sh. start.sh remains the wheel-robot entrypoint.
 EOF
@@ -61,7 +74,11 @@ cd "${TUISHAO_WS}"
 
 if [[ "${1:-}" == "--build" ]]; then
   echo "[tuishao.sh] building tuishao workspace..."
-  colcon build
+  build_tuishao_ws
+elif [[ "${1:-}" == "--build-only" ]]; then
+  echo "[tuishao.sh] building tuishao workspace only..."
+  build_tuishao_ws
+  exit 0
 elif [[ -n "${1:-}" ]]; then
   usage
   exit 1
@@ -70,7 +87,7 @@ fi
 if [[ ! -f "${TUISHAO_WS}/install/setup.bash" ]]; then
   echo "[tuishao.sh] missing ${TUISHAO_WS}/install/setup.bash"
   echo "[tuishao.sh] build first with:"
-  echo "  cd ${TUISHAO_WS} && colcon build"
+  echo "  ${ROOT_DIR}/tuishao.sh --build-only"
   echo "or run:"
   echo "  ${ROOT_DIR}/tuishao.sh --build"
   exit 1

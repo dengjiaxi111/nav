@@ -24,7 +24,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
 
     default_map = os.path.join(pkg_dir, 'maps', 'map.yaml')
-    default_stair_mask = os.path.join(pkg_dir, 'maps', 'stair.yaml')
+    default_stair_mask = os.path.join(pkg_dir, 'maps', 'navigation2026_map', 'stair.yaml')
     
     # 注意: map → odom TF 现在由 localization_initializer (NDT重定位) 发布
     # 不再需要临时的 static_tf_map_odom
