@@ -21,6 +21,7 @@ namespace rm
 {
     const uint8_t HEADER = 0x77;
     const uint8_t TAIL = 0x88;
+    constexpr float CHASSIS_ODOM_SPEED_SCALE = 50.0f;
 
     struct __attribute__((__packed__)) RadarRobotInfo
     {
@@ -30,10 +31,32 @@ namespace rm
         uint16_t remaining_bullets = 0;
     };
 
+    union __attribute__((__packed__)) RadarEventField
+    {
+        uint32_t raw = 0;
+        struct __attribute__((__packed__))
+        {
+            uint32_t opp_supply_zone : 1;
+            uint32_t opp_central_highland : 2;
+            uint32_t opp_trap_highland : 1;
+            uint32_t opp_fortress : 2;
+            uint32_t opp_outpost_bonus : 2;
+            uint32_t opp_base_bonus : 1;
+            uint32_t tunnel_opp_front : 1;
+            uint32_t tunnel_opp_rear : 1;
+            uint32_t tunnel_own_front : 1;
+            uint32_t tunnel_own_rear : 1;
+            uint32_t terrain_highland_top : 1;
+            uint32_t terrain_ramp_rear : 1;
+            uint32_t terrain_road_top : 1;
+            uint32_t reserved : 16;
+        } bits;
+    };
+
     /**
      * @brief: 整体的发送通信结构体
      */
-    // 42B
+    // 45B
     struct __attribute__((__packed__)) WholeSendFrame
     {
         // 设置字段值
@@ -70,7 +93,7 @@ namespace rm
         // 1B
         uint8_t _mode_cmd = 0;
         /*
-            bit0: _send_frame_._sentry_cmd: 0-abnormal;1-normal;
+            bit0: autodrivemode: 0-abnormal;1-normal;
             bit1-2: gimbalmode: 00:stop; 01:patrol&aim; 10:target_angle(single_shot); 11:small_buff
             bit3-4: chassismode: 00-stop; 01-spin_high; 10-spin_low; 11-follow
             bit5: buybullet
@@ -81,14 +104,15 @@ namespace rm
         /**
          * @brief: 路径点
          */
-        //24 Byte
+        //23 Byte
         uint8_t _intention = 0;
         uint16_t _start_x = 0;
         uint16_t _start_y = 0;
         int8_t _delta_x[9] = {0};
         int8_t _delta_y[9] = {0};
         int16_t _buff_yaw_diff_angle = 0;
-        uint8_t _stair_mode = 0;
+
+        // 哨兵指令
         uint32_t _sentry_cmd = 0;
 
         uint8_t _eof = TAIL;
@@ -125,9 +149,8 @@ namespace rm
             cout << endl;
 
             cout << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
-            cout << "  Stair Mode: " << static_cast<int>(_stair_mode) << endl;
             cout << "  Sentry Cmd: 0x" << hex << _sentry_cmd << dec << endl;
-            cout << "  Avoid Engineer: " << static_cast<int>((_sentry_cmd >> 24) & 0x01) << endl;
+            cout << "  Sentry Cmd Bit0: " << static_cast<int>(_sentry_cmd & 0x01u) << endl;
 
             cout << "===========================================================" << endl;
         }
@@ -166,9 +189,8 @@ namespace rm
             oss << std::endl;
 
             oss << "  Yaw diff: " << _buff_yaw_diff_angle << endl;
-            oss << "  Stair Mode: " << static_cast<int>(_stair_mode) << std::endl;
-            oss << "  Sentry Cmd: 0x" << std::hex << _sentry_cmd << std::dec << std::endl;
-            oss << "  Avoid Engineer: " << static_cast<int>((_sentry_cmd >> 24) & 0x01) << std::endl;
+            oss << "  Sentry Cmd: 0x" << std::hex << _sentry_cmd << std::dec << endl;
+            oss << "  Sentry Cmd Bit0: " << static_cast<int>(_sentry_cmd & 0x01u) << endl;
 
             oss << "===========================================================" << std::endl;
             return oss.str();
@@ -178,26 +200,25 @@ namespace rm
     /**
      * @brief: slh: 整体的接收通信结构体
      */
-    // 接收帧长度由 WHOLE_GET_LEN = sizeof(WholeGetFrame) 决定
+    //  174 Byte
     struct __attribute__((__packed__)) WholeGetFrame
     {
         uint8_t _sof = HEADER;
 
-        // 6B
+        // 4B
         /**
          * @brief: 接收底盘运动相关数据
          */
-        float _speed_x = 0;  
-        float _speed_y = 0;
-        float _speed_w = 0;
+        int8_t _speed_x = 0;  
+        int8_t _speed_y = 0;
+        int8_t _speed_w = 0;
+        uint8_t _outpost_alive = 1;
 
         /**
          * @brief: 接收自瞄相关数据 
          */
-        // 14B
-        uint8_t _enemy_outpost_alive = 0; // 敌方前哨站是否存活：0 死亡，1 存活
+        // 13B
         float _base_yaw = 0; // 大小yaw偏角
-        float leg_length =0;
         uint8_t _enemy_id = 0;
         float _enemy_x = 0;
         float _enemy_y = 0; 
@@ -280,41 +301,66 @@ namespace rm
         // 8B 0x0303
         float _target_position_x = 0;
         float _target_position_y = 0;
-        
-        // 1B 底盘状态
-        uint8_t _chassis_status = 0; 
 
-        // 4B 底盘电容电压，单位：V
-        float _capacitor_voltage = 0.0f;
+        // 全兵种扩展段 74B
+        float _our_engineer_x = 0.0f;
+        float _our_engineer_y = 0.0f;
+        float _our_standard3_x = 0.0f;
+        float _our_standard3_y = 0.0f;
+        float _our_standard4_x = 0.0f;
+        float _our_standard4_y = 0.0f;
 
-        // v1.2 全兵种扩展段
-        float our_engineer_x = 0.0f;
-        float our_engineer_y = 0.0f;
-        float our_standard3_x = 0.0f;
-        float our_standard3_y = 0.0f;
-        float our_standard4_x = 0.0f;
-        float our_standard4_y = 0.0f;
-        uint16_t our_hp_1 = 0;
-        uint16_t our_hp_2 = 0;
-        uint16_t our_hp_3 = 0;
-        uint16_t our_hp_4 = 0;
-        uint16_t our_hp_7 = 0;
-        RadarRobotInfo enemy_robot[5] = {};
-        uint32_t radar_event_data = 0;
+        uint16_t _our_hp_1 = 0;
+        uint16_t _our_hp_2 = 0;
+        uint16_t _our_hp_3 = 0;
+        uint16_t _our_hp_4 = 0;
+        uint16_t _our_hp_7 = 0;
+
+        RadarRobotInfo _enemy_robot[5] = {};
+
+        RadarEventField _radar_event_data = {};
 
         uint8_t _eof = TAIL;
+
+        static const char* radarRobotName(size_t index)
+        {
+            static constexpr const char* names[] = {
+                "hero(1)",
+                "engineer(2)",
+                "infantry3(3)",
+                "infantry4(4)",
+                "sentry(7)"
+            };
+            return index < 5 ? names[index] : "unknown";
+        }
+
+        std::string radar_decision_bridge_string() const
+        {
+            std::ostringstream oss;
+            oss << "[Radar] outpost_alive=" << static_cast<int>(_outpost_alive)
+                << " event=0x" << std::hex << _radar_event_data.raw << std::dec
+                << " enemy:";
+            for (size_t i = 0; i < 5; ++i) {
+                const auto & robot = _enemy_robot[i];
+                oss << " [" << i << ":" << radarRobotName(i)
+                    << " pos=(" << robot.position_x << "," << robot.position_y << ")"
+                    << " hp=" << robot.hp
+                    << " bullets=" << robot.remaining_bullets << "]";
+            }
+            return oss.str();
+        }
 
         void print(void)
         {
             cout << "================= WholeGetFrame 接收数据 =================" << endl;
 
             cout << "[底盘运动数据]" << endl;
-            cout << "speed:  " << static_cast<float>(_speed_x)/50
-                    << "  " << static_cast<float>(_speed_y)/50
-                    << "  " << static_cast<float>(_speed_w)/50 << " " << endl;
+            cout << "speed:  " << static_cast<float>(_speed_x) / CHASSIS_ODOM_SPEED_SCALE
+                    << "  " << static_cast<float>(_speed_y) / CHASSIS_ODOM_SPEED_SCALE
+                    << "  " << static_cast<float>(_speed_w) / CHASSIS_ODOM_SPEED_SCALE << " " << endl;
+            cout << "  Outpost Alive: " << static_cast<int>(_outpost_alive) << endl;
 
             cout << "[自瞄数据]" << endl;
-            cout << "  Enemy Outpost Alive: " << static_cast<int>(_enemy_outpost_alive) << endl;
             cout << "  Base Yaw: " << _base_yaw << " deg" << endl;
             cout << "  Enemy ID: " << static_cast<int>(_enemy_id)
                     << "  Pos: (" << static_cast<int>(_enemy_x)
@@ -365,27 +411,22 @@ namespace rm
             cout << "[目标位置]" << endl;
             cout << "  Target Pos: (" << _target_position_x
                     << ", " << _target_position_y << ")" << endl;
-            
-            cout << "[腿长信息]" << endl;
-            cout << "  Leg Length: " << leg_length << endl;
 
-            cout << "[底盘状态]" << endl;
-            cout << "  Chassis Status: " << static_cast<int>(_chassis_status) << endl;
-            cout << "  Capacitor Voltage: " << _capacitor_voltage << " V" << endl;
-
-            cout << "[v1.2 全兵种扩展]" << endl;
-            cout << "  Our Engineer: (" << our_engineer_x << ", " << our_engineer_y << ")" << endl;
-            cout << "  Our Infantry3: (" << our_standard3_x << ", " << our_standard3_y << ")" << endl;
-            cout << "  Our Infantry4: (" << our_standard4_x << ", " << our_standard4_y << ")" << endl;
-            cout << "  Our HP: " << our_hp_1 << ", " << our_hp_2 << ", "
-                    << our_hp_3 << ", " << our_hp_4 << ", " << our_hp_7 << endl;
-            cout << "  Enemy Radar:";
-            for (const auto& robot : enemy_robot) {
-                cout << " (" << robot.position_x << ", " << robot.position_y
-                        << ", hp=" << robot.hp << ", ammo=" << robot.remaining_bullets << ")";
+            cout << "[全兵种扩展]" << endl;
+            cout << "  Our Engineer: (" << _our_engineer_x << ", " << _our_engineer_y << ")" << endl;
+            cout << "  Our Standard3: (" << _our_standard3_x << ", " << _our_standard3_y << ")" << endl;
+            cout << "  Our Standard4: (" << _our_standard4_x << ", " << _our_standard4_y << ")" << endl;
+            cout << "  Our HP: " << _our_hp_1 << ", " << _our_hp_2 << ", " << _our_hp_3
+                    << ", " << _our_hp_4 << ", " << _our_hp_7 << endl;
+            cout << "  Enemy Robots:" << endl;
+            for (size_t i = 0; i < 5; ++i) {
+                const auto & robot = _enemy_robot[i];
+                cout << "    [" << i << "] " << radarRobotName(i)
+                        << " pos=(" << robot.position_x << "," << robot.position_y << ")"
+                        << " hp=" << robot.hp
+                        << " bullets=" << robot.remaining_bullets << endl;
             }
-            cout << endl;
-            cout << "  Radar Event Data: 0x" << hex << radar_event_data << dec << endl;
+            cout << "  Radar Event Data: 0x" << hex << _radar_event_data.raw << dec << endl;
 
             cout << "==========================================================" << endl;
         }
@@ -396,12 +437,12 @@ namespace rm
             oss << "================= WholeGetFrame 接收数据 =================" << std::endl;
 
             oss << "[底盘运动数据]" << std::endl;
-            oss << "  Speed X: " << static_cast<float>(_speed_x/1000) << std::endl;
-            oss << "  Speed Y: " << static_cast<float>(_speed_y/1000) << std::endl;
-            oss << "  Speed W: " << static_cast<float>(_speed_w/1000) << std::endl;
+            oss << "  Speed X: " << static_cast<float>(_speed_x) / CHASSIS_ODOM_SPEED_SCALE << std::endl;
+            oss << "  Speed Y: " << static_cast<float>(_speed_y) / CHASSIS_ODOM_SPEED_SCALE << std::endl;
+            oss << "  Speed W: " << static_cast<float>(_speed_w) / CHASSIS_ODOM_SPEED_SCALE << std::endl;
+            oss << "  Outpost Alive: " << static_cast<int>(_outpost_alive) << std::endl;
 
             oss << "[自瞄数据]" << std::endl;
-            oss << "  Enemy Outpost Alive: " << static_cast<int>(_enemy_outpost_alive) << std::endl;
             oss << "  Base Yaw: " << _base_yaw << " deg" << std::endl;
             oss << "  Enemy ID: " << static_cast<int>(_enemy_id) << " Pos: (" 
                 << static_cast<float>(_enemy_x) << ", " << static_cast<float>(_enemy_y) << ")" << std::endl;
@@ -446,26 +487,21 @@ namespace rm
             oss << "  Target Pos: (" << _target_position_x << ", " << _target_position_y << ")" 
                 << std::endl;
 
-            oss << "[腿长信息]" << std::endl;
-            oss << "  Leg Length: " << leg_length << std::endl;
-
-            oss << "[底盘状态]" << std::endl;
-            oss << "  Chassis Status: " << static_cast<int>(_chassis_status) << std::endl;
-            oss << "  Capacitor Voltage: " << _capacitor_voltage << " V" << std::endl;
-
-            oss << "[v1.2 全兵种扩展]" << std::endl;
-            oss << "  Our Engineer: (" << our_engineer_x << ", " << our_engineer_y << ")" << std::endl;
-            oss << "  Our Infantry3: (" << our_standard3_x << ", " << our_standard3_y << ")" << std::endl;
-            oss << "  Our Infantry4: (" << our_standard4_x << ", " << our_standard4_y << ")" << std::endl;
-            oss << "  Our HP: " << our_hp_1 << ", " << our_hp_2 << ", "
-                << our_hp_3 << ", " << our_hp_4 << ", " << our_hp_7 << std::endl;
-            oss << "  Enemy Radar:";
-            for (const auto& robot : enemy_robot) {
-                oss << " (" << robot.position_x << ", " << robot.position_y
-                    << ", hp=" << robot.hp << ", ammo=" << robot.remaining_bullets << ")";
+            oss << "[全兵种扩展]" << std::endl;
+            oss << "  Our Engineer: (" << _our_engineer_x << ", " << _our_engineer_y << ")" << std::endl;
+            oss << "  Our Standard3: (" << _our_standard3_x << ", " << _our_standard3_y << ")" << std::endl;
+            oss << "  Our Standard4: (" << _our_standard4_x << ", " << _our_standard4_y << ")" << std::endl;
+            oss << "  Our HP: " << _our_hp_1 << ", " << _our_hp_2 << ", " << _our_hp_3
+                << ", " << _our_hp_4 << ", " << _our_hp_7 << std::endl;
+            oss << "  Enemy Robots:" << std::endl;
+            for (size_t i = 0; i < 5; ++i) {
+                const auto & robot = _enemy_robot[i];
+                oss << "    [" << i << "] " << radarRobotName(i)
+                    << " pos=(" << robot.position_x << "," << robot.position_y << ")"
+                    << " hp=" << robot.hp
+                    << " bullets=" << robot.remaining_bullets << std::endl;
             }
-            oss << std::endl;
-            oss << "  Radar Event Data: 0x" << std::hex << radar_event_data << std::dec << std::endl;
+            oss << "  Radar Event Data: 0x" << std::hex << _radar_event_data.raw << std::dec << std::endl;
 
             oss << "==========================================================" << std::endl;
 
@@ -476,7 +512,8 @@ namespace rm
 
     const int WHOLE_SEND_LEN = sizeof(WholeSendFrame);
     const int WHOLE_GET_LEN = sizeof(WholeGetFrame);
-    static_assert(sizeof(RadarRobotInfo) == 8, "RadarRobotInfo must be 8 bytes");
-    static_assert(sizeof(WholeSendFrame) == 46, "WholeSendFrame must match navigation rec frame size");
-    static_assert(sizeof(WholeGetFrame) == 192, "WholeGetFrame must match navigation trans frame size");
+    static_assert(sizeof(RadarRobotInfo) == 8, "RadarRobotInfo size must match lower-controller protocol");
+    static_assert(sizeof(RadarEventField) == 4, "RadarEventField size must match lower-controller protocol");
+    static_assert(WHOLE_SEND_LEN == 45, "WholeSendFrame size must match lower-controller protocol");
+    static_assert(WHOLE_GET_LEN == 174, "WholeGetFrame size must match lower-controller protocol");
 }

@@ -47,6 +47,7 @@ public:
         return false;
     }
 
+    virtual void onNavigationTaskStarted() {}
     virtual void onNavStateChanged(NavState state) = 0;
     virtual bool controlProgressTimeoutOverrideActive() const { return false; }
     virtual double controlProgressTimeoutSec() const { return 0.0; }

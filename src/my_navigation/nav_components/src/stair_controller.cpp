@@ -564,6 +564,18 @@ nav_core::TerrainControlDecision StairController::update(
         return is_fly(tt) ? fly_slope_backoff_tangent_search_half_width_m_
                           : stair_backoff_tangent_search_half_width_m_;
     };
+    auto backoff_pos_tol = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_backoff_pos_tolerance_m_
+                          : stair_backoff_pos_tolerance_m_;
+    };
+    auto retry_max = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_retry_max_attempts_
+                          : stair_retry_max_attempts_;
+    };
+    auto recovery_on_max = [&](TerrainType tt) {
+        return is_fly(tt) ? fly_slope_request_recovery_on_max_attempts_
+                          : stair_request_recovery_on_max_attempts_;
+    };
     bool candidate_in_cooldown = false;
     double candidate_cooldown_remain_sec = 0.0;
     const bool candidate_consumed = has_candidate &&

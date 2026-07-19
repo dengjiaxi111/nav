@@ -16,7 +16,7 @@ nav_server:
     
     # 坐标系配置
     map_frame: "map"
-    base_frame: "base_link"
+    base_frame: "base_link_fake"
     odom_frame: "odom"
     
     # 控制器超时保护
@@ -54,7 +54,7 @@ nav_server:
 
     # ============ 特殊地形层（stair layer）============
     special_terrain:
-      enable_stair_layer: true
+      enable_stair_layer: false
       # stair_mask_yaml: "/home/nuc/navigation2026/src/my_navigation/nav_bringup/maps/stair.yaml"   # 由 navigation.launch.py 注入
       stair_clear_perp_dist_m: 0.35 # 台阶边沿清理距离(米)，清除台阶边沿一定宽度内的障碍物标记，防止过于靠近边沿导致误判无法通过
       stair_clear_perp_high_dist_m: 0.33  # 高侧法向扩展清除距离(米), <0 表示回退到 stair_clear_perp_dist_m
@@ -102,12 +102,12 @@ nav_server:
 
       # === 台阶动作状态机（阶段B，不含冷却） ===
       # 总开关：false 时退化为旧逻辑（仅 stair_mode 检测/透传）
-      enable_stair_fsm: true
+      enable_stair_fsm: false
       enable_stair_level2_down_fsm: false  # 下二级台阶状态机开关；false 时高侧->低侧禁行，规划绕路；true 时发布 stair_mode=4
 
     # [兼容输出] stair_mode: 0=正常, 1=一级台阶, 2=飞坡, 3=上二级台阶, 4=下二级台阶
-      enable_stair_mode_detection: true
-      enable_fly_slope_mode_detection: true
+      enable_stair_mode_detection: false
+      enable_fly_slope_mode_detection: false
 
     # [候选检测窗口] 何时识别“即将上台阶”
       stair_mode_trigger_distance_m: 2.00

@@ -7,7 +7,7 @@ def generate_launch_description():
             package='myserial',
             executable='myserial',
             output='screen',
-            parameters = [{"on_court": False,"debug_flag": False,"log_path":"/home/nuc/navigation2026/log"\
-                           ,"info_pub": True,"enable_rtt_measure": False,"enable_batch_read": True,"enable_improved_framing": True}]
+            parameters = [{"on_court": False,"debug_flag": False,"log_path":"/home/super259/logs"\
+                           ,"info_pub": True,"enable_batch_read": True,"enable_improved_framing": True}]
         )
     ])

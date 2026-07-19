@@ -11,6 +11,7 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2/LinearMath/Transform.h>
+#include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace small_point_lio {
@@ -311,6 +312,17 @@ namespace small_point_lio {
             odometry_msg.pose.pose.orientation.z = transform_stamped.transform.rotation.z;
             odometry_msg.pose.pose.orientation.w = transform_stamped.transform.rotation.w;
 
+            geometry_msgs::msg::TransformStamped transform_static;
+            transform_static.header.stamp = rclcpp::Time(time_msg);
+            transform_static.header.frame_id = "base_link";
+            transform_static.child_frame_id = "base_link_static";
+            transform_static.transform.translation.x = 0.0;
+            transform_static.transform.translation.y = 0.0;
+            transform_static.transform.translation.z = 0.0;
+            tf2::Quaternion q_static;
+            q_static.setRPY(0.0, 0.0, -tf2::getYaw(transform_stamped.transform.rotation));
+            transform_static.transform.rotation = tf2::toMsg(q_static);
+
             // slh: ============================================================
             // 填充 twist（速度信息），按照 ROS 约定在 child_frame_id (base_link) 系下表示
             //
@@ -405,6 +417,7 @@ namespace small_point_lio {
             odometry_msg.twist.twist.angular.z = angular_vel_base.z();
 
             tf_broadcaster->sendTransform(transform_stamped);
+            tf_broadcaster->sendTransform(transform_static);
             odometry_publisher->publish(odometry_msg);
         });
         small_point_lio->set_pointcloud_callback([this, save_pcd, lidar_frame](const std::vector<Eigen::Vector3f> &pointcloud) {

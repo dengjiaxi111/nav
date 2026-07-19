@@ -31,6 +31,7 @@ def generate_launch_description():
     nav_bringup_dir = get_package_share_directory('nav_bringup')
     pointcloud_obstacle_dir = get_package_share_directory('pointcloud_obstacle_layer')
     loc_init_dir = get_package_share_directory('localization_initializer')
+    myserial_dir = get_package_share_directory('myserial')
     acados_lib_dir = '/home/nuc/dependency/acados/lib'
     existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
     ld_library_path = (
@@ -255,6 +256,27 @@ def generate_launch_description():
     )
 
     
+    # ==================== 4. 轮车速度转换与串口底盘接口 ====================
+    fake_cmd_vel_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('fake_vel_transform'),
+                'launch',
+                'fake_vel_transform.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'use_fake_vel': 'true',
+        }.items()
+    )
+
+    myserial_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(myserial_dir, 'launch', 'myserial.launch.py')
+        )
+    )
+
     # ==================== 4. 导航服务器 (规划 + NMPC控制) ====================
     navigation_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
@@ -304,6 +326,8 @@ def generate_launch_description():
         odom_base_debug_rebaser,   # 2c. 调试模式: 强制 odom==base_link
         pcd_map_publisher_node,    # 2b. 静态 TF 模式下发布地图点云
         local_obstacle_launch,     # 3. 点云局部障碍层 (/cloud_registered -> /rog_map/map_2d)
+        fake_cmd_vel_launch,       # 4a. 轮车虚拟坐标系速度转换 (/cmd_vel -> /cmd_vel_gimbal)
+        myserial_launch,           # 4b. 轮车串口底盘接口 (订阅 /cmd_vel_gimbal)
         navigation_launch,         # 4. 导航服务器 (规划 + NMPC)
         rviz_node,                 # 5. RViz (含 2D Pose Estimate)
     ])
