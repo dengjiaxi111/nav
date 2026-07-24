@@ -10,7 +10,7 @@ import os
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('nav_bringup')
-    acados_lib_dir = '/home/nuc/dependency/acados/lib'
+    acados_lib_dir = '/home/super259/nav/acados/lib'
     existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
     ld_library_path = (
         acados_lib_dir if not existing_ld_library_path
@@ -22,8 +22,8 @@ def generate_launch_description():
     stair_mask_yaml = LaunchConfiguration('stair_mask_yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
 
-    default_map = '/home/nuc/navigation2026/map/map.yaml'
-    default_stair_mask = "/home/nuc/navigation2026/map/stair.yaml"
+    default_map = '/home/super259/nav/map/map.yaml'
+    default_stair_mask = "/home/super259/nav/map/stair.yaml"
     
     # 注意: map → odom TF 现在由 localization_initializer (NDT重定位) 发布
     # 不再需要临时的 static_tf_map_odom

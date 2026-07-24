@@ -3,7 +3,10 @@ from launch.actions import RegisterEventHandler,LogInfo,TimerAction
 from launch_ros.actions import Node
 from launch.event_handlers import OnProcessExit,OnProcessIO
 from launch.events.process import ProcessIO
+import os
 def generate_launch_description():
+    os.makedirs('/home/super259/nav/src/tools/pcd2pgm/save_pcd/', exist_ok=True)
+
     remove_ground = Node(
             package='pcd2pgm',
             executable='removing_ground',
@@ -11,9 +14,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                  #存放pcd文件的路径
-                'pcd_path': '/home/nuc/navigation2026/src/localization/small_point_lio/pcd/scan.pcd',
+                'pcd_path': '/home/super259/nav/src/localization/small_point_lio/pcd/scan.pcd',
                 #pcd文件输出路径
-                'output_path': '/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd',
+                'output_path': '/home/super259/nav/src/tools/pcd2pgm/save_pcd/GlobalMap_processed.pcd',
                 # none: 不旋转; auto: 平面拟合自动旋平; manual_extrinsic: 使用旧的固定外参旋转
                 'level_method': 'manual_extrinsic',
                 # 自动拟合主地面平面并旋平：保证后续PGM沿真实竖直方向投影
@@ -44,7 +47,7 @@ def generate_launch_description():
                 'manual_level_y': 0.0,
                 'manual_level_z': 0.05,
                 # 保存旋平后的完整点云，方便RViz检查；PGM仍使用去地面后的output_path
-                'leveled_full_output_path': '/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
+                'leveled_full_output_path': '/home/super259/nav/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
             }])
 
     pcd2pgm = Node(
@@ -54,7 +57,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 #存放pcd文件的路径
-                'file_directory': '/home/nuc/navigation2026/src/tools/pcd2pgm/save_pcd/',
+                'file_directory': '/home/super259/nav/src/tools/pcd2pgm/save_pcd/',
                 #pcd文件名称
                 'file_name': 'GlobalMap_processed',
                 #选取的范围　最小的高度
@@ -98,7 +101,7 @@ def handle_pcd2pgm_output(event: ProcessIO):
             name = 'map_saver_cli',
             output = 'screen',
             parameters=[{}],
-            arguments = ['-f', '/home/nuc/navigation2026/map/map']
+            arguments = ['-f', '/home/super259/nav/map/map']
     )
     output = event.text.decode().strip()
     print(output)

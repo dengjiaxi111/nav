@@ -199,6 +199,8 @@ void SerialNode::msg_callback(const WholeGetFrame& msg)
     }
 
     // ------------------ ChassisOdom ------------------
+    chassis_odom_speed_.header.stamp = this->get_clock()->now();
+    chassis_odom_speed_.header.frame_id = "base_link";
     chassis_odom_speed_.speed_x = static_cast<float>(msg._speed_x) / CHASSIS_ODOM_SPEED_SCALE;
     chassis_odom_speed_.speed_y = static_cast<float>(msg._speed_y) / CHASSIS_ODOM_SPEED_SCALE;
     chassis_odom_speed_.speed_w = static_cast<float>(msg._speed_w) / CHASSIS_ODOM_SPEED_SCALE;

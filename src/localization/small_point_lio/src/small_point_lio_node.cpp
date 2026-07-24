@@ -17,22 +17,21 @@
 namespace small_point_lio {
 
     void SmallPointLioNode::cacheExtrinsicTransform(const geometry_msgs::msg::TransformStamped& transform) {
-        // lookupTransform(lidar_frame, "base_link", t) 返回的是 T_lidar_base。
-        // 保持原变量名和后续计算兼容：T_base_to_lidar_ 实际缓存 T_lidar_base。
-        T_base_to_lidar_ = Eigen::Isometry3f::Identity();
-        T_base_to_lidar_.translation() <<
+        // lookupTransform(lidar_frame, "base_link", t) 返回 p_lidar = T_lidar_base * p_base。
+        T_lidar_base_current_ = Eigen::Isometry3f::Identity();
+        T_lidar_base_current_.translation() <<
                 static_cast<float>(transform.transform.translation.x),
                 static_cast<float>(transform.transform.translation.y),
                 static_cast<float>(transform.transform.translation.z);
-        T_base_to_lidar_.linear() = Eigen::Quaternionf(
+        T_lidar_base_current_.linear() = Eigen::Quaternionf(
                 static_cast<float>(transform.transform.rotation.w),
                 static_cast<float>(transform.transform.rotation.x),
                 static_cast<float>(transform.transform.rotation.y),
                 static_cast<float>(transform.transform.rotation.z))
+                .normalized()
                 .toRotationMatrix();
 
-        T_lidar_to_base_ = T_base_to_lidar_.inverse();
-        tf2::fromMsg(transform.transform, tf_base_link_to_lidar_);
+        T_base_lidar_current_ = T_lidar_base_current_.inverse();
     }
 
     bool SmallPointLioNode::updateDynamicExtrinsic(const builtin_interfaces::msg::Time& stamp) {
@@ -42,10 +41,20 @@ namespace small_point_lio {
             cacheExtrinsicTransform(transform);
             return true;
         } catch (tf2::TransformException &ex) {
-            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                "Dynamic extrinsic TF %s -> base_link at stamp %d.%09u unavailable: %s",
-                lidar_frame_.c_str(), stamp.sec, stamp.nanosec, ex.what());
-            return false;
+            try {
+                const auto latest_transform = tf_buffer->lookupTransform(
+                        lidar_frame_, "base_link", tf2::TimePointZero);
+                cacheExtrinsicTransform(latest_transform);
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Dynamic extrinsic TF %s -> base_link at stamp %d.%09u unavailable, using latest TF: %s",
+                    lidar_frame_.c_str(), stamp.sec, stamp.nanosec, ex.what());
+                return true;
+            } catch (tf2::TransformException &latest_ex) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Dynamic extrinsic TF %s -> base_link unavailable at stamp %d.%09u and latest lookup failed: %s; latest: %s",
+                    lidar_frame_.c_str(), stamp.sec, stamp.nanosec, ex.what(), latest_ex.what());
+                return false;
+            }
         }
     }
 
@@ -101,6 +110,13 @@ namespace small_point_lio {
 
                     cacheExtrinsicTransform(transform);
 
+                    // fixed 模式外参不随时间变化，可立即固定。gimbal_yaw 模式必须等到
+                    // 第一帧 LIO 里程计的时间戳，再捕获同一时刻的初始外参。
+                    if (!use_dynamic_lidar_extrinsic_) {
+                        T_odom_lio_world_initial_ = T_base_lidar_current_;
+                        initial_extrinsic_valid_ = true;
+                    }
+
                     extrinsic_valid_ = true;
                     if (use_dynamic_lidar_extrinsic_) {
                         RCLCPP_INFO(get_logger(),
@@ -111,11 +127,12 @@ namespace small_point_lio {
                     }
                 } catch (tf2::TransformException &ex) {
                     retry_count++;
-                    if (retry_count >= 10) {
+                    if (retry_count >= 10 && !use_dynamic_lidar_extrinsic_) {
                         // 连续10次失败，默认两坐标系重合（单位变换）
-                        T_base_to_lidar_ = Eigen::Isometry3f::Identity();
-                        T_lidar_to_base_ = Eigen::Isometry3f::Identity();
-                        tf_base_link_to_lidar_.setIdentity();
+                        T_lidar_base_current_ = Eigen::Isometry3f::Identity();
+                        T_base_lidar_current_ = Eigen::Isometry3f::Identity();
+                        T_odom_lio_world_initial_ = Eigen::Isometry3f::Identity();
+                        initial_extrinsic_valid_ = true;
 
                         extrinsic_valid_ = true;
                         RCLCPP_WARN(get_logger(),
@@ -123,8 +140,10 @@ namespace small_point_lio {
                             lidar_frame.c_str(), retry_count);
                     } else {
                         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                            "Waiting for extrinsic TF base_link -> %s (%d/10): %s",
-                            lidar_frame.c_str(), retry_count, ex.what());
+                            "Waiting for extrinsic TF base_link -> %s (%d%s): %s",
+                            lidar_frame.c_str(), retry_count,
+                            use_dynamic_lidar_extrinsic_ ? ", gimbal mode will keep waiting" : "/10",
+                            ex.what());
                     }
                 }
             });
@@ -134,14 +153,26 @@ namespace small_point_lio {
                 [this, save_pcd, lidar_frame](const std_srvs::srv::Trigger::Request::SharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res) {
                     if (!save_pcd) {
                         RCLCPP_ERROR(rclcpp::get_logger("small_point_lio"), "pcd save is disabled");
+                        res->success = false;
+                        res->message = "pcd save is disabled";
                         return;
                     }
                     RCLCPP_INFO(rclcpp::get_logger("small_point_lio"), "waiting for pcd saving ...");
-                    auto pointcloud_to_save_copy = std::make_shared<std::vector<Eigen::Vector3f>>(pointcloud_to_save);
-                    std::thread([this, pointcloud_to_save_copy, lidar_frame]() {
+                    std::vector<Eigen::Vector3f> pointcloud_to_save_copy;
+                    {
+                        std::lock_guard<std::mutex> lock(pointcloud_to_save_mutex_);
+                        pointcloud_to_save_copy = pointcloud_to_save;
+                    }
+                    if (pointcloud_to_save_copy.empty()) {
+                        RCLCPP_ERROR(rclcpp::get_logger("small_point_lio"), "pcd save failed: no points collected");
+                        res->success = false;
+                        res->message = "no points collected";
+                        return;
+                    }
+                    try {
                         voxelgrid_sampling::VoxelgridSampling downsampler;
                         std::vector<Eigen::Vector3f> downsampled;
-                        downsampler.voxelgrid_sampling_omp(*pointcloud_to_save_copy, downsampled, 0.02);
+                        downsampler.voxelgrid_sampling_omp(pointcloud_to_save_copy, downsampled, 0.02);
                         pcl::PointCloud<pcl::PointXYZI> pcl_pointcloud;
                         pcl_pointcloud.header.frame_id = lidar_frame;
                         pcl_pointcloud.header.stamp = static_cast<uint64_t>(last_odometry.timestamp * 1e6);
@@ -157,9 +188,22 @@ namespace small_point_lio {
                         pcl_pointcloud.height = 1;
                         pcl_pointcloud.is_dense = true;
                         pcl::PCDWriter writer;
-                        writer.writeBinary(ROOT_DIR + "/pcd/scan.pcd", pcl_pointcloud);
-                        RCLCPP_INFO(rclcpp::get_logger("small_point_lio"), "save pcd success");
-                    }).detach();
+                        const auto output_path = ROOT_DIR + "/pcd/scan.pcd";
+                        if (writer.writeBinary(output_path, pcl_pointcloud) < 0) {
+                            RCLCPP_ERROR(rclcpp::get_logger("small_point_lio"), "pcd save failed: failed to write %s", output_path.c_str());
+                            res->success = false;
+                            res->message = "failed to write scan.pcd";
+                            return;
+                        }
+                        RCLCPP_INFO(rclcpp::get_logger("small_point_lio"), "save pcd success: %zu raw points -> %zu downsampled points",
+                                    pointcloud_to_save_copy.size(), downsampled.size());
+                        res->success = true;
+                        res->message = "save pcd success";
+                    } catch (const std::exception &e) {
+                        RCLCPP_ERROR(rclcpp::get_logger("small_point_lio"), "pcd save failed: %s", e.what());
+                        res->success = false;
+                        res->message = e.what();
+                    }
                 });
         small_point_lio->set_odometry_callback([this, lidar_frame](const common::Odometry &odometry) {
             if (!extrinsic_valid_) {
@@ -183,6 +227,14 @@ namespace small_point_lio {
 
             if (use_dynamic_lidar_extrinsic_ && !updateDynamicExtrinsic(time_msg)) {
                 return;
+            }
+            if (!initial_extrinsic_valid_) {
+                // small_point_lio 的内部世界系以初始 lidar 为原点。该左侧变换只捕获一次，
+                // 后续云台转动时只能更新公式右侧的当前外参。
+                T_odom_lio_world_initial_ = T_base_lidar_current_;
+                initial_extrinsic_valid_ = true;
+                RCLCPP_INFO(get_logger(),
+                    "Initial lidar-to-odom transform captured at first LIO odometry stamp");
             }
 
             geometry_msgs::msg::TransformStamped transform_stamped;
@@ -221,8 +273,8 @@ namespace small_point_lio {
                 // ============================================================
 
                 // 使用完整 SE(3) 链乘，避免手动拆分旋转和平移时把外参方向用反。
-                // lookupTransform(lidar_frame, "base_link") 缓存的是 T_lidar_base，
-                // 因此 T_odom_base = T_align * T_lio_odom_lidar * T_lidar_base。
+                // lookupTransform(lidar_frame, "base_link") 得到 T_lidar_base(t)，
+                // 因此 T_odom_base = T_align * T_lio_world_lidar * T_lidar_base(t)。
                 Eigen::Isometry3f T_align = Eigen::Isometry3f::Identity();
                 T_align.linear() = q_gravity_align_.toRotationMatrix();
 
@@ -230,7 +282,8 @@ namespace small_point_lio {
                 T_lio_odom_lidar.translation() = pos_lidar_odom;
                 T_lio_odom_lidar.linear() = q_lidar_odom.normalized().toRotationMatrix();
 
-                Eigen::Isometry3f T_odom_base = T_align * T_lio_odom_lidar * T_base_to_lidar_;
+                Eigen::Isometry3f T_odom_base =
+                    T_align * T_lio_odom_lidar * T_lidar_base_current_;
                 pos_base_in_odom = T_odom_base.translation();
                 q_base_in_odom = Eigen::Quaternionf(T_odom_base.rotation()).normalized();
                 
@@ -239,42 +292,18 @@ namespace small_point_lio {
                 // 模式2：无重力对齐，使用相似变换
                 // ============================================================
                 
-                // 相似变换公式：T_new = T_lidar_to_base * T_old * T_base_to_lidar
-                // 
-                // 物理意义：把"lidar的运动"转换成"base_link的运动"
-                // - T_base_to_lidar: 先把世界坐标系变换到base_link的视角
-                // - T_old: lidar的运动
-                // - T_lidar_to_base: 再变换回世界坐标系，但现在描述的是base_link的运动
-                
-                // 构建 tf2::Transform 进行相似变换
-                tf2::Transform tf_lidar_odom_to_lidar;
-                tf_lidar_odom_to_lidar.setOrigin(tf2::Vector3(pos_lidar_odom.x(), pos_lidar_odom.y(), pos_lidar_odom.z()));
-                tf_lidar_odom_to_lidar.setRotation(tf2::Quaternion(q_lidar_odom.x(), q_lidar_odom.y(), q_lidar_odom.z(), q_lidar_odom.w()));
-                
-                // 外参变换（Eigen::Isometry3f 转换为 tf2::Transform）
-                tf2::Transform tf_lidar_to_base;
-                tf_lidar_to_base.setOrigin(tf2::Vector3(
-                    T_lidar_to_base_.translation().x(),
-                    T_lidar_to_base_.translation().y(),
-                    T_lidar_to_base_.translation().z()));
-                Eigen::Quaternionf q_lidar_to_base_eigen(T_lidar_to_base_.rotation());
-                tf_lidar_to_base.setRotation(tf2::Quaternion(
-                    q_lidar_to_base_eigen.x(),
-                    q_lidar_to_base_eigen.y(),
-                    q_lidar_to_base_eigen.z(),
-                    q_lidar_to_base_eigen.w()));
-                
-                tf2::Transform tf_base_to_lidar = tf_lidar_to_base.inverse();
-                
-                // 相似变换
-                tf2::Transform tf_odom_to_base = tf_lidar_to_base * tf_lidar_odom_to_lidar * tf_base_to_lidar;
-                
-                // 提取结果
-                auto origin = tf_odom_to_base.getOrigin();
-                pos_base_in_odom = Eigen::Vector3f(origin.x(), origin.y(), origin.z());
-                
-                auto rotation = tf_odom_to_base.getRotation();
-                q_base_in_odom = Eigen::Quaternionf(rotation.w(), rotation.x(), rotation.y(), rotation.z());
+                // LIO 世界系固定在初始 lidar。odom 固定在初始 base_link：
+                //   T_odom_base(t) = T_base0_lidar0 * T_lidar0_lidar(t) * T_lidar(t)_base(t)
+                // fixed 模式下首尾外参互逆，退化为参考工程原有的相似变换；
+                // gimbal_yaw 模式下只有右侧使用当前外参，左侧初始外参绝不能随云台更新。
+                Eigen::Isometry3f T_lio_odom_lidar = Eigen::Isometry3f::Identity();
+                T_lio_odom_lidar.translation() = pos_lidar_odom;
+                T_lio_odom_lidar.linear() = q_lidar_odom.normalized().toRotationMatrix();
+
+                const Eigen::Isometry3f T_odom_base =
+                    T_odom_lio_world_initial_ * T_lio_odom_lidar * T_lidar_base_current_;
+                pos_base_in_odom = T_odom_base.translation();
+                q_base_in_odom = Eigen::Quaternionf(T_odom_base.rotation()).normalized();
             }
             
             tf2::Transform tf_odom_to_base_final;
@@ -332,7 +361,7 @@ namespace small_point_lio {
             // B = base_link（车体中心，ROS 惯例中的 child）
             // 在机器人学中，T_A_to_B 这种命名存在两种相反的解读习惯，我们尽量采用第一种
             //  T_A_to_B = 把点从A系变到B系的变换矩阵 使用方式：p_B = T_A_to_B * p_A （更常见，Eigen/ROS惯例）
-            // 所以：T_lidar_to_base_ 用于p_base = T_lidar_to_base_ * p_lidar
+            // 所以：T_base_lidar_current_ 用于 p_base = T_base_lidar_current_ * p_lidar
             //
             // LIO 输出:
             //   - odometry.velocity: v_W_I （world系下IMU的速度，经验证不准确）
@@ -351,9 +380,9 @@ namespace small_point_lio {
             Eigen::Vector3f omg_lidar = odometry.angular_velocity.cast<float>(); // lidar body 系下的角速度
 
             // 外参: lidar → base_link
-            // T_lidar_to_base_ 用于 p_base = T_lidar_to_base_ * p_lidar
+            // T_base_lidar_current_ 用于 p_base = T_base_lidar_current_ * p_lidar
             // 其旋转部分的列向量是 lidar 系的基向量在 base 系中的坐标
-            Eigen::Matrix3f R_lidar_to_base = T_lidar_to_base_.rotation();
+            Eigen::Matrix3f R_lidar_to_base = T_base_lidar_current_.rotation();
 
             // ============================================================
             // 角速度估计：使用刚体变换
@@ -421,6 +450,10 @@ namespace small_point_lio {
             odometry_publisher->publish(odometry_msg);
         });
         small_point_lio->set_pointcloud_callback([this, save_pcd, lidar_frame](const std::vector<Eigen::Vector3f> &pointcloud) {
+            if (save_pcd) {
+                std::lock_guard<std::mutex> lock(pointcloud_to_save_mutex_);
+                pointcloud_to_save.insert(pointcloud_to_save.end(), pointcloud.begin(), pointcloud.end());
+            }
             if (pointcloud_publisher->get_subscription_count() > 0) {
                 if (!extrinsic_valid_) {
                     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
@@ -430,6 +463,12 @@ namespace small_point_lio {
                 
                 // 如果启用重力对齐但尚未完成，跳过发布
                 if (gravity_alignment_enabled_ && !gravity_alignment_done_) {
+                    return;
+                }
+
+                if (!initial_extrinsic_valid_) {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        "Waiting for initial lidar-to-odom transform from first odometry");
                     return;
                 }
 
@@ -472,10 +511,11 @@ namespace small_point_lio {
                     // 模式2：应用相似变换
                     // 将点云从 lidar_odom 系转换到以 base_link 为参考的 odom 系
                     
-                    // 对于全局点云地图，我们只需要应用静态的外参变换
-                    // 把地图从"以初始 lidar 为原点"变换到"以初始 base_link 为原点"
+                    // 累计点云位于 LIO 的固定世界系，只能使用初始化时保存的变换。
+                    // 当前云台外参若用于这里，会让所有历史点随云台一起整体旋转。
                     for (const auto &point_in_lidar_odom: pointcloud) {
-                        Eigen::Vector3f point_transformed = T_lidar_to_base_ * point_in_lidar_odom;
+                        Eigen::Vector3f point_transformed =
+                            T_odom_lio_world_initial_ * point_in_lidar_odom;
                         
                         pcl::PointXYZI new_point;
                         new_point.x = point_transformed.x();
@@ -493,9 +533,6 @@ namespace small_point_lio {
                 msg.header.stamp = time_msg;
                 msg.header.frame_id = "odom";
                 pointcloud_publisher->publish(msg);
-            }
-            if (save_pcd) {
-                pointcloud_to_save.insert(pointcloud_to_save.end(), pointcloud.begin(), pointcloud.end());
             }
         });
         if (lidar_type == "livox") {

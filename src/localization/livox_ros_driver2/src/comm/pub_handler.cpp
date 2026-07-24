@@ -266,12 +266,23 @@ uint64_t PubHandler::GetEthPacketTimestamp(uint8_t timestamp_type, uint8_t* time
   LdsStamp time;
   memcpy(time.stamp_bytes, time_stamp, size);
 
+  auto system_time_ns = []() -> uint64_t {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+  };
+
   if (timestamp_type == kTimestampTypeGptpOrPtp ||
       timestamp_type == kTimestampTypeGps) {
-    return time.stamp;
+    // Valid PTP/GPS timestamps are Unix-epoch nanoseconds. Unsynced Livox units
+    // can report device uptime (for example ~1000s), which is incompatible with
+    // ROS-time TF lookups from chassis/gimbal messages.
+    constexpr uint64_t kMinUnixEpochNs = 1000000000000000ULL;
+    if (time.stamp > 0 && static_cast<uint64_t>(time.stamp) >= kMinUnixEpochNs) {
+      return static_cast<uint64_t>(time.stamp);
+    }
   }
 
-  return std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  return system_time_ns();
 }
 
 /*******************************/

@@ -59,7 +59,7 @@ public:
         this->declare_parameter<double>("thre_radius", 0.5);
         this->declare_parameter<double>("map_resolution", 0.05);
         this->declare_parameter<int>("thres_point_count", 10);
-        this->declare_parameter<std::string>("file_directory", std::string("/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/"));
+        this->declare_parameter<std::string>("file_directory", std::string("/home/super259/nav/src/tools/pcd2pgm/save_pcd/"));
         this->declare_parameter<std::string>("file_name", std::string("GlobalMap"));
         this->declare_parameter<std::string>("map_topic_name", std::string("map"));
         

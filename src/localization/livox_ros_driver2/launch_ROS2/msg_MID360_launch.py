@@ -11,7 +11,7 @@ data_src      = 0    # 0-lidar, others-Invalid data src
 publish_freq  = 50.0 # freqency of publish, 5.0, 10.0, 20.0, 50.0, etc.
 output_type   = 0
 frame_id      = 'livox_frame'
-lvx_file_path = '/home/livox/livox_test.lvx'
+lvx_file_path = '/home/super259/nav/performance_test/livox_test.lvx'
 cmdline_bd_code = 'livox0000000001'
 
 cur_path = os.path.split(os.path.realpath(__file__))[0] + '/'
@@ -30,7 +30,7 @@ livox_ros2_params = [
     {"user_config_path": user_config_path},
     {"cmdline_input_bd_code": cmdline_bd_code},
     {"enable_timestamp_logging": False},
-    {"timestamp_log_file": "/home/nuc/navigation2026/performance_test/driver/livox_ros2_timestamp_log.csv"}
+    {"timestamp_log_file": "/home/super259/nav/performance_test/driver/livox_ros2_timestamp_log.csv"}
 ]
 
 

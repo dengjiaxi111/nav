@@ -372,8 +372,8 @@ public:
         output_filtered_ = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         tree_    = pcl::make_shared<pcl::search::KdTree<pcl::PointXYZ>>();
 
-        this->declare_parameter<std::string>("pcd_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/rmul_2025.pcd");
-        this->declare_parameter<std::string>("output_path", "/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/object.pcd");
+        this->declare_parameter<std::string>("pcd_path", "/home/super259/nav/src/tools/pcd2pgm/save_pcd/rmul_2025.pcd");
+        this->declare_parameter<std::string>("output_path", "/home/super259/nav/src/tools/pcd2pgm/save_pcd/object.pcd");
         this->declare_parameter<std::string>("leveled_full_output_path", "");
         this->declare_parameter<std::string>("level_method", "");
         this->declare_parameter<std::string>("level_height_origin_mode", "selected_plane");

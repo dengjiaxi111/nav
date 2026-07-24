@@ -14,6 +14,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <mutex>
 #include <rclcpp/logger.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
@@ -33,6 +34,7 @@ namespace small_point_lio {
         std::unique_ptr<small_point_lio::SmallPointLio> small_point_lio;
         std::vector<common::Point> pointcloud;
         std::vector<Eigen::Vector3f> pointcloud_to_save;
+        std::mutex pointcloud_to_save_mutex_;
         std::unique_ptr<LidarAdapterBase> lidar_adapter;
         std::shared_ptr<rclcpp::Subscription<sensor_msgs::msg::Imu>> imu_subsciber;
         std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> odometry_publisher;
@@ -43,13 +45,16 @@ namespace small_point_lio {
         rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_trigger;
         common::Odometry last_odometry;
 
-        // 缓存的静态外参变换（只在启动时计算一次）
+        // 外参状态：固定安装只初始化一次；云台安装持续更新 current，并锁定 initial。
         bool extrinsic_valid_{false};
+        bool initial_extrinsic_valid_{false};
         bool use_dynamic_lidar_extrinsic_{false};
         std::string lidar_frame_;
-        Eigen::Isometry3f T_base_to_lidar_{Eigen::Isometry3f::Identity()};  // base_link -> lidar_frame
-        Eigen::Isometry3f T_lidar_to_base_{Eigen::Isometry3f::Identity()};  // 点云变换用
-        tf2::Transform tf_base_link_to_lidar_;  // TF 广播用
+        // tf2 lookupTransform(lidar_frame, "base_link") 返回 p_lidar = T_lidar_base * p_base。
+        // 云台模式下当前外参会变化，但 odom 的定义必须固定在 LIO 初始化时刻。
+        Eigen::Isometry3f T_lidar_base_current_{Eigen::Isometry3f::Identity()};
+        Eigen::Isometry3f T_base_lidar_current_{Eigen::Isometry3f::Identity()};
+        Eigen::Isometry3f T_odom_lio_world_initial_{Eigen::Isometry3f::Identity()};
         rclcpp::TimerBase::SharedPtr extrinsic_init_timer_;  // 外参初始化定时器
 
         // 重力对齐：将lidar_odom系旋转至Z轴竖直向上的odom系

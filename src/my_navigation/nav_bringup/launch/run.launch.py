@@ -32,7 +32,7 @@ def generate_launch_description():
     pointcloud_obstacle_dir = get_package_share_directory('pointcloud_obstacle_layer')
     loc_init_dir = get_package_share_directory('localization_initializer')
     myserial_dir = get_package_share_directory('myserial')
-    acados_lib_dir = '/home/nuc/dependency/acados/lib'
+    acados_lib_dir = '/home/super259/nav/acados/lib'
     existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
     ld_library_path = (
         acados_lib_dir if not existing_ld_library_path
@@ -103,7 +103,7 @@ def generate_launch_description():
 
     declare_lidar_mount_mode = DeclareLaunchArgument(
         'lidar_mount_mode',
-        default_value='fixed',
+        default_value='gimbal_yaw',
         description='fixed: 原底盘固定雷达TF; gimbal_yaw: 云台yaw雷达TF链'
     )
 
@@ -153,15 +153,19 @@ def generate_launch_description():
             'gimbal_angle_topic': '/ChassisOdom',
             'parent_frame': 'base_link',
             'child_frame': 'gimbal_yaw_link',
-            # 实车若云台旋转轴不在 base_link 原点，直接改这里的三维偏移。
+            # 与 navigationros2 的 base_link -> gimbal_link 高度一致。
             'gimbal_axis_x': 0.0,
             'gimbal_axis_y': 0.0,
-            'gimbal_axis_z': 0.0,
+            'gimbal_axis_z': 0.1,
             'yaw_unit': 'deg',
             'yaw_sign': 1.0,
-            'yaw_offset_rad': 0.0,
+            # 电控回传约以 -90 度为机械零位；在关节处补偿才能同时正确旋转
+            # 雷达姿态和相对云台轴的平移。
+            'yaw_offset_rad': 1.5707963267948966,
             'publish_rate_hz': 100.0,
-            'publish_before_first_msg': True,
+            # 必须先收到真实云台角再建立 TF；否则 LIO 可能把假定的 0 度外参
+            # 固化成初始 odom 坐标系，随后整幅点云会带一个恒定角度误差。
+            'publish_before_first_msg': False,
         }],
         output='screen'
     )

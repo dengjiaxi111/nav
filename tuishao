@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${WORKSPACE_DIR}"
+
+remove_path_entries() {
+  local var_name="$1"
+  local drop_pattern="$2"
+  local old_value="${!var_name:-}"
+  local new_value=""
+  local entry
+
+  IFS=':' read -ra entries <<< "${old_value}"
+  for entry in "${entries[@]}"; do
+    if [[ -n "${entry}" && "${entry}" != *"${drop_pattern}"* ]]; then
+      if [[ -n "${new_value}" ]]; then
+        new_value="${new_value}:${entry}"
+      else
+        new_value="${entry}"
+      fi
+    fi
+  done
+
+  export "${var_name}=${new_value}"
+}
+
+# Avoid mixing this workspace with the old navigationros2 overlay from a dirty shell.
+for env_var in AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH LD_LIBRARY_PATH PYTHONPATH PKG_CONFIG_PATH PATH; do
+  remove_path_entries "${env_var}" "/home/super259/navigationros2"
+done
+
+set +u
+source /opt/ros/humble/setup.bash
+source "${WORKSPACE_DIR}/install/setup.bash"
+set -u
+
+mkdir -p "${WORKSPACE_DIR}/log"
+export ROS_LOG_DIR="${WORKSPACE_DIR}/log"
+export ACADOS_SOURCE_DIR="${WORKSPACE_DIR}/acados"
+case ":${LD_LIBRARY_PATH:-}:" in
+  *:"${WORKSPACE_DIR}/acados/lib":*) ;;
+  *) export LD_LIBRARY_PATH="${WORKSPACE_DIR}/acados/lib:${LD_LIBRARY_PATH:-}" ;;
+esac
+
+pids=()
+
+cleanup() {
+  echo
+  echo "Stopping ROS processes..."
+  for pid in "${pids[@]}"; do
+    if kill -0 "${pid}" 2>/dev/null; then
+      kill -INT "${pid}" 2>/dev/null || true
+    fi
+  done
+  wait || true
+}
+
+trap cleanup INT TERM EXIT
+
+echo "Starting Livox MID360 driver..."
+ros2 launch livox_ros_driver2 msg_MID360_launch.py &
+pids+=("$!")
+
+sleep 2
+
+echo "Starting navigation stack with gimbal yaw lidar mount..."
+ros2 launch nav_bringup run.launch.py lidar_mount_mode:=gimbal_yaw &
+pids+=("$!")
+
+sleep 2
+
+echo "Starting sentry decision node..."
+ros2 run sentry_decision sentry_decision_node &
+pids+=("$!")
+
+echo
+echo "All processes started. Press Ctrl+C to stop."
+wait -n "${pids[@]}"

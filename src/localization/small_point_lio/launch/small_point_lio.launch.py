@@ -25,19 +25,20 @@ def generate_launch_description():
     lidar_x = "0.2"
     lidar_y = "0.0"
     lidar_z = "0.05"
-    lidar_roll = "0.5236"  # 30度朝下
+    lidar_roll = "0.52"  # 30度朝下
     lidar_pitch = "0.0"
     lidar_yaw = "1.5708"
 
-    # gimbal_yaw 模式：静态外参 gimbal_yaw_link -> livox_frame。
-    # base_link -> gimbal_yaw_link 的动态 yaw 由 nav_bringup/gimbal_yaw_tf_publisher.py 发布。
-    # 当前默认值等价于 yaw=0 时的旧固定安装，实车需要替换为雷达相对云台旋转轴的标定值。
-    gimbal_lidar_x = "0.2"
-    gimbal_lidar_y = "0.0"
-    gimbal_lidar_z = "0.05"
-    gimbal_lidar_roll = "0.5236"
+    # gimbal_yaw 模式：沿用 navigationros2 中已验证的
+    # gimbal_link -> livox_left 安装外参，只把 frame 名统一为 livox_frame。
+    # 原始云台角约以 -90 度为机械零位，该零位补偿必须放在动态云台关节上，
+    # 不能塞进这里的静态 yaw，否则雷达平移不会被零位补偿正确旋转。
+    gimbal_lidar_x = "0.045"
+    gimbal_lidar_y = "0.123"
+    gimbal_lidar_z = "0.0"
+    gimbal_lidar_roll = "-0.785"
     gimbal_lidar_pitch = "0.0"
-    gimbal_lidar_yaw = "1.5708"
+    gimbal_lidar_yaw = "0.0"
 
     small_point_lio_node = Node(
         package="small_point_lio",

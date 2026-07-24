@@ -3,6 +3,7 @@
 import math
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from geometry_msgs.msg import TransformStamped
@@ -43,10 +44,11 @@ class GimbalYawTfPublisher(Node):
             self.declare_parameter("publish_rate_hz", 100.0).value
         )
         self.publish_before_first_msg = bool(
-            self.declare_parameter("publish_before_first_msg", True).value
+            self.declare_parameter("publish_before_first_msg", False).value
         )
 
         self.latest_yaw_rad = self.initial_yaw_rad
+        self.latest_stamp = None
         self.received_angle = False
         self.warned_bad_unit = False
 
@@ -70,14 +72,13 @@ class GimbalYawTfPublisher(Node):
                 self.yaw_unit,
             )
         )
-        self.get_logger().warn(
-            "ChassisOdom has no hardware timestamp; this TF is stamped with ROS receive time."
-        )
+        self.get_logger().info("Gimbal TF uses ChassisOdom.header.stamp when available.")
 
     def gimbal_angle_callback(self, msg):
         self.latest_yaw_rad = self.convert_yaw(float(msg.gimbal_angle))
+        self.latest_stamp = msg.header.stamp
         self.received_angle = True
-        self.publish_transform()
+        self.publish_transform(self.latest_stamp)
 
     def convert_yaw(self, raw_yaw):
         if self.yaw_unit == "deg":
@@ -97,11 +98,18 @@ class GimbalYawTfPublisher(Node):
         if self.received_angle or self.publish_before_first_msg:
             self.publish_transform()
 
-    def publish_transform(self):
+    def publish_transform(self, source_stamp=None):
         qx, qy, qz, qw = yaw_to_quaternion(self.latest_yaw_rad)
 
         tf_msg = TransformStamped()
-        tf_msg.header.stamp = self.get_clock().now().to_msg()
+        if source_stamp is not None and (
+            source_stamp.sec != 0 or source_stamp.nanosec != 0
+        ):
+            tf_msg.header.stamp = source_stamp
+        else:
+            # 定时重发使用当前时间做零阶保持，避免反复提交同一个旧时间戳，
+            # 同时让雷达帧时间附近始终存在可插值的动态 TF。
+            tf_msg.header.stamp = self.get_clock().now().to_msg()
         tf_msg.header.frame_id = self.parent_frame
         tf_msg.child_frame_id = self.child_frame
         tf_msg.transform.translation.x = self.gimbal_axis_x
@@ -119,11 +127,12 @@ def main(args=None):
     node = GimbalYawTfPublisher()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

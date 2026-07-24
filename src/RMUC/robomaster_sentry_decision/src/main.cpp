@@ -35,7 +35,9 @@ public:
         decision_manager_ = std::make_shared<DecisionManager>();
         auto blackboard = decision_manager_->getBlackboard();
 
-        std::string config_path = "robomaster_sentry_decision/config/sentry_decision_params.yaml";
+        std::string config_path =
+            ament_index_cpp::get_package_share_directory("sentry_decision") +
+            "/config/sentry_decision_params.yaml";
         if (std::ifstream(config_path).good()) {
             if (!blackboard->loadConfigFromYAML(config_path)) {
                 RCLCPP_ERROR(this->get_logger(), "Failed to load config, shutting down");

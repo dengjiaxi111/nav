@@ -753,8 +753,11 @@ static void wheelleg_nmpc_acados_create_set_opts(wheelleg_nmpc_solver_capsule* c
 
 
 
-    int with_solution_sens_wrt_params = false;
-    ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "with_solution_sens_wrt_params", &with_solution_sens_wrt_params);
+    int with_solution_sens_wrt_params_forw = false;
+    ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "with_solution_sens_wrt_params_forw", &with_solution_sens_wrt_params_forw);
+
+    int with_solution_sens_wrt_params_adj = false;
+    ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "with_solution_sens_wrt_params_adj", &with_solution_sens_wrt_params_adj);
 
     int with_value_sens_wrt_params = false;
     ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "with_value_sens_wrt_params", &with_value_sens_wrt_params);

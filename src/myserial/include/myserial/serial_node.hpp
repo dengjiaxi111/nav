@@ -66,7 +66,7 @@ public:
         this->declare_parameter<bool>("enable_batch_read", false);
         this->declare_parameter<bool>("enable_improved_framing", false);
         this->declare_parameter<int>("batch_read_size", 128);
-        this->declare_parameter<string>("log_path", "/home/nuc/logs");
+        this->declare_parameter<string>("log_path", "/home/super259/nav/log");
 
         this->get_parameter("on_court",on_court_);
         this->get_parameter("debug_flag",debug_flag_);

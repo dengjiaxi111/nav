@@ -8,8 +8,8 @@ def generate_launch_description():
             executable='map_preprocessor',
             name='map_preprocessor',
             parameters=[
-                {'map_path': '/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/scans.pcd'},        # 替换为实际路径
-                {'save_path': '/home/nuc/navigationros2/ros2-humble/src/tools/pcd2pgm/save_pcd/scans_prior.pcd'},  # 替换为实际路径
+                {'map_path': '/home/super259/nav/src/tools/pcd2pgm/save_pcd/scans.pcd'},        # 替换为实际路径
+                {'save_path': '/home/super259/nav/src/tools/pcd2pgm/save_pcd/scans_prior.pcd'},  # 替换为实际路径
                 {'voxel_leaf': 0.1},
                 {'z_min': -0.3},
                 {'z_max': 25.0},
