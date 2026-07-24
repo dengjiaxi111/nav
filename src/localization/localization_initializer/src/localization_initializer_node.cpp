@@ -68,6 +68,8 @@ public:
         declare_parameter("initial_y", 0.0);
         declare_parameter("initial_z", 0.0);
         declare_parameter("initial_yaw", 0.0);
+        declare_parameter("initialpose_heading_frame", "base_link");
+        declare_parameter("enforce_planar_map_to_odom", true);
         
         // NDT 参数 (Magnusson 博士论文优化 - 三阶段纯 NDT)
         declare_parameter("ndt_stage1_resolution", 1.0);     // 阶段1: 粗配准
@@ -400,7 +402,49 @@ private:
         localization_initialized_ = false;
         clearScanBuffer();
 
-        Eigen::Matrix4f T_map_to_base = poseToMatrix(msg->pose.pose);
+        if (!msg->header.frame_id.empty() && msg->header.frame_id != "map") {
+            RCLCPP_ERROR(
+                get_logger(),
+                "拒绝 /initialpose: frame_id='%s'，请将 RViz Fixed Frame 设置为 map",
+                msg->header.frame_id.c_str());
+            has_initial_guess_ = false;
+            publishStatus("初始位姿无效：请将 RViz Fixed Frame 设置为 map");
+            return;
+        }
+
+        const double arrow_yaw = getYawFromQuaternion(msg->pose.pose.orientation);
+        const std::string heading_frame =
+            get_parameter("initialpose_heading_frame").as_string();
+        double base_to_heading_yaw = 0.0;
+
+        if (!heading_frame.empty() && heading_frame != "base_link") {
+            try {
+                const auto base_to_heading_msg = tf_buffer_->lookupTransform(
+                    "base_link", heading_frame, tf2::TimePointZero);
+                const Eigen::Matrix4f T_base_to_heading =
+                    transformToMatrix(base_to_heading_msg.transform);
+                base_to_heading_yaw = getYawFromMatrix(T_base_to_heading);
+            } catch (const tf2::TransformException& ex) {
+                RCLCPP_ERROR(
+                    get_logger(),
+                    "无法查询 base_link->%s，拒绝本次初始位姿: %s",
+                    heading_frame.c_str(), ex.what());
+                has_initial_guess_ = false;
+                publishStatus("初始位姿无效：当前云台方向不可用");
+                return;
+            }
+        }
+
+        // 箭头起点仍是底盘位置，箭头方向表示 heading_frame 的当前朝向。
+        const double base_yaw = normalizeAngle(arrow_yaw - base_to_heading_yaw);
+        Eigen::Matrix4f T_map_to_base = Eigen::Matrix4f::Identity();
+        T_map_to_base(0, 0) = std::cos(base_yaw);
+        T_map_to_base(0, 1) = -std::sin(base_yaw);
+        T_map_to_base(1, 0) = std::sin(base_yaw);
+        T_map_to_base(1, 1) = std::cos(base_yaw);
+        T_map_to_base(0, 3) = msg->pose.pose.position.x;
+        T_map_to_base(1, 3) = msg->pose.pose.position.y;
+        T_map_to_base(2, 3) = msg->pose.pose.position.z;
         user_initial_guess_ = T_map_to_base;
 
         // RViz 的 /initialpose 表示 map -> base_link。
@@ -412,6 +456,7 @@ private:
                 "odom", "base_link", tf2::TimePointZero);
             Eigen::Matrix4f T_odom_to_base = transformToMatrix(odom_to_base_msg.transform);
             user_initial_guess_ = T_map_to_base * T_odom_to_base.inverse();
+            user_initial_guess_ = constrainMapToOdom(user_initial_guess_);
             RCLCPP_INFO(get_logger(), " 已将 /initialpose 从 map->base_link 换算为 map->odom 初值");
         } catch (const tf2::TransformException& ex) {
             RCLCPP_WARN(
@@ -421,11 +466,14 @@ private:
         }
         has_initial_guess_ = true;
         
-        double yaw = getYawFromQuaternion(msg->pose.pose.orientation);
-        RCLCPP_INFO(get_logger(), "📍 收到初始位姿估计: [%.2f, %.2f, %.2f°]",
+        RCLCPP_INFO(get_logger(),
+                   "📍 收到初始位姿: [%.2f, %.2f], 箭头(%s)=%.2f°, 云台偏角=%.2f°, 底盘=%.2f°",
                    msg->pose.pose.position.x,
                    msg->pose.pose.position.y,
-                   yaw * 180.0 / M_PI);
+                   heading_frame.empty() ? "base_link" : heading_frame.c_str(),
+                   arrow_yaw * 180.0 / M_PI,
+                   base_to_heading_yaw * 180.0 / M_PI,
+                   base_yaw * 180.0 / M_PI);
         
         if (was_initialized) {
             publishStatus("🔄 已接收新的初始位姿，开始重新定位...");
@@ -1671,10 +1719,11 @@ private:
         double eval_trimmed_weight = get_parameter("ndt_eval_trimmed_distance_weight").as_double();
         double eval_inlier_weight = get_parameter("ndt_eval_inlier_ratio_weight").as_double();
         double eval_ndt_weight = get_parameter("ndt_eval_ndt_score_weight").as_double();
+        const Eigen::Matrix4f registration_initial_guess = constrainMapToOdom(initial_guess);
         
         // ===== 阶段 0: 评估初始位姿质量 =====
         AlignmentQualityMetrics initial_quality = evaluateAlignmentQuality(
-            scan_cloud, initial_guess, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
+            scan_cloud, registration_initial_guess, map_kdtree, eval_max_corr_dist, eval_trim_ratio);
         double initial_combined_score = computeCombinedAlignmentScore(
             initial_quality, 0.0, eval_trimmed_weight, eval_inlier_weight, eval_ndt_weight);
         RCLCPP_INFO(get_logger(), "📊 初始位姿质量: score=%.4f trim=%.4f inlier=%.3f",
@@ -1720,7 +1769,7 @@ private:
         
         RCLCPP_INFO(get_logger(), "   🚀 开始 NDT 配准...");
         try {
-            ndt_stage1->align(*stage1_aligned, initial_guess);
+            ndt_stage1->align(*stage1_aligned, registration_initial_guess);
             RCLCPP_INFO(get_logger(), "   ✅ NDT align 执行完成");
         } catch (const std::exception& e) {
             RCLCPP_ERROR(get_logger(), "   ❌ NDT 配准异常: %s", e.what());
@@ -1733,7 +1782,8 @@ private:
         }
         
         double stage1_score = ndt_stage1->getFitnessScore();
-        Eigen::Matrix4f stage1_pose = ndt_stage1->getFinalTransformation();
+        Eigen::Matrix4f stage1_pose = constrainMapToOdom(
+            ndt_stage1->getFinalTransformation());
         
         RCLCPP_INFO(get_logger(), "   ✅ 收敛: fitness=%.3f, iters=%d", 
                    stage1_score, ndt_stage1->getFinalNumIteration());
@@ -1780,7 +1830,8 @@ private:
         
         // 🎯 强制使用阶段2结果（无论收敛状态和精度如何）
         double stage2_score = ndt_stage2->getFitnessScore();
-        Eigen::Matrix4f stage2_pose = ndt_stage2->getFinalTransformation();
+        Eigen::Matrix4f stage2_pose = constrainMapToOdom(
+            ndt_stage2->getFinalTransformation());
         
         RCLCPP_INFO(get_logger(), "   %s 收敛: fitness=%.3f, iters=%d",
                    ndt_stage2->hasConverged() ? "✅" : "⚠️",
@@ -1841,7 +1892,8 @@ private:
             
             // 🎯 强制使用阶段3结果（无论收敛状态和精度如何）
             double stage3_score = ndt_stage3->getFitnessScore();
-            Eigen::Matrix4f stage3_pose = ndt_stage3->getFinalTransformation();
+            Eigen::Matrix4f stage3_pose = constrainMapToOdom(
+                ndt_stage3->getFinalTransformation());
             
             RCLCPP_INFO(get_logger(), "   %s 收敛: fitness=%.3f, iters=%d",
                        ndt_stage3->hasConverged() ? "✅" : "⚠️",
@@ -1903,6 +1955,8 @@ private:
         } else {
             RCLCPP_WARN(get_logger(), "⚠️ GICP 已启用 (不推荐!)，跳过 NDT 阶段3");
         }
+
+        final_pose = constrainMapToOdom(final_pose);
         
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
@@ -1925,14 +1979,15 @@ private:
     
     // ==================== 发布 TF ====================
     void publishMapToOdomTF(const Eigen::Matrix4f& T_map_to_odom) {
+        const Eigen::Matrix4f constrained_transform = constrainMapToOdom(T_map_to_odom);
         current_map_to_odom_tf_.header.frame_id = "map";
         current_map_to_odom_tf_.child_frame_id = "odom";
         
-        current_map_to_odom_tf_.transform.translation.x = T_map_to_odom(0, 3);
-        current_map_to_odom_tf_.transform.translation.y = T_map_to_odom(1, 3);
-        current_map_to_odom_tf_.transform.translation.z = T_map_to_odom(2, 3);
+        current_map_to_odom_tf_.transform.translation.x = constrained_transform(0, 3);
+        current_map_to_odom_tf_.transform.translation.y = constrained_transform(1, 3);
+        current_map_to_odom_tf_.transform.translation.z = constrained_transform(2, 3);
         
-        Eigen::Quaternionf q(T_map_to_odom.block<3,3>(0,0));
+        Eigen::Quaternionf q(constrained_transform.block<3,3>(0,0));
         current_map_to_odom_tf_.transform.rotation.x = q.x();
         current_map_to_odom_tf_.transform.rotation.y = q.y();
         current_map_to_odom_tf_.transform.rotation.z = q.z();
@@ -2063,6 +2118,29 @@ private:
         double roll, pitch, yaw;
         mat.getRPY(roll, pitch, yaw);
         return yaw;
+    }
+
+    double getYawFromMatrix(const Eigen::Matrix4f& transform) const {
+        return std::atan2(transform(1, 0), transform(0, 0));
+    }
+
+    double normalizeAngle(double angle) const {
+        return std::atan2(std::sin(angle), std::cos(angle));
+    }
+
+    Eigen::Matrix4f constrainMapToOdom(const Eigen::Matrix4f& transform) const {
+        if (!get_parameter("enforce_planar_map_to_odom").as_bool()) {
+            return transform;
+        }
+
+        const double yaw = getYawFromMatrix(transform);
+        Eigen::Matrix4f planar = Eigen::Matrix4f::Identity();
+        planar(0, 0) = std::cos(yaw);
+        planar(0, 1) = -std::sin(yaw);
+        planar(1, 0) = std::sin(yaw);
+        planar(1, 1) = std::cos(yaw);
+        planar.block<3, 1>(0, 3) = transform.block<3, 1>(0, 3);
+        return planar;
     }
 
     void clearScanBuffer() {

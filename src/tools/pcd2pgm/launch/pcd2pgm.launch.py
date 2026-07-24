@@ -36,16 +36,19 @@ def generate_launch_description():
                 'level_min_plane_inliers': 1000,
                 # 若后续候选比第一个大平面低超过该阈值，认为已找到地面并提前停止
                 'level_early_stop_below_first_m': 0.10,
-                # manual_extrinsic 模式参数，默认恢复旧实现的三段变换
-                'manual_level_roll1': 0.5236,
+                # 与当前点云生成链路的初始坐标变换保持一致：
+                # base_link -> gimbal_yaw_link -> livox_frame。
+                # 建图开始时云台位于补偿后的机械零位，因此不再套用旧固定雷达的
+                # roll=+30deg、yaw=+90deg 外参。
+                'manual_level_roll1': -0.785,
                 'manual_level_pitch1': 0.0,
                 'manual_level_yaw1': 0.0,
                 'manual_level_roll2': 0.0,
                 'manual_level_pitch2': 0.0,
-                'manual_level_yaw2': 1.5708,
-                'manual_level_x': 0.2,
-                'manual_level_y': 0.0,
-                'manual_level_z': 0.05,
+                'manual_level_yaw2': 0.0,
+                'manual_level_x': 0.045,
+                'manual_level_y': 0.123,
+                'manual_level_z': 0.1,
                 # 保存旋平后的完整点云，方便RViz检查；PGM仍使用去地面后的output_path
                 'leveled_full_output_path': '/home/super259/nav/src/tools/pcd2pgm/save_pcd/GlobalMap_level_full.pcd',
             }])

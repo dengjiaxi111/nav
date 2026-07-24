@@ -13,6 +13,11 @@
     initial_z: 0.0
     initial_yaw: 0.0
 
+    # RViz 箭头起点表示底盘位置，箭头方向表示当前云台/雷达的水平朝向。
+    initialpose_heading_frame: "gimbal_yaw_link"
+    # map->odom 只允许 XY/Z 平移和 yaw，禁止 NDT 发布 roll/pitch 导致整幅点云倾斜。
+    enforce_planar_map_to_odom: true
+
     # 是否自动初始化（跳过 RViz '2D Pose Estimate'）
     # false: 等待用户在 RViz 中手动设置初始位姿
     # true: 直接使用上面的 initial_x/y/z/yaw 参数
@@ -59,12 +64,12 @@
     # 🔴 调参提示：如果初值较准但配准飞掉，通常是因为"粗配准"(Stage 1) 的体素太大，
     # 导致被地面、天花板或外围噪点带偏。
     # 尝试把 stage1_resolution 改小（比如 0.8 或 0.6），防止大网格吸收过多错误特征。
-    ndt_stage1_resolution: 0.6
-    ndt_stage2_resolution: 0.4    
-    ndt_stage3_resolution: 0.25    
+    ndt_stage1_resolution: 1.00
+    ndt_stage2_resolution: 0.75
+    ndt_stage3_resolution: 0.40
 
     # 收敛参数
-    ndt_max_iterations: 100
+    ndt_max_iterations: 80
     ndt_transformation_epsilon: 0.005
     ndt_step_size: 0.05             # 如果容易发散/非局部跳跃，可以调小（如 0.05）
 
@@ -90,7 +95,7 @@
 
     # ==================== 降采样与预处理 ====================
     # 🔴 调参提示：保留重要的边缘与立面。如果 scan_voxel_size 太大，特征会被抹平。
-    map_voxel_size: 0.03
+    map_voxel_size: 0.08
     scan_voxel_size: 0.05
     accumulate_voxel_size: 0.08
 
@@ -104,7 +109,7 @@
     # ==================== 时序稳定性过滤（拖影过滤） ====================
     # 按体素统计“跨多少帧重复出现”，只保留稳定出现的体素。
     # 对 3 秒累积产生的人/机器人拖影通常很有效，因为拖影沿路径每段只会短暂出现 1~2 帧。
-    temporal_filter_enable: false
+    temporal_filter_enable: true
     # 体素越大，越容易把近邻点合并为“稳定体素”；太大也可能把拖影和墙边混在一起。
     temporal_filter_voxel_size: 0.15
     # 最少命中帧数。若点云频率较高且拖影很多，可以从 3 提到 4。
@@ -116,7 +121,7 @@
     # 很多室内场地的地图没有天花板或者地面标高与雷达真实高度不一致！
     # 如果 filter_z_min 太高或 filter_z_max 过大，导致把地面的点和地图的立柱对齐，或者把天花板对齐进去，就会把正确的初值带飞。
     # - 强烈建议：将 filter_z_min 调到 0.0 或更高（比如 0.3），也就是切掉所有地面和人的腿部。
-    spatial_filter_enable: false
+    spatial_filter_enable: true
     filter_x_min: -100.0
     filter_x_max: 100.0
     filter_y_min: -100.0
@@ -127,7 +132,7 @@
 
     # ==================== 基于法向量的地面过滤 ====================
     # 先按空间范围裁剪，再估计法向量；满足“法向接近 z 轴 + 高度较低 + 曲率较小”的点会被视为地面。
-    ground_filter_enable: false
+    ground_filter_enable: true
     # 半径越大，法向越平滑；太大容易把小坡面/低矮障碍也当地面
     ground_normal_radius: 0.22
     # 越大越严格，只有法向非常接近 z 轴的点才会被删
@@ -139,7 +144,7 @@
 
     # ==================== Multi-radius DBSCAN 动态障碍过滤 ====================
     # 按点到 lidar 的距离切换聚类半径/最小点数，再根据簇的几何特征删除疑似人/机器人等动态障碍。
-    cluster_filter_enable: false
+    cluster_filter_enable: true
     # 按距离切三档；近处点更密，远处点更稀
     cluster_near_range: 4.0
     cluster_mid_range: 8.0
